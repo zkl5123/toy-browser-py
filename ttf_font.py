@@ -45,11 +45,15 @@ class GlyphOutline:
     coordinates.  For composite glyphs the outlines of all components
     are merged into a single point list (transformed to the parent
     coordinate system).  ``is_empty`` is True for glyphs with no
-    contours (e.g. space).
+    contours (e.g. space).  ``bbox`` is the glyph's bounding box
+    ``(xMin, yMin, xMax, yMax)`` in font units, used by P20 to
+    validate parsed coordinates (outlines whose points fall outside the
+    bbox are rejected and the caller falls back to bitmap rendering).
     """
     points: list = field(default_factory=list)
     is_empty: bool = False
     is_composite: bool = False
+    bbox: tuple = (0, 0, 0, 0)
 
 
 @dataclass
@@ -403,23 +407,25 @@ def _parse_simple_glyph(raw: bytes) -> list:
     num_contours = struct.unpack(">h", raw[:2])[0]
     if num_contours <= 0:
         return []
-    # P17.2 — simple-glyph layout (TTF spec):
-    #   offset 0:  numberOfContours
-    #   offset 2:  xMin
-    #   offset 4:  yMin
-    #   offset 6:  xMax
-    #   offset 8:  yMax
-    #   offset 10: endPtsOfContours[num_contours]  (uint16 each)
-    #   ...        instructionCount, flags, coords
-    # The total point count is NOT stored; it equals max(endPtsOfContours)+1.
+    # P20 — simple-glyph layout (TTF spec):
+    #   offset 0:  numberOfContours (int16)
+    #   offset 2:  xMin, yMin, xMax, yMax (4 x int16)
+    #   offset 10: endPtsOfContours[num_contours] (uint16 each)
+    #   then:      instructionCount (uint16)  @ offset 10 + num_contours*2
+    #   then:      flags (1 byte per point, with 0x40/0x00 repeat)
+    #                @ offset 12 + num_contours*2
+    #   then:      coordinate deltas (xShort/yShort 8-bit, xLong/yLong 16-bit)
+    #   then:      hinting program (instructionCount bytes) — NOT parsed.
+    # The total point count n = max(endPtsOfContours) + 1.
     end_pts_off = 10
-    end_pts_raw = raw[end_pts_off:end_pts_off + num_contours * 2]
-    end_pts = struct.unpack(f">{num_contours}H", end_pts_raw)
+    end_pts = struct.unpack(f">{num_contours}H",
+                            raw[end_pts_off:end_pts_off + num_contours * 2])
     n = max(end_pts) + 1 if num_contours > 0 else 0
-    # End points of contours (n points total, num_contours end indices).
-    end_pts = struct.unpack(f">{num_contours}H", raw[12:12 + num_contours * 2])
-    # Flags (with 0x40 repetition and 0x00 byte-repeat).
-    flag_off = 12 + num_contours * 2
+    # instructionCount sits right after endPtsOfContours.
+    inst_off = 10 + num_contours * 2
+    instruction_count = struct.unpack(">H", raw[inst_off:inst_off + 2])[0]
+    # Flags start right after instructionCount.
+    flag_off = inst_off + 2
     flags: list = []
     i = flag_off
     while len(flags) < n:
@@ -428,14 +434,16 @@ def _parse_simple_glyph(raw: bytes) -> list:
         f = raw[i]
         i += 1
         if f == 0x40:
-            # P17.2 — 0x40: next byte is a count of repetitions of f (including itself).
+            # Next byte = repeat count (includes the original 0x40).
             if i >= len(raw):
                 break
             rep = raw[i]
             i += 1
+            # Append rep flags of value 0x40 (the original is counted
+            # in rep, so we do NOT append the byte we already consumed).
             flags.extend([0x40] * rep)
         elif f == 0:
-            # 0x00: next byte is a count of repetitions of the previous flag.
+            # Next byte = repeat count of the PREVIOUS flag value.
             if i >= len(raw):
                 break
             rep = raw[i]
@@ -444,12 +452,16 @@ def _parse_simple_glyph(raw: bytes) -> list:
             flags.extend([prev] * rep)
         else:
             flags.append(f)
-    # P17.2 — TTF spec: for xLong / yLong, if the value has the 0x8000
-    # bit set, subtract it from the running coordinate (the value is
-    # *signed* in two's-complement 16-bit form).
-    #     xv = unsigned16;  if xv >= 0x8000: x -= (xv - 0x10000)
-    #     else:             x -= xv
-    # For xShort / yShort: signed 8-bit delta, add directly.
+    # P20 — TTF glyf point flags (spec):
+    #   bit 0 (0x01): x is a signed 1-byte delta
+    #   bit 1 (0x02): y is a signed 1-byte delta
+    #   bit 2 (0x04): x is the same as the previous point
+    #   bit 3 (0x08): y is reversed (y = -y_prev)
+    #   bit 4 (0x10): repeat flag (0x00 byte case)
+    #   bit 5 (0x20): on-curve point
+    # xLong / yLong (16-bit): 0x8000 bit set → negative delta
+    #   (value - 0x8000 as signed); otherwise positive.
+    # xShort / yShort: signed 8-bit delta.
     pts: list = []
     x = 0
     y = 0
@@ -457,7 +469,7 @@ def _parse_simple_glyph(raw: bytes) -> list:
         if k >= len(flags):
             break
         flag = flags[k]
-        on_curve = bool(flag & 0x02)
+        on_curve = bool(flag & 0x20)
         # x coordinate.
         if flag & 0x01:  # xShort: signed 8-bit delta.
             if i >= len(raw):
@@ -467,18 +479,19 @@ def _parse_simple_glyph(raw: bytes) -> list:
                 dx -= 0x100
             x += dx
             i += 1
-        else:  # xLong: 16-bit; 0x8000 bit = negative.
+        elif flag & 0x04:  # x same as previous point.
+            pass
+        else:  # xLong: 16-bit magnitude; 0x8000 bit = negative delta.
             if i + 2 > len(raw):
                 break
             xv = struct.unpack(">H", raw[i:i + 2])[0]
             if xv >= 0x8000:
-                # Two's complement: subtract (xv - 0x10000) → x += 0x10000 - xv
-                x += 0x10000 - xv
+                x -= (xv - 0x8000)
             else:
-                x -= xv
+                x += xv
             i += 2
         # y coordinate.
-        if flag & 0x10:  # yShort: signed 8-bit delta.
+        if flag & 0x02:  # yShort: signed 8-bit delta.
             if i >= len(raw):
                 break
             dy = raw[i]
@@ -486,14 +499,16 @@ def _parse_simple_glyph(raw: bytes) -> list:
                 dy -= 0x100
             y += dy
             i += 1
-        else:  # yLong: 16-bit; 0x8000 bit = negative.
+        elif flag & 0x08:  # y reversed: y = -y_prev.
+            y = -y
+        else:  # yLong: 16-bit magnitude; 0x8000 bit = negative delta.
             if i + 2 > len(raw):
                 break
             yv = struct.unpack(">H", raw[i:i + 2])[0]
             if yv >= 0x8000:
-                y += 0x10000 - yv
+                y -= (yv - 0x8000)
             else:
-                y -= yv
+                y += yv
             i += 2
         pts.append((x, y, on_curve))
     return pts
@@ -521,20 +536,36 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
         x = y = 0.0
         scale_x = scale_y = 1.0
         scale_xy = 0.0
-        # P17.2 — component translation.
+        # P20 — component transform (TTF composite spec):
+        #   bit 0 (0x0001): x,y are two int16 words.
+        #   bit 2 (0x0004): x,y are two 16.16 fixed-point words.
+        #   bit 3 (0x0008): scale_x,scale_y are two int16 (16.16).
+        #   bit 5 (0x0020): (round-to-grid; scale values are 16.16
+        #                    steps of 1/64 — ignored here).
+        #   bit 6 (0x0040): 2x2 matrix mxx,myx,mxy,myy (16.16).
+        #   bit 7 (0x0100): one additional word follows.
+        #   neither bit 0 nor bit 2: x,y are two 2.5-byte words
+        #                            (x = int16/16, y = int16/16).
         if flags & 0x0001:
             if off + 4 > len(raw):
                 break
             x = struct.unpack(">h", raw[off:off + 2])[0]
             y = struct.unpack(">h", raw[off + 2:off + 4])[0]
             off += 4
+        elif flags & 0x0004:
+            if off + 4 > len(raw):
+                break
+            x = struct.unpack(">h", raw[off:off + 2])[0] / 65536.0
+            y = struct.unpack(">h", raw[off + 2:off + 4])[0] / 65536.0
+            off += 4
         else:
+            # 2.5-byte words: each is a signed int16 scaled by 1/16.
             if off + 4 > len(raw):
                 break
             x = struct.unpack(">h", raw[off:off + 2])[0] / 16.0
             y = struct.unpack(">h", raw[off + 2:off + 4])[0] / 16.0
             off += 4
-        # P17.2 — component scale.
+        # Scale.
         if flags & 0x0008:
             if off + 4 > len(raw):
                 break
@@ -542,12 +573,6 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
             scale_y = struct.unpack(">h", raw[off + 2:off + 4])[0] / 16384.0
             off += 4
         elif flags & 0x0040:
-            if off + 4 > len(raw):
-                break
-            scale_x = struct.unpack(">h", raw[off:off + 2])[0] / 16384.0
-            scale_y = struct.unpack(">h", raw[off + 2:off + 4])[0] / 16384.0
-            off += 4
-        elif flags & 0x0080:
             if off + 8 > len(raw):
                 break
             mxx = struct.unpack(">h", raw[off:off + 2])[0] / 16384.0
@@ -581,7 +606,13 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
 
 
 def _extract_glyph(fm: FontMetrics, gid: int, _depth: int = 0) -> Optional[GlyphOutline]:
-    """P17.2 — extract the outline for glyph index ``gid``."""
+    """P17.2 — extract the outline for glyph index ``gid``.
+
+    P20 — attaches the glyph's bbox (``xMin, yMin, xMax, yMax`` in font
+    units) to the :class:`GlyphOutline` so callers can validate parsed
+    coordinates (outlines with points outside the bbox are broken and
+    should be rejected).
+    """
     if gid < 0 or gid >= fm.num_glyphs:
         return None
     if _depth > 10:
@@ -592,12 +623,41 @@ def _extract_glyph(fm: FontMetrics, gid: int, _depth: int = 0) -> Optional[Glyph
     num_contours = struct.unpack(">h", raw[:2])[0]
     if num_contours == 0:
         return GlyphOutline(points=[], is_empty=True)
+    # P20 — read the glyf bbox for validation.
+    bbox = (0, 0, 0, 0)
+    if len(raw) >= 10:
+        bbox = struct.unpack(">hhhh", raw[2:10])
     if num_contours > 0:
         pts = _parse_simple_glyph(raw)
-        return GlyphOutline(points=pts, is_empty=not pts, is_composite=False)
+        return GlyphOutline(points=pts, is_empty=not pts,
+                           is_composite=False, bbox=bbox)
     # Composite glyph.
     pts = _parse_composite_glyph(raw, fm, _depth)
-    return GlyphOutline(points=pts, is_empty=not pts, is_composite=True)
+    return GlyphOutline(points=pts, is_empty=not pts,
+                        is_composite=True, bbox=bbox)
+
+
+def outline_valid(outline) -> bool:
+    """P20 — True if the outline's parsed points fall within its bbox.
+
+    A small tolerance (±1 font unit) is allowed for composite glyphs
+    whose transforms can push vertices slightly outside the bbox.
+    Outlines that fail this check were parsed with a buggy coordinate
+    read and must be rejected (the caller falls back to bitmap).
+    """
+    if outline is None or outline.is_empty or not outline.points:
+        return False
+    x_min, y_min, x_max, y_max = outline.bbox
+    if x_min == 0 and y_min == 0 and x_max == 0 and y_max == 0:
+        # No bbox recorded — accept (empty-glyph case handled above).
+        return True
+    tol = 1
+    for x, y, _oc in outline.points:
+        if x < x_min - tol or x > x_max + tol:
+            return False
+        if y < y_min - tol or y > y_max + tol:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -701,3 +761,90 @@ def load_font_for_family(
         return None
     _font_cache[key] = fm
     return fm
+
+
+# ---------------------------------------------------------------------------
+# P20.4 — font fallback chain: specified family → system-fonts dir scan →
+# built-in bitmap.  A CSS ``font-family`` value may name a family that has
+# no bundled TTF (e.g. "verdana" when only arial.ttf is shipped).  The chain:
+#   1. Try the exact family (with the weight suffix).
+#   2. Try the family's registered fallbacks (e.g. monospace → cour → arial).
+#   3. Scan the search dirs for *any* TTF whose family name matches, or,
+#      failing that, any TTF at all (last resort).
+#   4. None → caller falls back to the built-in 8×8 bitmap.
+# A ``weight_class`` hook selects the closest available weight.
+# ---------------------------------------------------------------------------
+
+def match_weight(available, requested: int = 400) -> Optional[int]:
+    """P20.4 — pick the closest available weight_class to ``requested``.
+
+    ``available`` is a mapping of family-name → :class:`FontMetrics`
+    (each carries ``weight_class``).  Returns the chosen weight_class, or
+    ``None`` if ``available`` is empty.  The weight closest to
+    ``requested`` wins; ties prefer the heavier weight.
+    """
+    if not available:
+        return None
+    best = None
+    best_dist = None
+    for m in available.values():
+        w = getattr(m, "weight_class", 400)
+        d = abs(w - requested)
+        if best_dist is None or d < best_dist or (d == best_dist and best is not None and w > best):
+            best_dist = d
+            best = w
+    return best
+
+
+def find_font_for_family(family: str, weight_class: int = 400,
+                         search_dirs: Optional[list] = None,
+                         want_bold: bool = False) -> Optional[FontMetrics]:
+    """P20.4 — resolve a CSS font-family + weight to a loaded FontMetrics.
+
+    Walks the fallback chain (exact family → registered fallbacks → any
+    available TTF) and returns the first :class:`FontMetrics` whose
+    ``weight_class`` is the closest to ``weight_class``.  ``want_bold``
+    biases the search toward the bold variant when available.
+    """
+    import os
+    import glob
+    import re as _re
+    dirs = list(search_dirs) if search_dirs else []
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    dirs = dirs + [script_dir + "/fonts", script_dir, "."]
+
+    # 1. Exact family (with weight suffix when bold is requested).
+    bold = want_bold or weight_class >= 600
+    m = load_font_for_family(family, 0.0, bold, dirs)
+    if m is not None:
+        return m
+    # 2. Registered fallbacks (exact weight).
+    bases = _FAMILY_FALLBACKS.get(family, [])
+    for fb in bases:
+        m = load_font_for_family(fb, 0.0, bold, dirs)
+        if m is not None:
+            return m
+    # 3. Scan search dirs for any TTF whose family name matches.
+    fam_norm = family.lower()
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for p in sorted(glob.glob(os.path.join(d, "*.ttf"))) + \
+                sorted(glob.glob(os.path.join(d, "*.otf"))):
+            base = _re.sub(r"(bd|b)$", "", os.path.basename(p)).rsplit(".", 1)[0]
+            if base in (_FAMILY_FILES.get(family, fam_norm)) or base in fam_norm or fam_norm in base:
+                m = load_font_for_family(base, 0.0, bold, [d])
+                if m is not None:
+                    return m
+    # 4. Last resort: any available TTF (normal weight preferred).
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for p in sorted(glob.glob(os.path.join(d, "*.ttf"))) + \
+                sorted(glob.glob(os.path.join(d, "*.otf"))):
+            m = load_font_for_family(os.path.basename(p).rsplit(".", 1)[0],
+                                    0.0, bold, [d])
+            if m is not None:
+                return m
+    return None
+

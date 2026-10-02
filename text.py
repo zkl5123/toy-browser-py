@@ -53,10 +53,64 @@ def char_advance(font_px: float, font_family: str = "monospace") -> float:
     return float(_cell_width(font_family)) * scale_factor(font_px)
 
 
-def _real_metrics_for(font_family: str):
-    """P17 — return the real TTF metrics for a family, or None."""
+def _real_metrics_for(font_family: str, weight: int = 400):
+    """P17/P20.4 — return the real TTF metrics for a family+weight, or None.
+
+    P20.4 — when ``weight >= 600`` and no bold TTF file is registered,
+    returns the normal-weight font and sets the module-level
+    ``_synthetic_bold`` flag so the curve path dilates the outline.
+    """
     import font
+    if weight >= 600:
+        m, synth = font.get_metrics_for_weight(font_family, weight)
+        global _synthetic_bold
+        _synthetic_bold = synth
+        return m
     return font.get_real_metrics(font_family)
+
+
+# P20.4 — set by _real_metrics_for when a bold weight is requested but
+# no bold TTF file exists; the curve path applies synthetic dilation.
+_synthetic_bold: bool = False
+
+
+
+def _outline_valid(outline) -> bool:
+    """P20 — bbox-validate a glyph outline (lazy import of ttf_font)."""
+    try:
+        import ttf_font
+    except ImportError:
+        return False
+    return ttf_font.outline_valid(outline)
+
+
+def _draw_curve_glyph(bitmap, x: int, y: int, ch: str, font_px: float,
+                      color, real, text_rendering: str = "auto",
+                      weight: float = 1.0) -> None:
+    """P20 — curve-based glyph rasterization (quadratic-Bezier outline).
+
+    Uses ``rasterize.draw_glyph_curves`` to fill the glyph outline with
+    2×2 supersampling + even-odd scanline.  Falls back to the legacy
+    bitmap blit if the outline fails bbox validation (which indicates a
+    buggy coordinate read in the TTF parser).
+
+    ``text_rendering`` (P20.5): "optimizeSpeed" disables antialiasing;
+    "optimizeQuality"/"auto" keep it.  ``weight`` (P20.4): > 1.0 triggers
+    synthetic bold (outline dilation) when no bold TTF file is available.
+    """
+    import rasterize
+    outline = real.glyph_outline(ch)
+    if outline is None or not _outline_valid(outline):
+        return
+    scale = font_px / real.units_per_em
+    # Y baseline: in the bitmap, y is the top of the glyph box.  The TTF
+    # baseline sits at (y + ascent_px).  We pass origin so the outline is
+    # placed with its baseline at the correct vertical position.
+    baseline_y = y + real.ascent * scale
+    rasterize.draw_glyph_curves(bitmap, outline, scale,
+                                x, baseline_y, color, weight=weight,
+                                antialias=(text_rendering != "optimizeSpeed"))
+
 
 
 def advance_text(text: str, font_px: float, font_family: str = "monospace") -> float:
@@ -344,16 +398,27 @@ def draw_text(
     max_width: float,
     align: str = "left",
     font_family: str = "monospace",
+    letter_spacing: float = 0.0,
+    text_rendering: str = "auto",
+    font_weight: int = 400,
 ) -> float:
     """P15.4 — Wrap + blit `text` onto `bitmap`. `align` is left|center|right.
 
     ``font_family`` selects the glyph variant ("monospace" default or "serif").
+    P20.5 — ``letter_spacing`` adds extra advance between characters (px);
+    ``text_rendering`` is a quality hint: "optimizeSpeed" disables the
+    2×2 antialiasing supersampling in the curve path, "optimizeQuality"
+    keeps it.
+    P20.4 — ``font_weight`` >= 600 selects the bold TTF variant; when no
+    bold file is registered the curve path applies synthetic bold
+    (dilation) to the normal-weight outline.
     Returns the total height consumed (px).
     """
     scale = scale_factor(font_px)
     advance = char_advance(font_px, font_family)
     line_height = line_height_px(font_px, font_family)
-    real = _real_metrics_for(font_family)
+    real = _real_metrics_for(font_family, font_weight)
+    weight = 2.0 if (_synthetic_bold and font_weight >= 600) else 1.0
     wrapped = wrap(text, max_width, font_px, font_family)
     cy = y
     for line in wrapped:
@@ -367,13 +432,28 @@ def draw_text(
             else:
                 cx = x
             for ch in stripped:
-                g = _glyph_for(ord(ch) & 0x7F, font_family)
-                _blit(bitmap, int(cx), int(cy), g, scale, color,
-                      cell_w=_cell_width(font_family))
+                # P20 — try curve-based rasterization first; fall back to
+                # the legacy 8×8 bitmap blit when the glyph outline is
+                # missing or fails bbox validation.
+                if real is not None:
+                    outline = real.glyph_outline(ch)
+                    if outline is not None and _outline_valid(outline):
+                        _draw_curve_glyph(bitmap, int(cx), int(cy), ch,
+                                         font_px, color, real,
+                                         text_rendering=text_rendering,
+                                         weight=weight)
+                    else:
+                        g = _glyph_for(ord(ch) & 0x7F, font_family)
+                        _blit(bitmap, int(cx), int(cy), g, scale, color,
+                              cell_w=_cell_width(font_family))
+                else:
+                    g = _glyph_for(ord(ch) & 0x7F, font_family)
+                    _blit(bitmap, int(cx), int(cy), g, scale, color,
+                          cell_w=_cell_width(font_family))
                 # P17 — per-character advance from TTF hmtx when available.
                 if real is not None:
-                    cx += real.advance_width(ch, font_px)
+                    cx += real.advance_width(ch, font_px) + letter_spacing
                 else:
-                    cx += advance
+                    cx += advance + letter_spacing
         cy += line_height
     return len(wrapped) * line_height

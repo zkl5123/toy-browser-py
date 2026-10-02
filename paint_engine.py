@@ -69,6 +69,12 @@ class DisplayCommand:
     scroll_clip_top: float = 0.0
     scroll_clip_right: float = 0.0
     scroll_clip_bottom: float = 0.0
+    # P20.5 — letter-spacing (px, per-character extra advance) and
+    # text-rendering quality ("auto" | "optimizeSpeed" | "optimizeQuality").
+    letter_spacing: float = 0.0
+    text_rendering: str = "auto"
+    # P20.4 — CSS font-weight (>= 600 → bold variant / synthetic bold).
+    font_weight: int = 400
 
 
 class DisplayList:
@@ -421,6 +427,11 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                     font_px=bx.font_px,
                     align=bx.text_align,
                     max_width=max_w if max_w > 0 else r.w,
+                    # P20.5 — letter-spacing + text-rendering.
+                    letter_spacing=bx.letter_spacing,
+                    text_rendering=getattr(bx, "text_rendering", "auto"),
+                    # P20.4 — font-weight (>= 600 → bold / synthetic bold).
+                    font_weight=getattr(bx, "font_weight", 400),
                 )
             )
         )
@@ -473,6 +484,9 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
                 color,
                 cmd.max_width,
                 align=cmd.align,
+                letter_spacing=cmd.letter_spacing,
+                text_rendering=cmd.text_rendering,
+                font_weight=cmd.font_weight,
             )
         elif cmd.kind == "img":
             # P3.1 — nearest-neighbour scale the embedded pixels into the box.

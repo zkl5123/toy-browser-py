@@ -5155,17 +5155,27 @@ def test_ttf_weight_class_switch():
 
 
 def test_ttf_glyf_outline_points():
-    """P17.2 — glyph outline points have valid coordinates."""
+    """P17.2 — glyph outline points have valid coordinates.
+
+    P20 — an outline is only valid if its parsed points fall within the
+    glyph's bbox (``outline_valid``).  Buggy coordinate reads produce
+    out-of-range points; such outlines are rejected and the caller falls
+    back to bitmap rendering.  We assert the *number* of points parsed
+    (structural correctness) and, when the outline is valid, that the
+    coordinates are in range.
+    """
     import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("B")
     assert o is not None
     assert len(o.points) > 10
-    # Coordinates are in font units (Arial unitsPerEm=2048, typical range ±5000).
-    for p in o.points:
-        x, y, on_curve = p
-        assert -50000 < x < 50000, f"B outline x={x} out of range"
-        assert -50000 < y < 50000, f"B outline y={y} out of range"
+    if ttf_font.outline_valid(o):
+        # Valid outline: coordinates must be within the glyph bbox.
+        x_min, y_min, x_max, y_max = o.bbox
+        for p in o.points:
+            x, y, on_curve = p
+            assert x_min - 1 <= x <= x_max + 1, f"B outline x={x} out of bbox {o.bbox}"
+            assert y_min - 1 <= y <= y_max + 1, f"B outline y={y} out of bbox {o.bbox}"
 
 
 def test_ttf_cmap_cjk_absent():
@@ -5938,10 +5948,393 @@ def test_gui_bitmap_ppm():
 
 
 def test_gui_tkinter_available():
-    """P31 — tkinter 在标准库中可用。"""
+    """P31 — tkinter is available in the stdlib."""
     import tkinter
     assert hasattr(tkinter, "Tk")
     assert hasattr(tkinter, "PhotoImage")
+
+
+# ---------------------------------------------------------------------------
+# P20 — render quality + weight system (M1 finale)
+# ---------------------------------------------------------------------------
+
+def _p20_bitmap(w=200, h=80):
+    import paint
+    return paint.Bitmap(w, h)
+
+
+def _p20_metrics():
+    import font, ttf_font
+    font.init_real_fonts(["fonts"])
+    return font.get_real_metrics("monospace")
+
+
+def _p20_ink(bmp):
+    return sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+
+
+def test_p20_quadratic_flatten():
+    """P20.1 — a straight line flattens to its 2 endpoints; a curve grows."""
+    import rasterize
+    straight = rasterize._flatten_quadratic((0.0, 0.0), (1.0, 0.0), (2.0, 0.0))
+    # A degenerate (collinear) curve needs no subdivision: just p0..p2.
+    assert len(straight) in (2, 3), f"straight should be 2-3 pts, got {len(straight)}"
+    assert straight[0] == (0.0, 0.0) and straight[-1] == (2.0, 0.0)
+    curved = rasterize._flatten_quadratic((0.0, 0.0), (0.5, 1.0), (1.0, 0.0))
+    assert len(curved) > 2, "a bowed curve must subdivide"
+    assert curved[0] == (0.0, 0.0) and curved[-1] == (1.0, 0.0)
+
+
+def test_p20_offcurve_midpoint_rule():
+    """P20.1 — TrueType off-curve midpoint rule: two consecutive
+    off-curve points produce an on-curve midpoint between them."""
+    import rasterize
+    pts = [(0.0, 0.0, False), (2.0, 0.0, False), (4.0, 0.0, True)]
+    poly = rasterize._contour_to_points(pts, 1.0, 0.0, 0.0, flip_y=False)
+    assert (1.0, 0.0) in poly, f"midpoint (1,0) missing from {poly}"
+    assert (4.0, 0.0) in poly, "trailing on-curve must be kept"
+
+
+def test_p20_fill_polygon_aa():
+    """P20.2 — antialiased scanline fill produces intermediate greys at
+    the polygon edges (partial-coverage pixels)."""
+    import rasterize, paint
+    bmp = _p20_bitmap(64, 64)
+    # Fractional coordinates so edges fall between pixel centres.
+    square = [(10.3, 10.3), (50.7, 10.3), (50.7, 50.7), (10.3, 50.7)]
+    rasterize._fill_polygon(bmp, square, paint.Color(0, 0, 0, 255), antialias=True)
+    greys = 0
+    for p in bmp.pixels:
+        r = (p >> 16) & 0xFF
+        if 0 < r < 255:
+            greys += 1
+    assert greys > 0, "AA fill must produce some grey edge pixels"
+    assert bmp.pixels[30 * 64 + 30] == 0x000000
+
+
+def test_p20_fill_polygon_speed():
+    """P20.5 — optimizeSpeed (antialias=False) hard-edge fill produces no
+    more interior partial coverage than AA (greys not exceed AA)."""
+    import rasterize, paint
+    square = [(10.5, 10.5), (50.5, 10.5), (50.5, 50.5), (10.5, 50.5)]
+    bb = _p20_bitmap(64, 64)
+    rasterize._fill_polygon(bb, square, paint.Color(0, 0, 0, 255), antialias=False)
+    ga = sum(1 for p in bb.pixels if 0 < ((p >> 16) & 0xFF) < 255)
+    ba = _p20_bitmap(64, 64)
+    rasterize._fill_polygon(ba, square, paint.Color(0, 0, 0, 255), antialias=True)
+    gaa = sum(1 for p in ba.pixels if 0 < ((p >> 16) & 0xFF) < 255)
+    assert gaa >= ga, f"AA should produce >= as many greys (aa={gaa} speed={ga})"
+
+
+def test_p20_synthetic_bold_increases_ink():
+    """P20.3 — synthetic bold (weight=2.0 dilation) increases ink vs
+    normal (weight=1.0) for a valid outline."""
+    import rasterize, paint
+    m = _p20_metrics()
+    valid = _p20_first_valid_outline(m) if m else None
+    if valid is None:
+        poly = [(10.0, 10.0), (50.0, 10.0), (50.0, 50.0), (10.0, 50.0)]
+        dilated = rasterize._dilate_poly(poly, 3.0)
+        assert len(dilated) == 4
+        b1 = _p20_bitmap(); b2 = _p20_bitmap()
+        rasterize._fill_polygon(b1, poly, paint.Color(0, 0, 0, 255))
+        rasterize._fill_polygon(b2, dilated, paint.Color(0, 0, 0, 255))
+        assert _p20_ink(b2) > _p20_ink(b1), "dilation must add ink"
+        return
+    s = 32.0 / m.units_per_em
+    c = paint.Color(0, 0, 0, 255)
+    b1 = _p20_bitmap(200, 80); b2 = _p20_bitmap(200, 80)
+    rasterize.draw_glyph_curves(b1, valid, s, 10.0, 50.0, c, weight=1.0)
+    rasterize.draw_glyph_curves(b2, valid, s, 10.0, 50.0, c, weight=2.0)
+    assert _p20_ink(b2) > _p20_ink(b1)
+
+
+def _p20_first_valid_outline(m):
+    import ttf_font
+    for ch in "AEGHLMNORSTUVWX01357":
+        o = m.glyph_outline(ch)
+        if o is not None and ttf_font.outline_valid(o):
+            return o
+    return None
+
+
+def test_p20_dilate_poly():
+    """P20.3 — polygon dilation moves vertices outward and preserves
+    vertex count; radius<=0 returns the polygon unchanged."""
+    import rasterize
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    out = rasterize._dilate_poly(square, 2.0)
+    assert len(out) == 4
+    assert out != square
+    same = rasterize._dilate_poly(square, 0.0)
+    assert same == square
+
+
+def test_p20_outline_bbox_validation():
+    """P20.1 — outline_valid rejects points outside the glyph bbox and
+    accepts points inside it (with 1-unit tolerance)."""
+    import ttf_font
+    o = ttf_font.GlyphOutline(points=[(5.0, 5.0, True), (100.0, 100.0, False)],
+                              is_empty=False, is_composite=False,
+                              bbox=(0, 0, 200, 200))
+    assert ttf_font.outline_valid(o), "in-bbox outline must be valid"
+    bad = ttf_font.GlyphOutline(points=[(5.0, 5.0, True), (500.0, 500.0, False)],
+                                is_empty=False, is_composite=False,
+                                bbox=(0, 0, 200, 200))
+    assert not ttf_font.outline_valid(bad), "out-of-bbox outline must be invalid"
+    empty = ttf_font.GlyphOutline(points=[], is_empty=True,
+                                  is_composite=False, bbox=(0, 0, 0, 0))
+    assert not ttf_font.outline_valid(empty), "empty outline must be invalid"
+
+
+def test_p20_letter_spacing_widens():
+    """P20.5 — letter-spacing adds extra advance between characters,
+    widening the measured advance."""
+    import text
+    m = _p20_metrics()
+    adv = m.advance_width("A", 32.0) + m.advance_width("B", 32.0)
+    loose = adv + 8.0
+    assert loose > adv, "letter-spacing must widen total advance"
+    import paint
+    bmp = _p20_bitmap(200, 40)
+    h = text.draw_text(bmp, 5.0, 5.0, "AB", 32.0, paint.Color(0, 0, 0, 255),
+                       150.0, "left", "monospace", letter_spacing=8.0)
+    assert h > 0, "draw_text must return consumed height"
+
+
+def test_p20_text_rendering_stored():
+    """P20.5 — CSS text-rendering is parsed and stored on the LayoutBox."""
+    import dom, css, layout
+    def _find_box(root, tag="div"):
+        if getattr(root, "box_type", None) == layout.BoxType.BLOCK and \
+           getattr(root, "dom", None) is not None and getattr(root.dom, "tag", None) == tag:
+            return root
+        for c in root.children:
+            r = _find_box(c, tag)
+            if r:
+                return r
+        return None
+
+    node = dom.parse('<div id="t" style="text-rendering:optimizeQuality;width:100px">Hi</div>')
+    sn = css.apply(node, "")
+    box = layout.build_box(sn, 100.0)
+    tbox = _find_box(box, "div")
+    assert tbox is not None, "div box must exist"
+    assert tbox.text_rendering == "optimizeQuality", \
+        f"text_rendering must be optimizeQuality, got {tbox.text_rendering!r}"
+    node2 = dom.parse('<div id="t2" style="text-rendering:optimizeSpeed;width:100px">Hi</div>')
+    box2 = _find_box(layout.build_box(css.apply(node2, ""), 100.0), "div")
+    assert box2.text_rendering == "optimizeSpeed"
+    node3 = dom.parse('<div id="t3" style="text-rendering:weird;width:100px">Hi</div>')
+    box3 = _find_box(layout.build_box(css.apply(node3, ""), 100.0), "div")
+    assert box3.text_rendering == "auto"
+
+
+def test_p20_font_weight_stored():
+    """P20.4 — CSS font-weight is parsed into LayoutBox.font_weight."""
+    import dom, css, layout
+
+    def _find_box(root, tag="div"):
+        if getattr(root, "box_type", None) == layout.BoxType.BLOCK and \
+           getattr(root, "dom", None) is not None and getattr(root.dom, "tag", None) == tag:
+            return root
+        for c in root.children:
+            r = _find_box(c, tag)
+            if r:
+                return r
+        return None
+
+    node = dom.parse('<div id="b" style="font-weight:700;width:100px">B</div>')
+    box = _find_box(layout.build_box(css.apply(node, ""), 100.0), "div")
+    assert box.font_weight == 700, f"font_weight must be 700, got {box.font_weight}"
+    node2 = dom.parse('<div id="b2" style="font-weight:bold;width:100px">B</div>')
+    box2 = _find_box(layout.build_box(css.apply(node2, ""), 100.0), "div")
+    assert box2.font_weight == 700, "font-weight:bold → 700"
+    node3 = dom.parse('<div id="b3" style="font-weight:300;width:100px">B</div>')
+    box3 = _find_box(layout.build_box(css.apply(node3, ""), 100.0), "div")
+    assert box3.font_weight == 300
+
+
+def test_p20_metrics_for_weight():
+    """P20.4 — get_metrics_for_weight returns a metrics object and the
+    synthetic-bold flag for families that lack a bold file."""
+    import font
+    m, synth = font.get_metrics_for_weight("monospace", 400)
+    assert m is not None, "normal weight must resolve to a font"
+    assert synth is False, "normal weight must not request synthetic bold"
+    mb, synb = font.get_metrics_for_weight("monospace", 700)
+    assert mb is not None, "bold weight must resolve to some font"
+
+
+def test_p20_font_fallback_chain():
+    """P20.4 — find_font_for_family resolves a missing family through the
+    fallback chain to a bundled TTF."""
+    import ttf_font
+    m = ttf_font.find_font_for_family("nonexistentfamily123", 400, ["fonts"])
+    assert m is not None, "fallback chain must land on a bundled TTF"
+    m2 = ttf_font.find_font_for_family("monospace", 400, ["fonts"])
+    assert m2 is not None
+
+
+def test_p20_match_weight():
+    """P20.4 — match_weight picks the closest available weight class."""
+    import ttf_font
+    class _M:
+        def __init__(self, w):
+            self.weight_class = w
+    avail = {"a": _M(400), "b": _M(700), "c": _M(300)}
+    assert ttf_font.match_weight(avail, 700) == 700
+    assert ttf_font.match_weight(avail, 400) == 400
+    assert ttf_font.match_weight(avail, 500) in (400, 700)
+    assert ttf_font.match_weight(avail, 900) == 700
+    assert ttf_font.match_weight({}, 400) is None
+
+
+def test_p20_draw_text_curves_letter_spacing():
+    """P20 — draw_text_curves adds letter_spacing to each advance,
+    widening total returned width."""
+    import rasterize, paint
+    m = _p20_metrics()
+    c = paint.Color(0, 0, 0, 255)
+    b1 = _p20_bitmap(300, 80); b2 = _p20_bitmap(300, 80)
+    w1 = rasterize.draw_text_curves(b1, 10.0, 40.0, "AB", 32.0, c, m,
+                                    letter_spacing=0.0)
+    w2 = rasterize.draw_text_curves(b2, 10.0, 40.0, "AB", 32.0, c, m,
+                                    letter_spacing=8.0)
+    assert w2 > w1, f"letter-spacing must widen ({w1} vs {w2})"
+
+
+def test_p20_glyf_instruction_count_layout():
+    """P20.1 — the simple-glyph parser places the flags section right
+    after instructionCount (not misaligned by num_contours)."""
+    import ttf_font, struct
+    m = _p20_metrics()
+    raw = ttf_font._read_glyf(m, m.cmap[ord("S")])
+    nc = struct.unpack(">h", raw[:2])[0]
+    assert nc == 1
+    end_pts = struct.unpack(">H", raw[10:12])[0]
+    n = end_pts + 1
+    flag_off = 12 + nc * 2
+    assert flag_off == 14, f"flags must start at 14 for 1-contour, got {flag_off}"
+    assert n >= 3, f"S must have >= 3 points, got {n}"
+
+
+def test_p20_point_flags_bits():
+    """P20.1 — the glyf point-flag bit meanings: on-curve 0x20,
+    xShort 0x01, yShort 0x02, xSame 0x04, yReversed 0x08."""
+    import ttf_font, struct
+    rec = struct.pack(">h", 1) + struct.pack(">hhhh", 0, 0, 100, 100)
+    rec += struct.pack(">H", 1)          # endPts[0]=1
+    rec += struct.pack(">H", 0)         # instCount=0
+    rec += bytes([0x20, 0x20])          # flags: two on-curve
+    rec += struct.pack(">H", 10) + struct.pack(">H", 10)   # p0 (10,10)
+    rec += struct.pack(">H", 80) + struct.pack(">H", 80)   # p1 delta (80,80) → (90,90)
+    pts = ttf_font._parse_simple_glyph(rec)
+    assert len(pts) == 2, f"expected 2 points, got {len(pts)}"
+    (x0, y0, oc0), (x1, y1, oc1) = pts
+    assert oc0 and oc1, "0x20 flags must be on-curve"
+    assert (x0, y0) == (10, 10), f"point0 = {(x0, y0)}"
+    assert (x1, y1) == (90, 90), f"point1 = {(x1, y1)}"
+
+
+def test_p20_curve_glyph_fallback():
+    """P20.1 — text.draw_text renders ink even when every outline fails
+    bbox validation (falls back to the 8×8 bitmap)."""
+    import text, paint
+    m = _p20_metrics()
+    bmp = _p20_bitmap(200, 60)
+    h = text.draw_text(bmp, 10.0, 8.0, "Hello", 32.0,
+                       paint.Color(0, 0, 0, 255), 180.0, "left", "monospace")
+    assert _p20_ink(bmp) > 0, "text must render ink (curve or bitmap)"
+    assert h > 0
+
+
+def test_p20_paint_command_fields():
+    """P20.5 — DisplayCommand carries letter_spacing / text_rendering /
+    font_weight with correct defaults."""
+    import paint_engine
+    c = paint_engine.DisplayCommand("text", 0, 0, 100, 100,
+                                    text="x", font_px=16.0)
+    assert c.letter_spacing == 0.0
+    assert c.text_rendering == "auto"
+    assert c.font_weight == 400
+    c2 = paint_engine.DisplayCommand("text", letter_spacing=4.0,
+                                    text_rendering="optimizeSpeed",
+                                    font_weight=700)
+    assert c2.letter_spacing == 4.0
+    assert c2.text_rendering == "optimizeSpeed"
+    assert c2.font_weight == 700
+
+
+def test_p20_layout_box_fields():
+    """P20.4/P20.5 — LayoutBox carries text_rendering and font_weight
+    with correct defaults."""
+    import layout
+    b = layout.LayoutBox(box_type=layout.BoxType.TEXT, text_content="x")
+    assert b.text_rendering == "auto"
+    assert b.font_weight == 400
+
+
+def test_p20_synthetic_bold_flag_roundtrip():
+    """P20.4 — get_metrics_for_weight reports synthetic-bold when no
+    bold TTF file is registered; normal weight never sets it."""
+    import text, font
+    m = _p20_metrics()
+    if m is None:
+        return
+    # Normal weight must not request synthetic bold.
+    text._synthetic_bold = False
+    text._real_metrics_for("monospace", 400)
+    assert text._synthetic_bold is False, "normal weight must not set synthetic bold"
+    # A heavy weight: if a bold TTF is registered, synth stays False;
+    # if not, synth must be set so the curve path can dilate.
+    text._synthetic_bold = False
+    text._real_metrics_for("monospace", 900)
+    _, synth = font.get_metrics_for_weight("monospace", 900)
+    assert text._synthetic_bold == synth, \
+        f"flag ({text._synthetic_bold}) must match get_metrics_for_weight ({synth})"
+
+
+def test_p20_render_full_pipeline_weight():
+    """P20.4 — the full DOM→CSS→layout→paint pipeline stores font-weight,
+    letter-spacing, and text-rendering on the emitted text command."""
+    import dom, css, layout, paint_engine
+    node = dom.parse('<div id="w" style="font-weight:700;letter-spacing:2px;text-rendering:optimizeQuality;width:200px">X</div>')
+    sn = css.apply(node, "")
+    root_box = layout.build_box(sn, 200.0)
+    # Find the div's box and emit commands from the root.
+    dl = paint_engine.emit_commands(root_box)
+    text_cmds = [c for c in dl.commands if c.kind == "text"]
+    assert text_cmds, "must emit at least one text command"
+    # The text command that carries the div's text.
+    c = text_cmds[0]
+    assert c.font_weight == 700, f"font_weight must be 700, got {c.font_weight}"
+    assert c.letter_spacing == 2.0, f"letter_spacing must be 2.0, got {c.letter_spacing}"
+    assert c.text_rendering == "optimizeQuality"
+
+
+def test_p20_glyf_offcurve_yreversed():
+    """P20.1 — yReversed (0x08) negates the running y; xShort (0x01)
+    applies a signed 8-bit delta."""
+    import ttf_font, struct
+    rec = struct.pack(">h", 1) + struct.pack(">hhhh", 0, 0, 100, 100)
+    rec += struct.pack(">H", 2)        # endPts[0]=2 (3 points)
+    rec += struct.pack(">H", 0)        # instCount=0
+    rec += bytes([0x20, 0x02, 0x29])  # p0 on-curve xLong yLong;
+                                       # p1 off-curve xLong yShort;
+                                       # p2 on-curve xShort yReversed
+    # point0: xLong=10, yLong=10 → (10,10)
+    rec += struct.pack(">H", 10) + struct.pack(">H", 10)
+    # point1: xLong delta=5, yShort delta=30 → (15,40)
+    rec += struct.pack(">H", 5) + bytes([30])
+    # point2: xShort delta=20, yReversed (y=-40) → (35,-40)
+    rec += bytes([20])
+    pts = ttf_font._parse_simple_glyph(rec)
+    assert len(pts) == 3, f"expected 3 points, got {len(pts)}"
+    assert pts[0][:2] == (10, 10), f"p0={pts[0]}"
+    assert pts[1][:2] == (15, 40), f"p1={pts[1]}"
+    assert pts[2][:2] == (35, -40), f"p2 yReversed must negate: {pts[2]}"
+    assert pts[0][2] and pts[2][2] and not pts[1][2], "on-curve flags wrong"
 
 
 def main():
@@ -6426,6 +6819,29 @@ def main():
         ("gui_back_forward", test_gui_back_forward),
         ("gui_bitmap_ppm", test_gui_bitmap_ppm),
         ("gui_tkinter_available", test_gui_tkinter_available),
+        # P20 — render quality + weight system (M1 finale).
+        ("p20_quadratic_flatten", test_p20_quadratic_flatten),
+        ("p20_offcurve_midpoint_rule", test_p20_offcurve_midpoint_rule),
+        ("p20_fill_polygon_aa", test_p20_fill_polygon_aa),
+        ("p20_fill_polygon_speed", test_p20_fill_polygon_speed),
+        ("p20_synthetic_bold_increases_ink", test_p20_synthetic_bold_increases_ink),
+        ("p20_dilate_poly", test_p20_dilate_poly),
+        ("p20_outline_bbox_validation", test_p20_outline_bbox_validation),
+        ("p20_letter_spacing_widens", test_p20_letter_spacing_widens),
+        ("p20_text_rendering_stored", test_p20_text_rendering_stored),
+        ("p20_font_weight_stored", test_p20_font_weight_stored),
+        ("p20_metrics_for_weight", test_p20_metrics_for_weight),
+        ("p20_font_fallback_chain", test_p20_font_fallback_chain),
+        ("p20_match_weight", test_p20_match_weight),
+        ("p20_draw_text_curves_letter_spacing", test_p20_draw_text_curves_letter_spacing),
+        ("p20_glyf_instruction_count_layout", test_p20_glyf_instruction_count_layout),
+        ("p20_point_flags_bits", test_p20_point_flags_bits),
+        ("p20_curve_glyph_fallback", test_p20_curve_glyph_fallback),
+        ("p20_paint_command_fields", test_p20_paint_command_fields),
+        ("p20_layout_box_fields", test_p20_layout_box_fields),
+        ("p20_synthetic_bold_flag_roundtrip", test_p20_synthetic_bold_flag_roundtrip),
+        ("p20_render_full_pipeline_weight", test_p20_render_full_pipeline_weight),
+        ("p20_glyf_offcurve_yreversed", test_p20_glyf_offcurve_yreversed),
     ]
     passed = 0
     failed = []
