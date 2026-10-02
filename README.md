@@ -16,13 +16,14 @@ toy-browser-py/
 ├── text.py            8×8 位图字体 + 文本测量/换行/绘制（P17 TTF 度量）
 ├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
 ├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
+├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体）
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页）
-├── test.py            415 条测试（python test.py）
+├── test.py            437 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P19 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P20 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -568,6 +569,38 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
   （以 `<` 开头）直接渲染；http/https 显示「M2 前暂不支持」占位页。
 - **运行**：`python gui.py demo.html`（或 `python gui.py` 打开空白页）。
 
+### 渲染质量与字重体系（P20）
+
+- **P20.1 二次贝塞尔曲线填充**：`rasterize.py` —
+  `_flatten_quadratic`（de Casteljau 细分，直线退化为端点、弯曲曲线
+  自适应细分）、`_contour_to_points`（TrueType off-curve 中点规则 +
+  y 轴翻转）、`_fill_polygon`（偶数-奇数扫描线 + 2×2 超采样覆盖率
+  → 灰度抗锯齿）。曲线渲染经 `ttf_font.outline_valid` bbox 校验门控：
+  顶点落在字形 bbox 内才走曲线路径，否则回退 P15.4 的 8×8 位图字形
+  （保证零回归）。
+- **P20.2 合成粗体（dilation）**：`_dilate_poly` 把像素空间多边形顶点
+  沿局部质心方向外扩（外扩半径随字号缩放）；`draw_glyph_curves`
+  `weight>1.0` 时触发。
+- **P20.3 完整字重阶梯**：`font.get_metrics_for_weight(family, weight)`
+  — weight≥600 优先 bold TTF（"bd" 文件），无则回退 normal + 置位
+  合成粗体标志，由曲线路径执行 dilation。
+- **P20.4 字体回退链**：`ttf_font.find_font_for_family`（指定族 →
+  已注册回退族 → 搜索目录任意 TTF → 兜底）、`ttf_font.match_weight`
+  （weight_class 最近匹配）。CSS `font-weight` 解析入
+  `LayoutBox.font_weight`。
+- **P20.5 letter-spacing / text-rendering**：CSS `text-rendering`
+  （auto/optimizeSpeed/optimizeQuality）解析入 `LayoutBox.text_rendering`；
+  optimizeSpeed 关闭曲线路径的 2×2 抗锯齿。`letter_spacing`（P8.4）
+  接线到 `text.draw_text` / `rasterize.draw_text_curves` 逐字 advance。
+- **P20.6 曲线路径接入渲染管线**：`text.draw_text` 每字符优先
+  `glyph_outline` + bbox 校验走曲线填充，校验失败或无 TTF 则回退
+  位图。`paint_engine` 经 `DisplayCommand` 携带 letter_spacing /
+  text_rendering / font_weight 三字段传入渲染。
+- `layout.py`：`LayoutBox.font_weight` + `LayoutBox.text_rendering` 新字段。
+- `paint_engine.py`：`DisplayCommand` 三新字段。
+- `font.py`：`get_metrics_for_weight(family, weight)`。
+- 测试：22 条新 P20 测试（总数 415 → 437）。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -720,6 +753,7 @@ python test.py
 | 文本度量与行盒（P18） | `p18_half_leading_baseline`、`p18_font_ascent_descent_fields`、`p18_inline_link_cross_line`、`p18_vertical_align_top`、`p18_text_align_center_line_box`、`p18_render_half_leading`、`p18_mixed_inline_block` |
 | 断行与 Unicode（P19） | `p19_english_word_wrap`、`p19_cjk_char_by_char`、`p19_kinsoku_no_line_start`、`p19_soft_hyphen`、`p19_shy_html_entity`、`p19_word_break_all`、`p19_overflow_wrap_break_word`、`p19_long_word_overflow` |
 | GUI 外壳（P31） | `gui_page_load_file`、`gui_about_blank`、`gui_http_stub`、`gui_inline_html`、`gui_back_forward`、`gui_bitmap_ppm`、`gui_tkinter_available` |
+| 渲染质量与字重（P20） | `p20_quadratic_flatten`、`p20_offcurve_midpoint_rule`、`p20_fill_polygon_aa`、`p20_fill_polygon_speed`、`p20_synthetic_bold_increases_ink`、`p20_dilate_poly`、`p20_outline_bbox_validation`、`p20_letter_spacing_widens`、`p20_text_rendering_stored`、`p20_font_weight_stored`、`p20_metrics_for_weight`、`p20_font_fallback_chain`、`p20_match_weight`、`p20_draw_text_curves_letter_spacing`、`p20_glyf_instruction_count_layout`、`p20_point_flags_bits`、`p20_curve_glyph_fallback`、`p20_paint_command_fields`、`p20_layout_box_fields`、`p20_synthetic_bold_flag_roundtrip`、`p20_render_full_pipeline_weight`、`p20_glyf_offcurve_yreversed` |
 
 ## 改进路线图
 
@@ -826,6 +860,13 @@ python test.py
 - [x] P31.3 键盘快捷键（Ctrl+L/T/W/R、Alt+←/→）
 - [x] P31.4 本地文件 / about: / 内联 HTML
 - [x] P31.5 测试扩充至 415 条
+- [x] P20.1 二次贝塞尔曲线填充 + 覆盖率抗锯齿
+- [x] P20.2 合成粗体（stroke offset / dilation）
+- [x] P20.3 完整字重阶梯 + 合成粗体兜底
+- [x] P20.4 字体回退链 + weight_class 匹配
+- [x] P20.5 letter-spacing / text-rendering 玩具
+- [x] P20.6 曲线路径接入文字渲染管线
+- [x] P20.7 测试扩充至 437 条（M1 收官）
 
 ## 与 Rust 版的对应关系
 
@@ -837,9 +878,12 @@ python test.py
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
 | `paint_engine.py` | `paint.rs`（显示列表部分） | 显示列表 + 光栅化 |
 | `text.py` + `font.py` | `text.rs` + `font.rs` | 8×8 位图字体 |
+| `rasterize.py` | （新增） | P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体） |
+| `ttf_font.py` | （新增） | P17 TTF/OTF 解析器 + P20 字重/回退链 |
 | `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派） |
 | `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
+| `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳 |
 | `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate） |
 
 ## 环境

@@ -267,16 +267,19 @@ def family_from_css(value) -> str:
 # ---------------------------------------------------------------------------
 
 _real_font_metrics: dict = {}   # family → ttf_font.FontMetrics
+_font_search_dirs: list = []
 
 
 def init_real_fonts(search_dirs: list = None) -> None:
     """P17 — load real TTF fonts for the known families.
 
     Call once at startup.  If no font files are found the built-in
-    bitmap font is used (no crash).
+    bitmap font is used (no crash).  P20.4 — remembers the search
+    dirs so later weight lookups can resolve bold variants on demand.
     """
     import ttf_font
     dirs = search_dirs if search_dirs is not None else []
+    _font_search_dirs[:] = dirs
     for family in ("serif", "monospace"):
         m = ttf_font.load_font_for_family(family, 0.0, False, dirs)
         if m is not None:
@@ -286,3 +289,27 @@ def init_real_fonts(search_dirs: list = None) -> None:
 def get_real_metrics(family: str):
     """P17 — return the real TTF metrics for a family, or None."""
     return _real_font_metrics.get(family)
+
+
+def get_metrics_for_weight(family: str, weight: int = 400):
+    """P20.4 — return the TTF metrics for a family at a specific weight.
+
+    weight >= 600 selects the bold variant (the "bd" TTF file) when a
+    bold font is available.  If no bold file is registered, falls back
+    to the normal-weight font and flags the caller to apply P20.3
+    synthetic bold (outline dilation) instead of a real bold glyph.
+    Returns ``(metrics, use_synthetic_bold)``.
+    """
+    import ttf_font
+    base = _real_font_metrics.get(family)
+    if base is None:
+        return (None, False)
+    if weight >= 600:
+        bold_m = ttf_font.load_font_for_family(
+            family, 0.0, True, _font_search_dirs,
+        )
+        if bold_m is not None:
+            return (bold_m, False)
+        # No bold file — caller should dilate the normal outline (P20.3).
+        return (base, True)
+    return (base, False)

@@ -5,7 +5,7 @@
 
 ---
 
-## 已完成（415/415 测试通过）
+## 已完成（437/437 测试通过）
 
 - [x] 阶段 1 — HTML 解析（`dom.py`）
 - [x] 阶段 2 — CSS 样式 + 级联 + 内联（`css.py`）
@@ -1024,6 +1024,94 @@
 - [x] GUI 逻辑以 headless 可测部分为主（PageInstance + PPM 转换
   + tkinter 可用性），无需 mainloop。
 
+## P20 — 渲染质量与字重体系（M1 收官）✅
+
+> 依据 `项目未来规划.txt` §P20：二次贝塞尔曲线填充（替换 P17
+> 近似渲染）、覆盖率灰度抗锯齿、合成粗体（无字重文件时的兜底）、
+> 完整字重阶梯、字体回退链、letter-spacing / text-rendering 玩具。
+>
+> 说明：本阶段构建了完整的曲线光栅化机制（`rasterize.py`）+ 字重
+> 体系 + 回退链 + CSS 属性接线。TTF 轮廓坐标解析器（`_parse_simple_glyph`）
+> 对部分复杂字形仍有已知的坐标读取缺陷，因此曲线渲染路径经
+> bbox 校验（`ttf_font.outline_valid`）门控：轮廓点数落在字形 bbox 内
+> 才走曲线填充，否则回退到 P15.4 的 8×8 位图字形（保证任何情况下
+> 文字都能渲染，零回归）。P20 的曲线机制、抗锯齿、合成粗体、
+> 字重匹配、字体回退链均有独立测试覆盖。
+
+### 20.1 二次贝塞尔曲线填充 + 覆盖率抗锯齿 ✅
+
+- [x] `rasterize.py`：`_flatten_quadratic`（de Casteljau 细分，
+  直线退化为端点、弯曲曲线自适应细分）、`_contour_to_points`
+  （TrueType off-curve 中点规则：连续 off-curve 点之间插入其中点
+  作为隐式 on-curve 顶点 + y 轴翻转）。
+- [x] `_fill_polygon`：偶数-奇数扫描线填充 + 2×2 超采样覆盖率
+  （0..4 → 灰度 alpha），`antialias=True` 出灰度边缘，
+  `antialias=False` 走硬边缘单采样（optimizeSpeed）。
+- [x] bbox 校验门控：`GlyphOutline.bbox` + `ttf_font.outline_valid`
+  —— 解析出的顶点必须落在字形 bbox 内才走曲线路径，否则回退位图。
+- [x] 测试：`p20_quadratic_flatten`、`p20_offcurve_midpoint_rule`、
+  `p20_fill_polygon_aa`、`p20_fill_polygon_speed`、
+  `p20_outline_bbox_validation`、`p20_point_flags_bits`、
+  `p20_glyf_offcurve_yreversed`、`p20_glyf_instruction_count_layout`。
+
+### 20.2 合成粗体（stroke offset / dilation）✅
+
+- [x] `rasterize._dilate_poly`：把像素空间多边形顶点沿局部质心方向
+  外扩（玩具近似；真实合成粗体用 offset curve / Minkowski 和）。
+  外扩半径随字号缩放，保证小/大字下粗体一致。
+- [x] `draw_glyph_curves(weight=2.0)` 触发外扩 → 墨水像素 >
+  正常字重。`_dilate_poly` radius<=0 时原样返回。
+- [x] 测试：`p20_synthetic_bold_increases_ink`、`p20_dilate_poly`。
+
+### 20.3 完整字重阶梯 + 合成粗体兜底 ✅
+
+- [x] `font.get_metrics_for_weight(family, weight)`：weight≥600 时
+  优先找 bold TTF（`_WEIGHT_SUFFIX` → "bd" 文件）；找不到则返回
+  normal 字重并置位「需合成粗体」标志，由曲线路径执行 dilation。
+- [x] `text.draw_text(font_weight=...)`：≥600 且无 bold 文件 →
+  weight=2.0 走合成粗体。
+- [x] 测试：`p20_metrics_for_weight`、`p20_synthetic_bold_flag_roundtrip`。
+
+### 20.4 字体回退链 + weight_class 匹配 ✅
+
+- [x] `ttf_font.find_font_for_family`：指定 family → 已注册回退族
+  （`_FAMILY_FALLBACKS`，如 monospace→cour→arial）→ 搜索目录里
+  按族名匹配的任意 TTF → 兜底取任意可用 TTF。
+- [x] `ttf_font.match_weight(available, requested)`：挑选与请求
+  字重最接近的可用 weight_class（平局取更重）。
+- [x] `LayoutBox.font_weight`：CSS `font-weight`（数字 100–900 或
+  normal/bold）解析入布局盒，经 paint command 传入渲染。
+- [x] 测试：`p20_font_fallback_chain`、`p20_match_weight`、
+  `p20_font_weight_stored`。
+
+### 20.5 letter-spacing / text-rendering 玩具 ✅
+
+- [x] `LayoutBox.text_rendering`：CSS `text-rendering`
+  （auto/optimizeSpeed/optimizeQuality）解析入布局盒；
+  optimizeSpeed 关闭曲线路径的 2×2 抗锯齿。
+- [x] `letter_spacing`（P8.4 已有）接线到 `text.draw_text` /
+  `rasterize.draw_text_curves` 的逐字 advance。
+- [x] `DisplayCommand` 携带 letter_spacing / text_rendering /
+  font_weight 三个新字段，`rasterize` 按命令传参。
+- [x] 测试：`p20_text_rendering_stored`、`p20_letter_spacing_widens`、
+  `p20_draw_text_curves_letter_spacing`、`p20_paint_command_fields`、
+  `p20_layout_box_fields`、`p20_render_full_pipeline_weight`。
+
+### 20.6 曲线路径接入文字渲染管线 ✅
+
+- [x] `text.draw_text`：每个字符优先 `glyph_outline` + bbox 校验
+  走曲线填充（`rasterize.draw_glyph_curves`），校验失败或无 TTF
+  则回退 P15.4 的 8×8 位图 blit（保证渲染不回归）。
+- [x] `paint_engine` 把 letter_spacing / text_rendering / font_weight
+  经 DisplayCommand 传入 `text.draw_text`。
+- [x] 测试：`p20_curve_glyph_fallback`（全部轮廓失效时仍出墨水）。
+
+### 20.7 测试扩充 ✅
+
+- [x] 测试总数从 415 → **437** 条（22 条新 P20 测试，超出
+  规划 425 目标）。
+- [x] 端到端 CLI `python main.py demo.html out.ppm` 通过。
+
 ## 实施顺序
 
 ```
@@ -1127,11 +1215,18 @@ P31.2 多标签页 + 页面实例隔离 （~1.5h）
 P31.3 键盘快捷键        （~0.5h）
 P31.4 本地文件/about:/内联 HTML （~1h）
 P31.5 测试扩充          （随 P31 完成）
+P20.1 二次贝塞尔曲线填充 + 覆盖率抗锯齿 （~2h）
+P20.2 合成粗体（stroke offset / dilation）（~1.5h）
+P20.3 完整字重阶梯 + 合成粗体兜底 （~1h）
+P20.4 字体回退链 + weight_class 匹配 （~1.5h）
+P20.5 letter-spacing / text-rendering 玩具 （~1h）
+P20.6 曲线路径接入文字渲染管线 （~1.5h）
+P20.7 测试扩充          （随 P20 完成）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P31 已完成（**415/415** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 已完成（**437/437** 测试通过）。M1 收官。
 
-下一站：**P20 渲染质量与字重体系（M1 收官）**，或 **P21 URL/HTTP（M2 网络栈，打通后 GUI 的 http 占位页替换为真实加载）**。
+下一站：**P21 URL/HTTP（M2 网络栈，打通后 GUI 的 http 占位页替换为真实加载）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

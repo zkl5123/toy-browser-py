@@ -132,6 +132,10 @@ class LayoutBox:
     letter_spacing: float = 0.0  # px per character
     word_spacing: float = 0.0  # px per word
     text_transform: str = ""  # "uppercase" / "lowercase" / "capitalize" / ""
+    # P20.5 — text-rendering quality hint ("auto" | "optimizeSpeed" |
+    # "optimizeQuality").  The toy renderer maps this to whether the
+    # curve rasterizer uses 2×2 antialiasing (quality) or skips it (speed).
+    text_rendering: str = "auto"
     # P18 — line box model: font ascent/descent in px + baseline y.
     font_ascent_px: float = 0.0
     font_descent_px: float = 0.0
@@ -178,6 +182,9 @@ class LayoutBox:
     webkit_appearance: str = ""      # "none" | "button" | "auto" | ""
     # P15.4 — CSS font-family (toy: "monospace" or "serif")
     font_family: str = "monospace"
+    # P20.4 — CSS font-weight (numeric 100–900 or "normal"/"bold").
+    # The toy stores the raw value; >= 600 selects the bold TTF variant.
+    font_weight: int = 400
     # P16.3 — CSS text-justify / word-break / hyphens (toy: stored)
     text_justify: str = ""    # "none" | "inter-word" | "new" | "auto" | ""
     word_break: str = ""      # "normal" | "break-all" | "keep-all" | ""
@@ -680,6 +687,21 @@ def build_box(sn: StyledNode, parent_font_px: float,
     if text_transform not in ("uppercase", "lowercase", "capitalize"):
         text_transform = ""
 
+    # P20.5 — text-rendering quality hint ("auto" | "optimizeSpeed" |
+    # "optimizeQuality").  The CSS parser stores the raw value as a
+    # Keyword (lowercase); normalize case and accept anything else as
+    # "auto".
+    text_rendering = sn.get_keyword("text-rendering", "auto")
+    text_rendering = text_rendering.strip()
+    if text_rendering.lower() == "optimizespeed":
+        text_rendering = "optimizeSpeed"
+    elif text_rendering.lower() == "optimizequality":
+        text_rendering = "optimizeQuality"
+    elif text_rendering.lower() == "auto" or text_rendering == "":
+        text_rendering = "auto"
+    else:
+        text_rendering = "auto"
+
     # P9.4 — clip-path: inset(T R B L) + background linear-gradient toy.
     import re as _re2
 
@@ -865,6 +887,20 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # P16.4 — CSS scroll-snap-type (toy: stored).
     scroll_snap_type = sn.get_keyword("scroll-snap-type", "")
 
+    # P20.4 — CSS font-weight (numeric 100–900 or "normal"/"bold").
+    font_weight = 400
+    fw_raw = sn.props.get("font-weight")
+    if fw_raw is not None:
+        fw_val = str(getattr(fw_raw, "value", fw_raw)).strip().lower()
+        if fw_val == "bold":
+            font_weight = 700
+        elif fw_val == "normal":
+            font_weight = 400
+        else:
+            m_w = _re.match(r"(\d+)", fw_val)
+            if m_w:
+                font_weight = int(m_w.group(1))
+
     bx = LayoutBox(
         box_type=(
             BoxType.INLINE
@@ -882,6 +918,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
         border_color=border_color,
         font_px=my_font,
         font_family=font_family,
+        font_weight=font_weight,
         text_align=text_align,
         explicit_height=explicit_h,
         explicit_width=explicit_w,
@@ -931,6 +968,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
         letter_spacing=letter_spacing,
         word_spacing=word_spacing,
         text_transform=text_transform,
+        text_rendering=text_rendering,
         clip_inset_top=clip_inset_top,
         clip_inset_right=clip_inset_right,
         clip_inset_bottom=clip_inset_bottom,
