@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>toy-browser-py demo</title>
+</head>
+<body>
+  <h1>toy-browser (Python)</h1>
+  <p>A browser engine built from scratch in pure-stdlib Python.</p>
+
+  <h2>Section</h2>
+  <div class="card">
+    <p>Background, padding, and border come from the default stylesheet.</p>
+    <ul>
+      <li>HTML parsing (stage 1)</li>
+      <li>CSS cascading (stage 2)</li>
+      <li>Block + inline layout (stage 3)</li>
+      <li>CPU rasterization (stage 4)</li>
+    </ul>
+  </div>
+
+  <p style="color: red;">Inline styles win over the stylesheet.</p>
+  <p id="footer">The quick brown fox jumps over the lazy dog. 0123456789</p>
+
+  <button id="btn"
+    onclick="document.getElementById('footer').style.color='blue'">
+    click to turn the footer blue
+  </button>
+  <p>Clicking the button (via the stage-5 event loop) re-renders the footer in blue.</p>
+
+  <script>
+    console.log('toy-browser-py demo: inline script runs before render');
+    document.getElementById('footer').style.color = 'purple';
+    let x = null;
+    let y = x ?? 42;
+    console.log('nullish coalescing: ' + y);
+  </script>
+
+  <p>Security note (stage 7, partial): the in-page JS <code>fetch()</code> is
+  sandboxed — only <code>http://</code> / <code>https://</code> URLs are
+  permitted; <code>file://</code> and bare paths are rejected.</p>
+
+  <p>Same-origin iframe: renders as a placeholder box with its
+  <code>src</code> caption and a 1px border; the frame's content is not
+  loaded in v1.</p>
+  <iframe src="about:blank"></iframe>
+
+  <style>
+    body { font-size: 16px; margin: 24px; }
+    h1   { font-size: 28px; }
+    h2   { font-size: 20px; }
+    .card {
+      background: #f4f4f4;
+      padding: 12px;
+      border-width: 2px;
+      border-color: #888;
+      margin: 12px 0;
+    }
+    ul   { margin: 4px 0 4px 20px; }
+    li   { margin: 2px 0; }
+    #footer { color: #444; }
+  </style>
+</body>
+</html>

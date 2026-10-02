@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 渲染输出（可用 main.py 重新生成）
+*.ppm
+out*.png
+_smoke.png
+anim_test/
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
