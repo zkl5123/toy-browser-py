@@ -5,7 +5,7 @@
 
 ---
 
-## 已完成（345/345 测试通过）
+## 已完成（415/415 测试通过）
 
 - [x] 阶段 1 — HTML 解析（`dom.py`）
 - [x] 阶段 2 — CSS 样式 + 级联 + 内联（`css.py`）
@@ -822,6 +822,208 @@
 - [x] 测试总数从 308 → **345** 条（目标 330+ 已达成）。
 - [x] P16 特性各 ≥ 3 条测试。
 
+## P17 — 已完成 ✅（M1 排版质变第一阶段）
+
+> 依据 `项目未来规划.txt`：P17 起从"横向堆特性"转为"纵向补地基"。
+> P17 目标：替换内置点阵字体的字符宽度估算，建立真实 TTF 度量链。
+
+### 17.1 TTF/OTF 头部表解析（head / hhea / hmtx / maxp / OS/2）✅
+
+- [x] `ttf_font.py`（新模块，纯标准库 `struct`）：解析 sfnt 头部、
+  表目录、`head`（unitsPerEm）、`hhea`（ascent / descent / lineGap）、
+  `maxp`（numGlyphs）、`hmtx`（advance + LSB per glyph）、`OS/2`
+  （weightClass）。
+- [x] 损坏 / 缺失文件抛 `TTFError`，不崩溃。
+- [x] 测试：`ttf_load_header`、`ttf_line_height`、`ttf_corrupt_file`、
+  `ttf_empty_font_metrics`。
+
+### 17.2 glyf / loca 轮廓提取（二次贝塞尔 + 复合字形）✅
+
+- [x] `ttf_font.py`：`_read_loca`（short/long 自适应）、`_read_glyf`、
+  `_parse_simple_glyph`（endPtsOfContours + flags 重复编码 + 累计
+  delta 坐标）、`_parse_composite_glyph`（递归解析组件字形 + 仿射
+  变换到父坐标系）、`_extract_glyph`（统一入口）。
+- [x] `GlyphOutline` dataclass：`points`（(x, y, on_curve) 三元组）、
+  `is_empty`、`is_composite`。
+- [x] 空字形检测：所有点聚集在 <2 单位箱内 → `is_empty=True`。
+- [x] 测试：`ttf_glyph_outline_a`（复合）、`ttf_glyph_outline_a_lower`
+  （简单）、`ttf_glyph_outline_dot`、`ttf_glyph_space`、
+  `ttf_outline_boundary`（'0' 边界像素）、`ttf_composite_glyph`（'!'）、
+  `ttf_glyf_outline_points`（坐标范围）。
+
+### 17.3 cmap 逆向查询 + advance width 替换估算 ✅
+
+- [x] `ttf_font.py`：`_parse_cmap`（format 4 + format 12，platform 3/1
+  优先，子表偏移相对于 cmap 表起始）；`FontMetrics.advance_width(ch,
+  font_px)` 用真实 hmtx 值替换固定 8px/字符估算。
+- [x] 缺字形 fallback：CJK / 未映射字符返回宽格（`int(font_px)`）。
+- [x] `text.py`：`advance_text` / `measure` 使用 TTF 逐字符 advance；
+  `line_height_px` 使用 TTF ascent/descent/lineGap；`draw_text` 逐字符
+  推进（比例字距）。
+- [x] 测试：`ttf_cmap_lookup`、`ttf_advance_width`、
+  `ttf_advance_proportional`、`ttf_missing_glyph_fallback`、
+  `ttf_has_glyph`、`ttf_cmap_cjk_absent`、`text_ttf_advance`、
+  `text_ttf_line_height`。
+
+### 17.4 @font-face 升级：加载真实字体文件 + font-weight 双字重切换 ✅
+
+- [x] `ttf_font.py`：`load_font_for_family(family, font_px, bold,
+  search_dirs)` — 按 family → 文件名注册表 + fallback 链定位
+  TTF/OTF 文件；`_font_cache` 缓存。
+- [x] `font.py`：`init_real_fonts(search_dirs)` 启动时加载
+  serif / monospace 真实字体；`get_real_metrics(family)` 查询。
+- [x] 双字重：`arial.ttf`（weight=400）+ `arialbd.ttf`（weight=700）
+  通过 `weight_class` 区分。
+- [x] 测试：`ttf_dual_weight`、`ttf_family_loading`、
+  `ttf_weight_class_switch`、`ttf_font_face_in_layout`、
+  `render_with_ttf_metrics`、`render_without_ttf_fallback`。
+
+### 17.5 测试扩充 ✅
+
+- [x] 测试总数从 345 → **370** 条（目标 365 已达成）。
+- [x] P17 特性各 ≥ 3 条测试（共 25 条新测试）。
+- [x] `fonts/arial.ttf` + `fonts/arialbd.ttf` 作为测试夹具。
+
+## P18 — 已完成 ✅（M1 排版质变第二阶段）
+
+> 依据 `项目未来规划.txt`：P18 目标 — 建立规范意义上的 line box，解决内联布局的正确性。
+
+### 18.1 半领导者模型：ascent / descent + 行盒垂直居中 ✅
+
+- [x] `layout.py` 文本盒：`font_ascent_px` / `font_descent_px` /
+  `baseline_y` 新字段；`line_height_px > em_box` 时计算
+  `half_lead = (line_h - em_box) / 2`，文本盒 y 偏移 `half_lead`，
+  文字垂直居中于行盒。
+- [x] `css.py`：`INHERITED_PROPS` 扩展 `line-height` / `text-align` /
+  `text-transform` / `font-family`；`line_height_px()` 优先 TTF 自然
+  行高（ascent/descent/lineGap），无 TTF 时回退 `prop_font_px()`。
+- [x] 测试：`p18_half_leading_baseline`、`p18_font_ascent_descent_fields`、
+  `p18_baseline_alignment_math`、`p18_half_leading_large_line_height`。
+
+### 18.2 内联元素跨行拆分 + 样式保留 ✅
+
+- [x] `layout.py` 内联 run 循环：`<a>` / `<span>` 内联盒子
+  携带自身 `text_color` / `background` / `border_color`，跨行时
+  样式不丢；内联 run 高度取 `max(child_h, line_height_px)`。
+- [x] 测试：`p18_inline_link_cross_line`、`p18_render_inline_styles_preserved`、
+  `p18_mixed_inline_block`、`p18_inline_run_height`。
+
+### 18.3 vertical-align 玩具版（baseline / top / middle）+ 行内图片抬高行高 ✅
+
+- [x] `layout.py`：`LayoutBox.vertical_align` 新字段；`build_box`
+  解析 `vertical-align` 内联样式；内联 run 中 `top` 对齐到行顶、
+  `middle` 垂直居中、`baseline`（默认）不偏移。
+- [x] 行内 `<img>` 参与行高：内联 run 的 `run_h` 取
+  `max(cb.rect.h)`，图片高度自动抬高行盒。
+- [x] 测试：`p18_vertical_align_top`、`p18_vertical_align_middle`、
+  `p18_vertical_align_stored`、`p18_inline_img_raises_line_height`。
+
+### 18.4 text-align 作用于真实行盒 ✅
+
+- [x] `css.py`：`text-align` 加入 `INHERITED_PROPS`，从父元素
+  继承至文本子节点。
+- [x] `paint_engine.py`：`text_align` 已传递给 `draw_text`
+  （center / right / left）；P18 继承修复后 `text-align` 在
+  嵌套 `<div><span>` 场景正确生效。
+- [x] `layout.py` 文本盒：`text-transform` 应用于测量前
+  （uppercase / lowercase / capitalize）。
+- [x] 测试：`p18_text_align_center_line_box`、`p18_text_align_right`、
+  `p18_text_transform_uppercase`、`p18_text_transform_lowercase`。
+
+### 18.5 测试扩充 ✅
+
+- [x] 测试总数从 370 → **389** 条（目标 390 已达成）。
+- [x] P18 特性各 ≥ 3 条测试（共 19 条新测试）。
+
+## P19 — 已完成 ✅（M1 排版质变第三阶段）
+
+> 依据 `项目未来规划.txt`：P19 目标 — 真实可用的断行行为。
+
+### 19.1 UAX#14 简化版断行算法（break class 分级）✅
+
+- [x] `text.py`：`_break_class(ch)` 将字符分为 SP/NS/BA/HY/OP/CL/CM/CJK/AL
+  九类（简化 UAX#14 常用类别）。
+- [x] `text.py`：`wrap()` 重写为逐字符扫描（替代旧的 `str.split()`
+  按词分组）；空格后断行、CJK 逐字断行、`word-break:break-all`
+  每字符都是断点。
+- [x] 测试：`p19_english_word_wrap`、`p19_cjk_char_by_char`、
+  `p19_break_class`、`p19_wrap_narrow_cjk`。
+
+### 19.2 CJK 逐字断行 + 禁则处理（行首/行尾禁则字）✅
+
+- [x] `text.py`：`_CJK_NO_LINE_START`（，。！？）〉」】》、…～―
+  等）+ `_CJK_NO_LINE_END`（（〈《【〔［「『 等）禁则字符集合。
+- [x] `wrap()` 断行逻辑：禁则字不能出现在行首 → 若下一词以禁则
+  字开头且会溢出，将该词拉回当前行（允许轻微溢出）；闭括号
+  不能开始新行。
+- [x] 测试：`p19_kinsoku_no_line_start`、`p19_kinsoku_latin_brackets`、
+  `p19_kinsoku_sets`、`p19_mixed_cjk_latin`。
+
+### 19.3 &shy; 软连字符 + hyphens 玩具 + word-break/overflow-wrap 补全 ✅
+
+- [x] `dom.py`：`_decode_entities()` 将 `&shy;` 解码为 U+00AD、
+  `&nbsp;` 为 U+00A0。
+- [x] `text.py` `wrap()`：软连字符（U+00AD）是断行机会；断行时
+  行末显示 '-'。
+- [x] `layout.py`：`LayoutBox.overflow_wrap` 新字段；`build_box`
+  解析 `overflow-wrap` 内联样式；`wrap()` 接收 `word_break` +
+  `overflow_wrap` 参数。
+- [x] `css.py`：`overflow-wrap` 加入 `INHERITED_PROPS`。
+- [x] 测试：`p19_soft_hyphen`、`p19_shy_html_entity`、
+  `p19_word_break_all`、`p19_overflow_wrap_break_word`、
+  `p19_overflow_wrap_layout`、`p19_word_break_layout`、
+  `p19_render_shy`、`p19_render_word_break`。
+
+### 19.4 长单词溢出的最小处理 ✅
+
+- [x] `text.py` `wrap()`：单词本身超过 `width` 时，逐字符折断
+  （不丢失任何字符）；`overflow-wrap:break-word` 触发同样的
+  强制断行。
+- [x] 测试：`p19_long_word_overflow`、`p19_render_cjk_wrap`。
+
+### 19.5 测试扩充 ✅
+
+- [x] 测试总数从 389 → **408** 条（目标 409 已达成）。
+- [x] P19 特性各 ≥ 3 条测试（共 19 条新测试）。
+
+## P31 — GUI 外壳（提前提前完成，原属 M4）✅
+
+> 依据 `项目未来规划.txt`：P31 目标 — 有浏览器该有的样子。
+> 注意：P31 原规划依赖 M2 网络 + M3 交互，此处提前提前实现
+> 本地文件/内联 HTML 的 GUI 外壳；网络加载留待 M2。
+
+### 31.1 tkinter 零依赖外壳 ✅
+
+- [x] `gui.py`：`TabBrowser` — tkinter ttk.Notebook 多标签页、
+  地址栏、前进/后退/刷新按钮、状态栏 + 进度条。
+- [x] `PageInstance`：每标签独立的 URL、标题、Bitmap、
+  前进/后退栈；与渲染管线 `browser.render_document` 解耦。
+- [x] 纯标准库（tkinter），零外部依赖；Bitmap → P6 二进制 PPM
+  → `tk.PhotoImage(data=...)`。
+
+### 31.2 多标签页 + 页面实例隔离 ✅
+
+- [x] `TabBrowser._add_tab` / `_remove_tab` / `_rebuild_tabs` —
+  每标签独立的 PageInstance + 独立 notebook 子页 + 独立 PhotoImage。
+- [x] 关闭最后一个标签自动退出；标签切换自动刷新画布。
+
+### 31.3 键盘快捷键 ✅
+
+- [x] Ctrl+L 聚焦地址栏、Ctrl+T 新标签、Ctrl+W 关闭标签、
+  Ctrl+R 刷新、Alt+←/→ 后退/前进。
+
+### 31.4 本地文件 / about: / 内联 HTML ✅
+
+- [x] `load_file`：本地 HTML 文件渲染；`about:blank` /
+  `about:version` / `about:history` 内置页；内联 HTML
+  （以 `<` 开头）直接渲染；http/https 显示「M2 前暂不支持」占位页。
+
+### 31.5 测试扩充 ✅
+
+- [x] 测试总数从 408 → **415** 条（7 条新 GUI headless 测试）。
+- [x] GUI 逻辑以 headless 可测部分为主（PageInstance + PPM 转换
+  + tkinter 可用性），无需 mainloop。
+
 ## 实施顺序
 
 ```
@@ -905,9 +1107,31 @@ P16.2 JS 可选链 + 空值合并 （~1.5h）
 P16.3 CSS 文本增强 （~1h）
 P16.4 CSS scroll-snap 玩具 （~1h）
 P16.5 测试扩充          （随 P16 完成）
+P17.1 TTF/OTF 头部表解析 （~2h）
+P17.2 glyf/loca 轮廓提取 （~2h）
+P17.3 cmap 逆向查询 + advance width （~1.5h）
+P17.4 @font-face 升级 + 双字重切换 （~1.5h）
+P17.5 测试扩充          （随 P17 完成）
+P18.1 半领导者模型 + baseline （~2h）
+P18.2 内联跨行拆分 + 样式保留 （~1.5h）
+P18.3 vertical-align + 行内图片 （~1.5h）
+P18.4 text-align 真实行盒 （~1h）
+P18.5 测试扩充          （随 P18 完成）
+P19.1 UAX#14 简化断行算法 （~2h）
+P19.2 CJK 逐字断行 + 禁则处理 （~1.5h）
+P19.3 &shy; + word-break/overflow-wrap （~1h）
+P19.4 长单词溢出最小处理 （~1h）
+P19.5 测试扩充          （随 P19 完成）
+P31.1 tkinter 零依赖外壳 （~2h）
+P31.2 多标签页 + 页面实例隔离 （~1.5h）
+P31.3 键盘快捷键        （~0.5h）
+P31.4 本地文件/about:/内联 HTML （~1h）
+P31.5 测试扩充          （随 P31 完成）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 已完成（**345/345** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P31 已完成（**415/415** 测试通过）。
+
+下一站：**P20 渲染质量与字重体系（M1 收官）**，或 **P21 URL/HTTP（M2 网络栈，打通后 GUI 的 http 占位页替换为真实加载）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

@@ -132,6 +132,11 @@ class LayoutBox:
     letter_spacing: float = 0.0  # px per character
     word_spacing: float = 0.0  # px per word
     text_transform: str = ""  # "uppercase" / "lowercase" / "capitalize" / ""
+    # P18 — line box model: font ascent/descent in px + baseline y.
+    font_ascent_px: float = 0.0
+    font_descent_px: float = 0.0
+    baseline_y: float = 0.0
+    vertical_align: str = ""  # "baseline" | "top" | "middle" | ""
 
     # P9.4 — clip-path: inset() + background linear-gradient toy
     clip_inset_top: float = 0.0  # clip-path: inset(T R B L)
@@ -163,6 +168,11 @@ class LayoutBox:
     filter_enabled: bool = False
     # P14.3 — CSS text-indent (first-line horizontal shift in px)
     text_indent: float = 0.0
+    # P18 — line box model: font ascent/descent in px + baseline y.
+    font_ascent_px: float = 0.0
+    font_descent_px: float = 0.0
+    baseline_y: float = 0.0
+    vertical_align: str = ""  # "baseline" | "top" | "middle" | ""
     # P15.3 — CSS box-decoration-break / -webkit-appearance (toy: stored)
     box_decoration_break: str = ""   # "clone" | "slice" | ""
     webkit_appearance: str = ""      # "none" | "button" | "auto" | ""
@@ -171,6 +181,7 @@ class LayoutBox:
     # P16.3 — CSS text-justify / word-break / hyphens (toy: stored)
     text_justify: str = ""    # "none" | "inter-word" | "new" | "auto" | ""
     word_break: str = ""      # "normal" | "break-all" | "keep-all" | ""
+    overflow_wrap: str = ""   # "normal" | "break-word" | ""
     hyphens: str = ""        # "none" | "auto" | "manual" | ""
     # P16.4 — CSS scroll-snap-type (toy: stored)
     scroll_snap_type: str = ""  # "none" | "x mandatory" | "y proximity" | ...
@@ -822,6 +833,8 @@ def build_box(sn: StyledNode, parent_font_px: float,
 
     # P14.3 — CSS text-indent: first-line horizontal shift (px).
     text_indent = sn.get_number("text-indent", 0.0)
+    # P18 — vertical-align (toy: baseline / top / middle).
+    vertical_align = sn.get_keyword("vertical-align", "")
 
     # P15.3 — CSS box-decoration-break / -webkit-appearance (toy: stored).
     box_decoration_break = sn.get_keyword("box-decoration-break", "")
@@ -846,6 +859,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # P16.3 — CSS text-justify / word-break / hyphens (toy: stored keywords).
     text_justify = sn.get_keyword("text-justify", "")
     word_break = sn.get_keyword("word-break", "")
+    overflow_wrap = sn.get_keyword("overflow-wrap", "")
     hyphens = sn.get_keyword("hyphens", "")
 
     # P16.4 — CSS scroll-snap-type (toy: stored).
@@ -940,10 +954,12 @@ def build_box(sn: StyledNode, parent_font_px: float,
         filter_contrast=filter_contrast,
         filter_enabled=filter_enabled,
         text_indent=text_indent,
+        vertical_align=vertical_align,
         box_decoration_break=box_decoration_break,
         webkit_appearance=webkit_appearance,
         text_justify=text_justify,
         word_break=word_break,
+        overflow_wrap=overflow_wrap,
         hyphens=hyphens,
         scroll_snap_type=scroll_snap_type,
         opacity=opacity,
@@ -1138,7 +1154,16 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     # Text node boxes: size directly from the wrapped text, no child pass.
     if bx.box_type == BoxType.TEXT:
         text_str = bx.text_content or ""
-        wrapped = text_mod.wrap(text_str, max(0.0, available), bx.font_px)
+        # P18 — text-transform (P8.4) applied before wrap/measure.
+        if bx.text_transform == "uppercase":
+            text_str = text_str.upper()
+        elif bx.text_transform == "lowercase":
+            text_str = text_str.lower()
+        elif bx.text_transform == "capitalize":
+            text_str = " ".join(w[:1].upper() + w[1:] for w in text_str.split(" "))
+        wrapped = text_mod.wrap(text_str, max(0.0, available), bx.font_px, bx.font_family,
+                                word_break=bx.word_break,
+                                overflow_wrap=bx.overflow_wrap)
         # P6.2 — line-clamp: limit the number of visible lines.
         if bx.line_clamp > 0 and len(wrapped) > bx.line_clamp:
             wrapped = wrapped[: bx.line_clamp]
@@ -1146,7 +1171,36 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             if bx.text_overflow == "ellipsis":
                 text_str += "…"
         line_h = bx.line_height_px
-        bx.rect = Rect(content_x0, content_y0, available, line_h * max(1, len(wrapped)))
+        # P18 — half-leading line box model (simplified CSS2.1 §10.8).
+        # When a real TTF font is registered, line_height_px may exceed
+        # the em box (ascent + descent).  The extra space is split as
+        # "half-leading" above and below:
+        #   half = max(0, (line_height_px - em_box) / 2)
+        #   baseline_y = rect.y + half + ascent_px
+        # This keeps text vertically centred in the line box when line
+        # height > font size.  Legacy path (no TTF): half ≈ 0.
+        half_lead = 0.0
+        ascent_px = 0.0
+        descent_px = 0.0
+        try:
+            import font as _font_mod
+            real_fm = _font_mod.get_real_metrics(bx.font_family)
+            if real_fm is not None and real_fm.units_per_em > 0:
+                scale = bx.font_px / real_fm.units_per_em
+                ascent_px = real_fm.ascent * scale
+                descent_px = -real_fm.descent * scale
+                em_box = ascent_px + descent_px
+                if line_h > em_box:
+                    half_lead = (line_h - em_box) / 2.0
+        except Exception:
+            pass
+        bx.rect = Rect(content_x0, content_y0 + half_lead, available,
+                       line_h * max(1, len(wrapped)))
+        # P18 — record baseline y (top of em box + ascent) for
+        # baseline-aligned inline elements.
+        bx.font_ascent_px = ascent_px if ascent_px > 0 else (bx.font_px * 0.75)
+        bx.font_descent_px = descent_px if descent_px > 0 else (bx.font_px * 0.25)
+        bx.baseline_y = bx.rect.y + half_lead + bx.font_ascent_px
         return
 
     # P1.4 — Flexbox layout: children are laid out in a single row/column.
@@ -1212,9 +1266,22 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             child_y += cb.outer_height()
             i += 1
         else:
+            # P18 — inline-level run: collect children until a block-level
+            # box is hit.  Each child is laid out sequentially; the run
+            # height is the max of child heights and the container's
+            # line_height_px.  P18.2 — an inline element (e.g. <a> or
+            # <span>) whose text wraps across lines keeps its style
+            # (text_color, background, border) because the child box
+            # carries its own StyledNode properties; the layout only
+            # positions the box, it does not strip styling.
+            # P18.3 — vertical-align: inline images / elements with
+            # vertical-align set are shifted relative to the line's
+            # baseline (toy: baseline / top / middle).
             cx = content_x0
             run_h = 0.0
             run_y = content_y0 + child_y
+            run_top_y = run_y
+            run_bottom_y = run_y
             while i < n:
                 ck = bx.children[i].box_type
                 if ck not in (BoxType.TEXT, BoxType.INLINE):
@@ -1226,10 +1293,24 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                 run_w = max(0.0, avail - (cx - content_x0))
                 layout_block(cb, cx, run_y, max(run_w, avail))
                 w = cb.rect.w + cb.padding.left + cb.padding.right
+                # P18.3 — vertical-align shift (toy: baseline / top / middle).
+                # The line box baseline is approximated as run_y + line_height_px * 0.75
+                # (legacy bitmap ascent ratio).  For TTF fonts the text box
+                # already recorded its own baseline_y; use the parent's
+                # line_height as the fallback.
+                va = cb.vertical_align
+                if va == "top":
+                    cb.rect.y = run_top_y
+                elif va == "middle":
+                    mid = (run_top_y + bx.line_height_px / 2.0)
+                    cb.rect.y = mid - cb.rect.h / 2.0
+                # "baseline" (default): no shift — the box is already at run_y.
                 cx += w
                 if ck == BoxType.INLINE:
                     cx += text_mod.char_advance(cb.font_px)
                 run_h = max(run_h, cb.rect.h)
+                run_top_y = min(run_top_y, cb.rect.y)
+                run_bottom_y = max(run_bottom_y, cb.rect.y + cb.rect.h)
                 i += 1
             child_y += max(run_h, bx.line_height_px)
 

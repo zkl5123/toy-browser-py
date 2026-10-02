@@ -514,12 +514,19 @@ def _paint_img_pixels(bmp: Bitmap, cmd: DisplayCommand) -> None:
     dst_y0 = int(cmd.y)
     dst_w = int(cmd.w)
     dst_h = int(cmd.h)
+    if dst_w <= 0 or dst_h <= 0:
+        return
+    # P19 — clamp the source pixel index to the actual pixel-buffer length
+    # (defence against truncated data URIs where w*h exceeds pixel count).
     for dy in range(dst_h):
-        sy = min(src_h - 1, int(dy * src_h / max(1, dst_h)))
+        sy = min(src_h - 1, int(dy * src_h / dst_h))
         row_start = sy * src_w
         for dx in range(dst_w):
-            sx = min(src_w - 1, int(dx * src_w / max(1, dst_w)))
-            color_u32 = pixels[row_start + sx]
+            sx = min(src_w - 1, int(dx * src_w / dst_w))
+            idx = row_start + sx
+            if idx >= len(pixels):
+                break
+            color_u32 = pixels[idx]
             r = (color_u32 >> 16) & 0xFF
             g = (color_u32 >> 8) & 0xFF
             b = color_u32 & 0xFF

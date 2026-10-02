@@ -13,13 +13,16 @@ toy-browser-py/
 ├── layout.py          盒模型布局（块/内联/文本/占位/flex/grid + 命中测试）
 ├── paint.py           位图 + 颜色混合
 ├── paint_engine.py    显示列表 + CPU 光栅化 + 图片像素渲染
-├── text.py            8×8 位图字体 + 文本测量/换行/绘制
-├── font.py            内建 ASCII 字体表
+├── text.py            8×8 位图字体 + 文本测量/换行/绘制（P17 TTF 度量）
+├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
+├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
-├── test.py            345 条测试（python test.py）
-├── ROADMAP.md         改进路线图（P0–P16 全部完成）
+├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页）
+├── test.py            415 条测试（python test.py）
+├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
+├── ROADMAP.md         改进路线图（P0–P19 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -496,6 +499,75 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
   `scroll-snap-type: x mandatory` / `y proximity` / `x both` / `none`
   （toy 语义：存储，不影响静态布局）。
 
+### TTF 字体文件解析（P17）
+
+- `ttf_font.py`（新模块）：纯标准库 `struct` 解析 TTF/OTF 二进制文件。
+  - **P17.1 头部表**：`head`（unitsPerEm）、`hhea`（ascent/descent/lineGap）、
+    `hmtx`（advance + LSB per glyph）、`maxp`（numGlyphs）、`OS/2`
+    （weightClass）。损坏文件抛 `TTFError`。
+  - **P17.2 glyf/loca 轮廓**：`_parse_simple_glyph`（endPtsOfContours +
+    flags 重复编码 + 累计 delta 坐标）、`_parse_composite_glyph`
+    （递归组件解析 + 仿射变换）、`GlyphOutline` dataclass。
+  - **P17.3 cmap + advance width**：`_parse_cmap`（format 4 + 12，
+    platform 3/1 优先）；`advance_width(ch, font_px)` 用真实 hmtx
+    值替换固定 8px 估算；缺字形 fallback 到宽格。
+  - **P17.4 @font-face 升级**：`load_font_for_family(family, bold,
+    search_dirs)` 按注册表定位 TTF 文件；`font.init_real_fonts()`
+    启动时加载 serif/monospace 真实字体；双字重 `arial.ttf`(400) +
+    `arialbd.ttf`(700)。
+- `text.py`：`advance_text` / `measure` / `line_height_px` / `draw_text`
+  使用 TTF 逐字符 advance + 真实行高（比例字距）。
+- `font.py`：`init_real_fonts(search_dirs)` + `get_real_metrics(family)`
+  注册真实 TTF 度量。
+- `fonts/arial.ttf` + `fonts/arialbd.ttf` 测试夹具。
+
+### 文本度量与行盒模型（P18）
+
+- **P18.1 半领导者模型**：`layout.py` 文本盒记录 `font_ascent_px` /
+  `font_descent_px` / `baseline_y`；`line_height_px > em_box` 时
+  `half_lead = (line_h - em_box) / 2` 偏移文本盒 y，文字垂直居中。
+  `css.py` `line_height_px()` 优先 TTF 自然行高。
+- **P18.2 内联跨行拆分**：内联 run 循环中 `<a>` / `<span>` 盒子携带
+  自身样式，跨行时 `text_color` / `background` 不丢；run 高度取
+  `max(child_h, line_height_px)`。
+- **P18.3 vertical-align 玩具版**：`LayoutBox.vertical_align`
+  字段（baseline / top / middle）；行内 `<img>` 抬高行高。
+- **P18.4 text-align 真实行盒**：`text-align` / `text-transform`
+  加入 `INHERITED_PROPS`，从父元素继承至文本子节点；`text-transform`
+  应用于测量前。
+- **继承扩展**：`css.py` `INHERITED_PROPS` 新增 `line-height` /
+  `text-align` / `text-transform` / `font-family` / `overflow-wrap`。
+
+### 断行与 Unicode 处理（P19）
+- **P19.1 UAX#14 简化断行**：`text.py` `_break_class(ch)` 将字符分为
+  SP/NS/BA/HY/OP/CL/CM/CJK/AL 九类；`wrap()` 重写为逐字符扫描，
+  空格后断行、CJK 逐字断行、`word-break:break-all` 每字符断点。
+- **P19.2 CJK 逐字断行 + 禁则**：`_CJK_NO_LINE_START`（，。！？）
+  等）+ `_CJK_NO_LINE_END`（（〈《【 等）禁则字符集合；断行时
+  禁则字不出现在行首（拉回当前行，允许轻微溢出）。
+- **P19.3 &shy; 软连字符**：`dom.py` `_decode_entities()` 将 `&shy;`
+  解码为 U+00AD；`wrap()` 在软连字符处断行时行末显示 '-'。
+- **P19.4 长单词溢出**：单词本身超过容器宽度时逐字符折断
+  （不丢失字符）；`overflow-wrap:break-word` 触发同样的强制断行。
+- `layout.py`：`LayoutBox.overflow_wrap` 新字段；`wrap()` 接收
+  `word_break` + `overflow_wrap` 参数。
+
+### GUI 外壳（P31）
+
+- **tkinter 零依赖**：`gui.py` `TabBrowser` — 多标签页（ttk.Notebook）、
+  地址栏、前进/后退/刷新、状态栏 + 进度条。纯标准库，无外部依赖。
+- **多标签页 + 页面实例隔离**：每标签独立的 `PageInstance`（URL、
+  标题、Bitmap、前进/后退栈）+ 独立 notebook 子页 + 独立 PhotoImage。
+  关闭最后一个标签自动退出。
+- **键盘快捷键**：Ctrl+L 聚焦地址栏、Ctrl+T 新标签、Ctrl+W 关闭、
+  Ctrl+R 刷新、Alt+←/→ 后退/前进。
+- **Bitmap → P6 PPM**：`_bitmap_to_photopix` 将 paint.Bitmap 转为
+  P6 二进制 PPM 字节，喂给 `tk.PhotoImage(data=...)`。
+- **本地文件 / about: / 内联 HTML**：`load_file` 本地渲染、
+  `about:blank`/`about:version`/`about:history`、内联 HTML
+  （以 `<` 开头）直接渲染；http/https 显示「M2 前暂不支持」占位页。
+- **运行**：`python gui.py demo.html`（或 `python gui.py` 打开空白页）。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -552,6 +624,10 @@ python main.py demo.html out.ppm --links links.txt
 
 # 组合使用
 python main.py demo.html out.png --png --a11y a11y.json --links links.txt
+
+# 启动 tkinter GUI（零依赖，多标签页）
+python gui.py demo.html        # 打开指定 HTML
+python gui.py                  # 打开 about:blank
 ```
 
 PNG 输出也可用 `ffmpeg` / `ImageMagick` 生成（与 `--png` 标志等价）：
@@ -568,7 +644,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**345 条测试**，覆盖：
+**415 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -640,6 +716,10 @@ python test.py
 | JS 可选链 + 空值合并（P16.2） | `js_optional_chain_null`、`js_optional_chain_obj`、`js_optional_call_null`、`js_nullish_cohesion_zero`、`js_optional_chain_dom_element` |
 | CSS 文本增强（P16.3） | `css_text_justify_layout`、`css_word_break_layout`、`css_hyphens_layout`、`css_text_justify_none` |
 | CSS scroll-snap 玩具（P16.4） | `css_scroll_snap_type_layout`、`css_scroll_snap_type_y_proximity`、`css_scroll_snap_type_default_empty`、`css_scroll_snap_render` |
+| TTF 字体解析（P17） | `ttf_load_header`、`ttf_cmap_lookup`、`ttf_advance_width`、`ttf_glyph_outline_a`、`ttf_composite_glyph`、`ttf_dual_weight`、`text_ttf_advance`、`render_with_ttf_metrics` |
+| 文本度量与行盒（P18） | `p18_half_leading_baseline`、`p18_font_ascent_descent_fields`、`p18_inline_link_cross_line`、`p18_vertical_align_top`、`p18_text_align_center_line_box`、`p18_render_half_leading`、`p18_mixed_inline_block` |
+| 断行与 Unicode（P19） | `p19_english_word_wrap`、`p19_cjk_char_by_char`、`p19_kinsoku_no_line_start`、`p19_soft_hyphen`、`p19_shy_html_entity`、`p19_word_break_all`、`p19_overflow_wrap_break_word`、`p19_long_word_overflow` |
+| GUI 外壳（P31） | `gui_page_load_file`、`gui_about_blank`、`gui_http_stub`、`gui_inline_html`、`gui_back_forward`、`gui_bitmap_ppm`、`gui_tkinter_available` |
 
 ## 改进路线图
 
@@ -726,6 +806,26 @@ python test.py
 - [x] P16.3 CSS 文本增强（text-justify / word-break / hyphens）
 - [x] P16.4 CSS scroll-snap 玩具
 - [x] P16.5 测试扩充至 345 条
+- [x] P17.1 TTF/OTF 头部表解析（head/hhea/hmtx/maxp/OS/2）
+- [x] P17.2 glyf/loca 轮廓提取（二次贝塞尔 + 复合字形）
+- [x] P17.3 cmap 逆向查询 + advance width 替换估算
+- [x] P17.4 @font-face 升级：加载真实字体文件 + 双字重切换
+- [x] P17.5 测试扩充至 370 条
+- [x] P18.1 半领导者模型 + baseline 对齐
+- [x] P18.2 内联元素跨行拆分 + 样式保留
+- [x] P18.3 vertical-align 玩具版 + 行内图片抬高行高
+- [x] P18.4 text-align 作用于真实行盒
+- [x] P18.5 测试扩充至 389 条
+- [x] P19.1 UAX#14 简化断行算法（break class 分级）
+- [x] P19.2 CJK 逐字断行 + 禁则处理（行首/行尾禁则字）
+- [x] P19.3 &shy; 软连字符 + word-break/overflow-wrap 补全
+- [x] P19.4 长单词溢出的最小处理
+- [x] P19.5 测试扩充至 408 条
+- [x] P31.1 tkinter 零依赖外壳
+- [x] P31.2 多标签页 + 页面实例隔离
+- [x] P31.3 键盘快捷键（Ctrl+L/T/W/R、Alt+←/→）
+- [x] P31.4 本地文件 / about: / 内联 HTML
+- [x] P31.5 测试扩充至 415 条
 
 ## 与 Rust 版的对应关系
 
@@ -758,8 +858,10 @@ python test.py
 ## 仓库说明
 
 - **托管**：Gitee 私有仓库 <https://gitee.com/zklzkl11111/toy-browser-py>，默认分支 `main`。
-- **本仓库只含源码与文档**（约 0.6MB）：12 个 `.py` 模块、`README.md`、`ROADMAP.md`、
+- **本仓库只含源码与文档**（约 0.6MB）：14 个 `.py` 模块、`README.md`、`ROADMAP.md`、
   `demo.html`，以及 `a11y.json` / `links.json` / `links.txt` 等小体积测试数据。
+  P17 起仓库额外携带 `fonts/`（arial.ttf + arialbd.ttf 测试夹具，~2MB）——
+  纯标准库项目无安装步骤，测试夹具随仓库分发使 `python test.py` 开箱即跑。
 - **已排除的生成物**（可由 CLI 重新生成，见 [.gitignore](.gitignore)）：
 
   | 已排除 | 体积 | 恢复方式 |
@@ -770,5 +872,5 @@ python test.py
   | `anim_test/` | — | `python main.py demo.html --animate` 的帧输出目录 |
 
 - **运行环境**：Python 3.11.9，零外部依赖（纯标准库）。
-- **自测**：`python test.py` → **345/345 通过**。
+- **自测**：`python test.py` → **415/415 通过**。
 - **姊妹项目**：[toy-browser](https://gitee.com/zklzkl11111/toy-browser)（Rust 版，同一管线的原生实现）。
