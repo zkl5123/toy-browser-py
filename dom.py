@@ -122,6 +122,26 @@ def implicitly_closes(tag: str) -> bool:
     return tag in ("p", "li")
 
 
+"""P19 — HTML entity decoding for text nodes."""
+_ENTITY_MAP = {
+    "&shy;": "\u00AD",
+    "&nbsp;": "\u00A0",
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&apos;": "'",
+}
+
+
+def _decode_entities(text: str) -> str:
+    """Decode HTML entities in a text-node string (P19 — &shy; support)."""
+    for entity, char in _ENTITY_MAP.items():
+        if entity in text:
+            text = text.replace(entity, char)
+    return text
+
+
 def _lex(input: str) -> list:
     """Very small tag/text lexer. Yields ("tag", tag, attrs) and ("text", s)."""
     i = 0
@@ -130,10 +150,10 @@ def _lex(input: str) -> list:
     while i < n:
         lt = input.find("<", i)
         if lt < 0:
-            out.append(("text", input[i:]))
+            out.append(("text", _decode_entities(input[i:])))
             break
         if lt > i:
-            out.append(("text", input[i:lt]))
+            out.append(("text", _decode_entities(input[i:lt])))
         i = lt
         gt = input.find(">", i)
         if gt < 0:

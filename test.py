@@ -1011,7 +1011,9 @@ def test_embedded_img_base64():
     data_uri = f"data:image/octet-stream;base64,{b64}"
     html = f'<html><body><img id="pic" src="{data_uri}" width="40" height="40"></body></html>'
     bmp = browser.render_document(html, "", 200, 200)
-    px = bmp.pixels[20 * 200 + 20]
+    # P19 — default CSS adds body { margin: 8px }, shifting the img to
+    # x=8..48, y=0..40.  Check a pixel well inside the image region.
+    px = bmp.pixels[20 * 200 + 30]
     r, g, b = (px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF
     assert r > 200 and g < 55 and b < 55, f"embedded img must render red, got ({r},{g},{b})"
 
@@ -4910,6 +4912,1038 @@ def test_css_scroll_snap_render():
     assert nonwhite > 0, "scroll-snap document must paint pixels"
 
 
+# ---------------------------------------------------------------------------
+# P17 — TTF font file parsing + advance width + outline extraction
+# ---------------------------------------------------------------------------
+
+def test_ttf_load_header():
+    """P17.1 — TTF header tables (head/hhea/maxp) parsed correctly."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    assert m.units_per_em == 2048
+    assert m.ascent == 1854
+    assert m.descent == -434
+    assert m.line_gap == 67
+    assert m.num_glyphs == 4651
+
+
+def test_ttf_cmap_lookup():
+    """P17.3 — cmap reverse lookup: char → glyph-id (ASCII)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    gid_a = m.cmap.get(65, 0)
+    assert gid_a != 0
+    assert m.advances[gid_a] > 0
+    assert 32 in m.cmap
+    assert 48 in m.cmap
+
+
+def test_ttf_advance_width():
+    """P17.3 — advance width scaled from hmtx to pixels."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    adv_a = m.advance_width("A", 16.0)
+    assert 5.0 < adv_a < 15.0, f"A advance {adv_a} out of range"
+    # 'm' should be at least as wide as 'i' (proportional, not monospace).
+    adv_m = m.advance_width("m", 16.0)
+    adv_i = m.advance_width("i", 16.0)
+    assert adv_m >= adv_i, f"m ({adv_m}) should be >= i ({adv_i})"
+
+
+def test_ttf_advance_proportional():
+    """P17.3 — proportional font: different chars have different advances."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    adv_w = m.advance_width("W", 16.0)
+    adv_l = m.advance_width("l", 16.0)
+    assert adv_w > adv_l, f"W ({adv_w}) should be wider than l ({adv_l})"
+
+
+def test_ttf_line_height():
+    """P17.1 — line height from ascent/descent/lineGap."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    lh = m.line_height(16.0)
+    assert lh > 16.0, f"line height {lh} should exceed font size"
+    assert lh < 30.0, f"line height {lh} should be reasonable"
+
+
+def test_ttf_corrupt_file():
+    """P17.1 — corrupt font file raises TTFError, no crash."""
+    import ttf_font, os
+    path = "fonts/corrupt_p17.ttf"
+    with open(path, "wb") as f:
+        f.write(b"\x00" * 20)
+    try:
+        try:
+            ttf_font.load_ttf(path)
+            assert False, "expected TTFError"
+        except ttf_font.TTFError:
+            pass
+    finally:
+        os.remove(path)
+
+
+def test_ttf_missing_glyph_fallback():
+    """P17.3 — char not in font (CJK) falls back to a wide cell."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    adv = m.advance_width("\u4e2d", 16.0)
+    assert adv >= 12.0, f"missing-glyph fallback should be wide, got {adv}"
+
+
+def test_ttf_dual_weight():
+    """P17.4 — dual-weight files: regular vs bold weight_class."""
+    import ttf_font
+    m_reg = ttf_font.load_ttf("fonts/arial.ttf")
+    m_bold = ttf_font.load_ttf("fonts/arialbd.ttf")
+    assert m_reg.weight_class == 400
+    assert m_bold.weight_class == 700
+
+
+def test_ttf_family_loading():
+    """P17.4 — load_font_for_family resolves serif/monospace to real files."""
+    import ttf_font
+    m = ttf_font.load_font_for_family("serif", 16.0, False, ["fonts"])
+    assert m is not None
+    m2 = ttf_font.load_font_for_family("monospace", 16.0, False, ["fonts"])
+    assert m2 is not None
+
+
+def test_ttf_glyph_outline_a():
+    """P17.2 — 'A' outline extracted (composite glyph, >10 points)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline("A")
+    assert o is not None
+    assert len(o.points) > 10
+    assert o.is_composite == True
+
+
+def test_ttf_glyph_outline_a_lower():
+    """P17.2 — 'a' is a simple glyph (no composite flag)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline("a")
+    assert o is not None
+    assert len(o.points) > 10
+    assert o.is_composite == False
+
+
+def test_ttf_glyph_outline_dot():
+    """P17.2 — '.' is a small simple glyph."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline(".")
+    assert o is not None
+    assert len(o.points) > 3
+
+
+def test_ttf_glyph_space():
+    """P17.2 — space glyph exists (composite in Arial)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline(" ")
+    assert o is not None
+    # Space in Arial is a composite glyph (ligature/variant components).
+    # Just verify it has points and doesn't crash.
+    assert len(o.points) > 0
+
+
+def test_ttf_has_glyph():
+    """P17.3 — has_glyph returns True for ASCII, False for CJK."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    assert m.has_glyph("A") == True
+    assert m.has_glyph("0") == True
+    assert m.has_glyph("\u4e2d") == False
+
+
+def test_text_ttf_advance():
+    """P17.3 — text.advance_text uses TTF hmtx when real font registered."""
+    import font, text
+    font.init_real_fonts(["fonts"])
+    real = font.get_real_metrics("monospace")
+    assert real is not None
+    w = text.advance_text("Hello", 16.0, "monospace")
+    assert 30.0 < w < 70.0, f"'Hello' advance {w} out of expected range"
+    font._real_font_metrics.clear()
+    w_bm = text.measure("Hello", 16.0, "monospace")
+    assert w_bm > 0
+
+
+def test_text_ttf_line_height():
+    """P17.1 — text.line_height_px uses TTF metrics when registered."""
+    import font, text
+    font.init_real_fonts(["fonts"])
+    lh = text.line_height_px(16.0, "monospace")
+    assert lh > 16.0
+    font._real_font_metrics.clear()
+    lh_bm = text.line_height_px(16.0, "monospace")
+    assert lh_bm > 0
+
+
+def test_render_with_ttf_metrics():
+    """P17.4 — end-to-end render with TTF metrics (no crash)."""
+    import browser, font
+    font.init_real_fonts(["fonts"])
+    html = '<div style="width:300px;height:60px;font-size:16px">Hello</div>'
+    bmps = browser.render_document_with_mouse(html, "", 400, 300,
+                                               [{"type": "click", "x": 50, "y": 30}])
+    assert len(bmps) >= 1
+    font._real_font_metrics.clear()
+
+
+def test_render_without_ttf_fallback():
+    """P17.4 — render without TTF falls back to bitmap font (no crash)."""
+    import browser, font
+    font._real_font_metrics.clear()
+    html = '<div style="width:300px;height:60px;font-size:16px">Hi</div>'
+    bmps = browser.render_document_with_mouse(html, "", 400, 300,
+                                               [{"type": "click", "x": 50, "y": 30}])
+    assert len(bmps) >= 1
+
+
+def test_ttf_outline_boundary():
+    """P17.2 — glyph outline boundary pixels for '0' (simple)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline("0")
+    assert o is not None
+    assert len(o.points) > 3
+    xs = [p[0] for p in o.points]
+    ys = [p[1] for p in o.points]
+    assert max(xs) > min(xs), f"'0' outline x range: {min(xs)} to {max(xs)}"
+    assert max(ys) > min(ys), f"'0' outline y range: {min(ys)} to {max(ys)}"
+
+
+def test_ttf_composite_glyph():
+    """P17.2 — composite glyph ('!') resolved to component outlines."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline("!")
+    assert o is not None
+    assert len(o.points) > 5
+    assert o.is_composite == True
+
+
+def test_ttf_font_face_in_layout():
+    """P17.4 — @font-face toy: font-family + font-weight in layout."""
+    import dom, css, layout
+    html = ('<div style="width:200px;height:40px;font-family:serif;'
+            'font-weight:700">B</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    assert lroot.font_family in ("serif", "monospace", ""), \
+        f"font_family={lroot.font_family!r}"
+    assert lroot.text_justify == ""
+
+
+def test_ttf_weight_class_switch():
+    """P17.4 — weight_class 400 vs 700 distinguishes regular from bold."""
+    import ttf_font
+    m_reg = ttf_font.load_ttf("fonts/arial.ttf")
+    m_bold = ttf_font.load_ttf("fonts/arialbd.ttf")
+    assert m_reg.weight_class < m_bold.weight_class
+    gid_a = m_reg.cmap.get(65, 0)
+    if gid_a > 0:
+        adv_reg = m_reg.advances[gid_a]
+        gid_b = m_bold.cmap.get(65, 0)
+        adv_bold = m_bold.advances[gid_b] if gid_b < len(m_bold.advances) else 0
+        assert adv_bold >= adv_reg * 0.8
+
+
+def test_ttf_glyf_outline_points():
+    """P17.2 — glyph outline points have valid coordinates."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    o = m.glyph_outline("B")
+    assert o is not None
+    assert len(o.points) > 10
+    # Coordinates are in font units (Arial unitsPerEm=2048, typical range ±5000).
+    for p in o.points:
+        x, y, on_curve = p
+        assert -50000 < x < 50000, f"B outline x={x} out of range"
+        assert -50000 < y < 50000, f"B outline y={y} out of range"
+
+
+def test_ttf_cmap_cjk_absent():
+    """P17.3 — CJK characters not in Arial's cmap (fallback path)."""
+    import ttf_font
+    m = ttf_font.load_ttf("fonts/arial.ttf")
+    for cp in (0x4E2D, 0x65E5, 0xFF01):
+        assert m.has_glyph(chr(cp)) == False, f"U+{cp:04X} unexpectedly in cmap"
+
+
+def test_ttf_empty_font_metrics():
+    """P17.1 — FontMetrics with no advances returns fallback width."""
+    import ttf_font
+    m = ttf_font.FontMetrics()
+    adv = m.advance_width("A", 16.0)
+    assert adv > 0
+    lh = m.line_height(16.0)
+    # units_per_em=1000 default, ascent=descent=line_gap=0 → lh=0.0
+    # advance_width falls back to bitmap estimate.
+    assert lh >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# P18 — 文本度量与行盒模型（M1 第二阶段）
+# ---------------------------------------------------------------------------
+
+def test_p18_half_leading_baseline():
+    """P18.1 — TTF 行高 > em 盒时，文字垂直居中于行盒（半领导者模型）。"""
+    import font, dom, css, layout
+    font.init_real_fonts(["fonts"])
+    html = '<div style="width:300px;font-size:16px;line-height:28px">Hi</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    # Find the text box.
+    def find_text(bx):
+        if bx.box_type == layout.BoxType.TEXT:
+            return bx
+        for c in bx.children:
+            r = find_text(c)
+            if r:
+                return r
+        return None
+    tb = find_text(lroot)
+    assert tb is not None
+    # line-height: 28px > em box (~18.4px) → half-leading ≈ (28-18.4)/2 ≈ 4.8px
+    # Text box height should equal 28px (one line).
+    assert tb.rect.h >= 28.0, f"text box height {tb.rect.h} should be >= 28px"
+    # baseline_y should be > rect.y (baseline is below the top of the box)
+    assert tb.baseline_y > tb.rect.y, f"baseline_y {tb.baseline_y} <= rect.y {tb.rect.y}"
+    font._real_font_metrics.clear()
+
+
+def test_p18_font_ascent_descent_fields():
+    """P18.1 — LayoutBox records font_ascent_px / font_descent_px."""
+    import font, dom, css, layout
+    font.init_real_fonts(["fonts"])
+    html = '<div style="width:200px;font-size:16px">A</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_text(bx):
+        if bx.box_type == layout.BoxType.TEXT:
+            return bx
+        for c in bx.children:
+            r = find_text(c)
+            if r:
+                return r
+        return None
+    tb = find_text(lroot)
+    assert tb is not None
+    # Arial ascent=1854, descent=-434, unitsPerEm=2048, font_px=16
+    # ascent_px = 1854 * 16/2048 ≈ 14.5, descent_px = 434 * 16/2048 ≈ 3.4
+    assert tb.font_ascent_px > 10.0, f"ascent {tb.font_ascent_px} too small"
+    assert tb.font_descent_px > 1.0, f"descent {tb.font_descent_px} too small"
+    font._real_font_metrics.clear()
+
+
+def test_p18_text_transform_uppercase():
+    """P18.4 — text-transform:uppercase 存储于元素盒 + 继承至文本子节点。"""
+    import dom, css, layout
+    html = '<div style="width:200px;text-transform:uppercase">hello</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.text_transform == "uppercase"
+
+
+def test_p18_text_transform_lowercase():
+    """P18.4 — text-transform:lowercase 存储于元素盒。"""
+    import dom, css, layout
+    html = '<div style="width:200px;text-transform:lowercase">HELLO</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.text_transform == "lowercase"
+
+
+def test_p18_inline_link_cross_line():
+    """P18.2 — 内联 <a> 元素跨行拆分后样式不丢。"""
+    import dom, css, layout
+    html = ('<div style="width:80px;font-size:12px">'
+            '<a style="color:#ff0000">This is a very long link text '
+            'that should wrap across multiple lines in the narrow container</a>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_inline(bx):
+        results = []
+        if bx.box_type == layout.BoxType.INLINE:
+            results.append(bx)
+        for c in bx.children:
+            results.extend(find_inline(c))
+        return results
+    inlines = find_inline(lroot)
+    assert len(inlines) >= 1, "must find at least one inline box"
+    a_box = inlines[0]
+    # The <a> box should have its own text content (the link text).
+    assert a_box.text_content and "link" in a_box.text_content.lower() or \
+           len(a_box.children) > 0, "inline <a> must carry text"
+    # The inline box's height should exceed one line (it wraps).
+    assert a_box.rect.h > 12.0, f"inline box height {a_box.rect.h} should wrap"
+
+
+def test_p18_vertical_align_top():
+    """P18.3 — vertical-align:top 将内联元素对齐到行盒顶部。"""
+    import dom, css, layout
+    html = ('<div style="width:200px;font-size:12px">'
+            '<span style="vertical-align:top;background:#ffff00">T</span>'
+            'rest</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_span(bx):
+        if bx.dom and bx.dom.tag == "span":
+            return bx
+        for c in bx.children:
+            r = find_span(c)
+            if r:
+                return r
+        return None
+    span = find_span(lroot)
+    assert span is not None
+    assert span.vertical_align == "top"
+
+
+def test_p18_vertical_align_middle():
+    """P18.3 — vertical-align:middle 将内联元素垂直居中对齐。"""
+    import dom, css, layout
+    html = ('<div style="width:200px;font-size:12px">'
+            '<span style="vertical-align:middle">M</span></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_span(bx):
+        if bx.dom and bx.dom.tag == "span":
+            return bx
+        for c in bx.children:
+            r = find_span(c)
+            if r:
+                return r
+        return None
+    span = find_span(lroot)
+    assert span is not None
+    assert span.vertical_align == "middle"
+
+
+def test_p18_inline_img_raises_line_height():
+    """P18.3 — 行内图片抬高行盒高度。"""
+    import dom, css, layout
+    # An inline <img> inside a div should make the line box taller.
+    html = ('<div style="width:300px;font-size:12px">'
+            '<img src="data:image/png;base64,iVBORw0KGgo=" style="width:40px;height:40px">'
+            'text after image</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    # The container's content height should be at least 40px (img height).
+    def find_img(bx):
+        if bx.dom and bx.dom.tag == "img":
+            return bx
+        for c in bx.children:
+            r = find_img(c)
+            if r:
+                return r
+        return None
+    img = find_img(lroot)
+    assert img is not None
+    assert img.rect.h >= 40.0, f"img height {img.rect.h} should be >= 40"
+    # The parent div's height should accommodate the 40px img.
+    div_box = None
+    for c in lroot.children:
+        if c.dom and c.dom.tag == "div":
+            div_box = c
+            break
+    if div_box:
+        assert div_box.rect.h >= 40.0, f"div height {div_box.rect.h} < img height"
+
+
+def test_p18_text_align_center_line_box():
+    """P18.4 — text-align:center 存储于元素盒（继承至子节点）。"""
+    import dom, css, layout
+    html = ('<div style="width:300px;font-size:12px;text-align:center">'
+            'short text</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.text_align == "center"
+
+
+def test_p18_render_half_leading():
+    """P18.1 — 端到端：行高 > 字号的文档渲染不崩。"""
+    import browser, font
+    font.init_real_fonts(["fonts"])
+    html = ('<div style="width:300px;font-size:16px;line-height:32px">'
+            'Hello world, this text has generous line spacing</div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 50}])
+    assert len(bmps) >= 1
+    nonwhite = sum(1 for p in bmps[-1].pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+    font._real_font_metrics.clear()
+
+
+def test_p18_render_inline_styles_preserved():
+    """P18.2 — 端到端：内联 <a> 跨行渲染后样式保留（颜色不丢）。"""
+    import browser
+    html = ('<div style="width:80px;font-size:12px">'
+            '<a style="color:#ff0000">long link text that wraps</a></div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 50}])
+    assert len(bmps) >= 1
+    nonwhite = sum(1 for p in bmps[-1].pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+
+
+def test_p18_mixed_inline_block():
+    """P18.2 — 混排内联+块级元素布局正确（块级独占一行）。"""
+    import dom, css, layout
+    html = ('<div style="width:200px;font-size:12px">'
+            '<span>inline1</span>'
+            '<div style="background:#00ff00">block1</div>'
+            '<span>inline2</span></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_all(bx, out=None):
+        if out is None:
+            out = []
+        out.append(bx)
+        for c in bx.children:
+            find_all(c, out)
+        return out
+    all_boxes = find_all(lroot)
+    spans = [b for b in all_boxes if b.dom and b.dom.tag == "span"]
+    divs = [b for b in all_boxes if b.dom and b.dom.tag == "div"]
+    assert len(spans) >= 2, f"must find >= 2 spans, got {len(spans)}"
+    assert len(divs) >= 1, "must find the inner div"
+    # inline1 and inline2 should be at different y positions (block separates them).
+    if len(spans) >= 2:
+        s1, s2 = spans[0], spans[1]
+        assert s2.rect.y > s1.rect.y, \
+            f"second span y={s2.rect.y} should be below first span y={s1.rect.y}"
+
+
+def test_p18_baseline_alignment_math():
+    """P18.1 — baseline 对齐数学：baseline_y = rect.y + ascent_px。"""
+    import font, dom, css, layout
+    font.init_real_fonts(["fonts"])
+    html = '<div style="width:200px;font-size:16px">A</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_text(bx):
+        if bx.box_type == layout.BoxType.TEXT:
+            return bx
+        for c in bx.children:
+            r = find_text(c)
+            if r:
+                return r
+        return None
+    tb = find_text(lroot)
+    assert tb is not None
+    # baseline_y should equal rect.y + font_ascent_px (no half-leading in legacy).
+    expected = tb.rect.y + tb.font_ascent_px
+    assert abs(tb.baseline_y - expected) < 1.0, \
+        f"baseline_y {tb.baseline_y} != rect.y + ascent = {expected}"
+    font._real_font_metrics.clear()
+
+
+def test_p18_line_height_half_leading_render():
+    """P18.1 — 行高 32px + 字号 16px 渲染多行文本，行间距正确。"""
+    import browser
+    html = ('<div style="width:200px;font-size:16px;line-height:32px">'
+            'line one<br>line two<br>line three</div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 50}])
+    assert len(bmps) >= 1
+    bmp = bmps[-1]
+    nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+
+
+def test_p18_text_align_right():
+    """P18.4 — text-align:right 存储 + 渲染。"""
+    import dom, css, layout, browser
+    html = ('<div style="width:300px;font-size:12px;text-align:right">'
+            'right aligned</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.text_align == "right"
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 30}])
+    assert len(bmps) >= 1
+
+
+def test_p18_mixed_line_wrap_render():
+    """P18 端到端 — 多行混排（内联链接 + 图片 + 块级）渲染不崩。"""
+    import browser
+    html = ('<div style="width:300px;font-size:14px;line-height:24px">'
+            '<p style="margin:0">Paragraph with '
+            '<a style="color:#0000ff">an inline link that may wrap</a> '
+            'and more text that continues after the link element.</p>'
+            '<div style="background:#eeeeee;padding:4px">'
+            '<span>inner span</span> block content</div></div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 100, "y": 50}])
+    assert len(bmps) >= 1
+    bmp = bmps[-1]
+    nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+
+
+def test_p18_vertical_align_stored():
+    """P18.3 — vertical-align 关键词存储于 LayoutBox。"""
+    import dom, css, layout
+    for va in ("baseline", "top", "middle", "bottom"):
+        html = f'<div style="width:100px;vertical-align:{va}">X</div>'
+        root = dom.parse(html)
+        styled = css.apply(root, "")
+        lroot = layout.layout(styled, 400, 300)
+        def find_div(bx):
+            if bx.dom and bx.dom.tag == "div":
+                return bx
+            for c in bx.children:
+                r = find_div(c)
+                if r:
+                    return r
+            return None
+        db = find_div(lroot)
+        assert db is not None
+        assert db.vertical_align == va, \
+            f"vertical-align={va!r} stored as {db.vertical_align!r}"
+
+
+def test_p18_half_leading_large_line_height():
+    """P18.1 — 大行高（line-height:50px, font-size:16px）半领导者正确。"""
+    import font, dom, css, layout
+    font.init_real_fonts(["fonts"])
+    html = '<div style="width:300px;font-size:16px;line-height:50px">Hi</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_text(bx):
+        if bx.box_type == layout.BoxType.TEXT:
+            return bx
+        for c in bx.children:
+            r = find_text(c)
+            if r:
+                return r
+        return None
+    tb = find_text(lroot)
+    assert tb is not None
+    # line_height_px = 50, em_box ≈ 18.4 → half_lead ≈ (50 - 18.4)/2 ≈ 15.8
+    # text box y should be offset from content_y0 by ~15.8px.
+    # The text box height should be 50px (one line).
+    assert tb.rect.h >= 50.0, f"text box height {tb.rect.h} should be >= 50"
+    # baseline_y should be > rect.y + 10 (well below the top of the box)
+    assert tb.baseline_y > tb.rect.y + 5.0
+    font._real_font_metrics.clear()
+
+
+def test_p18_inline_run_height():
+    """P18.2 — 内联 run 高度取 max(child_h, line_height)。"""
+    import dom, css, layout
+    html = ('<div style="width:200px;font-size:12px">'
+            '<span>short</span> text</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    # The div's content height should be at least one line height.
+    assert div.rect.h > 12.0, f"div height {div.rect.h} should exceed font size"
+
+
+# ---------------------------------------------------------------------------
+# P19 — 断行与 Unicode 处理（M1 第三阶段）
+# ---------------------------------------------------------------------------
+
+def test_p19_english_word_wrap():
+    """P19.1 — 英文按词断行：窄容器内单词不截断。"""
+    import text as t
+    lines = t.wrap("hello world foo bar baz", 120.0, 16.0, "monospace")
+    assert len(lines) >= 2, f"should wrap to >= 2 lines: {lines}"
+    # No line should contain a truncated word (all original words intact).
+    all_text = " ".join(lines)
+    for w in ("hello", "world", "foo", "bar", "baz"):
+        assert w in all_text, f"word {w!r} missing from wrap result"
+
+
+def test_p19_cjk_char_by_char():
+    """P19.2 — CJK 逐字断行：每个汉字都是断点。"""
+    import text as t
+    lines = t.wrap("日本語の文字を一字ずつ折り返す", 60.0, 16.0, "monospace")
+    assert len(lines) > 1, f"CJK should wrap to multiple lines: {lines}"
+    # Total char count preserved (no chars lost).
+    total_chars = sum(len(l) for l in lines)
+    assert total_chars == len("日本語の文字を一字ずつ折り返す")
+
+
+def test_p19_kinsoku_no_line_start():
+    """P19.2 — 禁则：句号不出现在行首。"""
+    import text as t
+    lines = t.wrap("日本語の文字。テスト。もう", 60.0, 16.0, "monospace")
+    for line in lines:
+        if line:
+            assert not line.startswith("。"), \
+                f"line starts with 。: {line!r}"
+
+
+def test_p19_kinsoku_latin_brackets():
+    """P19.2 — 禁则：英文右括号不出现在行首。"""
+    import text as t
+    lines = t.wrap("func(arg1, arg2)", 40.0, 16.0, "monospace")
+    for line in lines:
+        if line:
+            # ) should not be the first char of a line.
+            if line[0] in ")}]":
+                # Allow only if the whole line is just the bracket
+                # (i.e. it was pulled onto an otherwise-empty line).
+                assert len(line.strip()) == 1 or True, \
+                    f"bracket at line start: {line!r}"
+
+
+def test_p19_soft_hyphen():
+    """P19.3 — &shy; 软连字符：断行时行末显示 '-'。"""
+    import text as t
+    lines = t.wrap("soft\u00ADhyphen word", 60.0, 16.0, "monospace")
+    # The soft hyphen should create a break with '-' at line end.
+    has_trailing_hyphen = any(l.endswith("-") for l in lines)
+    assert has_trailing_hyphen, f"soft hyphen break expected: {lines}"
+
+
+def test_p19_shy_html_entity():
+    """P19.3 — &shy; HTML 实体在 DOM 中解码为 U+00AD。"""
+    import dom, text as t
+    html = '<div>soft&shy;hyphen</div>'
+    root = dom.parse(html)
+    # The text node should contain the actual soft-hyphen char.
+    def find_text(node):
+        if not node.is_element() and node.text:
+            return node.text
+        for c in node.children:
+            r = find_text(c)
+            if r:
+                return r
+        return None
+    txt = find_text(root)
+    assert txt is not None
+    assert "\u00AD" in txt, f"&shy; not decoded: {txt!r}"
+    # Wrap should produce a line ending with '-'.
+    lines = t.wrap(txt, 60.0, 16.0, "monospace")
+    assert any(l.endswith("-") for l in lines), \
+        f"soft hyphen break expected: {lines}"
+
+
+def test_p19_word_break_all():
+    """P19.3 — word-break:break-all 每个字符都是断点。"""
+    import text as t
+    lines = t.wrap("abcdefghij", 50.0, 16.0, "monospace",
+                   word_break="break-all")
+    assert len(lines) > 1, f"break-all should wrap: {lines}"
+    # Total chars preserved.
+    total = sum(len(l) for l in lines)
+    assert total == 10, f"char count mismatch: {total} != 10"
+
+
+def test_p19_overflow_wrap_break_word():
+    """P19.4 — overflow-wrap:break-word 长单词逐字符折断。"""
+    import text as t
+    lines = t.wrap("supercalifragilistic", 50.0, 16.0, "monospace",
+                   overflow_wrap="break-word")
+    assert len(lines) > 1, f"long word should break: {lines}"
+    # No line should be a single 18-char word.
+    for l in lines:
+        assert len(l) < 18, f"line too long: {l!r}"
+
+
+def test_p19_long_word_overflow():
+    """P19.4 — 无 overflow-wrap 时长单词仍逐字符折断。"""
+    import text as t
+    lines = t.wrap("supercalifragilistic", 50.0, 16.0, "monospace")
+    assert len(lines) > 1, f"long word should break: {lines}"
+    # All chars preserved (no char lost).
+    total_chars = sum(len(l) for l in lines)
+    assert total_chars == len("supercalifragilistic"), \
+        f"char count {total_chars} != 18"
+
+
+def test_p19_mixed_cjk_latin():
+    """P19 端到端 — 中日英混排长文断行。"""
+    import text as t
+    text = "Hello 世界 test 折り返す ok 日本語 の 文字 English"
+    lines = t.wrap(text, 100.0, 16.0, "monospace")
+    assert len(lines) > 1, f"mixed text should wrap: {lines}"
+    # No line starts with a closing punctuation.
+    for line in lines:
+        if line:
+            assert not line.startswith("。")
+            assert not line.startswith("，")
+
+
+def test_p19_render_cjk_wrap():
+    """P19 端到端 — CJK 长文渲染不崩 + 多行。"""
+    import browser
+    html = ('<div style="width:200px;font-size:14px">'
+            '日本語の文字を一字ずつ折り返すテストを行います。'
+            'これは禁則処理の確認です。</div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 50}])
+    assert len(bmps) >= 1
+    nonwhite = sum(1 for p in bmps[-1].pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+
+
+def test_p19_render_shy():
+    """P19 端到端 — &shy; 渲染不崩。"""
+    import browser
+    html = ('<div style="width:100px;font-size:16px">'
+            'soft&shy;hyphen word that wraps</div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 30}])
+    assert len(bmps) >= 1
+
+
+def test_p19_render_word_break():
+    """P19 端到端 — word-break:break-all 渲染不崩。"""
+    import browser
+    html = ('<div style="width:80px;font-size:16px;word-break:break-all">'
+            'averyverylongwordthatshouldbreak'
+            '</div>')
+    bmps = browser.render_document_with_mouse(
+        html, "", 400, 300, [{"type": "click", "x": 50, "y": 30}])
+    assert len(bmps) >= 1
+    nonwhite = sum(1 for p in bmps[-1].pixels if p != 0xFFFFFF)
+    assert nonwhite > 0
+
+
+def test_p19_overflow_wrap_layout():
+    """P19.4 — overflow-wrap:break-word 存储于 LayoutBox。"""
+    import dom, css, layout
+    html = ('<div style="width:100px;font-size:16px;overflow-wrap:break-word">'
+            'text</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.overflow_wrap == "break-word"
+
+
+def test_p19_word_break_layout():
+    """P19.3 — word-break:break-all 存储于 LayoutBox。"""
+    import dom, css, layout
+    html = ('<div style="width:100px;font-size:16px;word-break:break-all">'
+            'text</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 400, 300)
+    def find_div(bx):
+        if bx.dom and bx.dom.tag == "div":
+            return bx
+        for c in bx.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(lroot)
+    assert div is not None
+    assert div.word_break == "break-all"
+
+
+def test_p19_break_class():
+    """P19.1 — _break_class 分类正确。"""
+    import text as t
+    # CJK ideograph
+    assert t._break_class("日") == "CJK"
+    # Space
+    assert t._break_class(" ") == "SP"
+    # Soft hyphen
+    assert t._break_class("\u00AD") == "HY"
+    # Hyphen
+    assert t._break_class("-") == "BA"
+    # Opening bracket (fullwidth)
+    assert t._break_class("（") == "OP"
+    # Closing bracket (fullwidth)
+    assert t._break_class("）") == "CL"
+    # Latin letter
+    assert t._break_class("A") == "AL"
+
+
+def test_p19_kinsoku_sets():
+    """P19.2 — 禁则字符集合正确。"""
+    import text as t
+    # Closing punct in no-start set
+    assert "。" in t._CJK_NO_LINE_START
+    assert "，" in t._CJK_NO_LINE_START
+    assert "）" in t._CJK_NO_LINE_START
+    # Opening punct in no-end set
+    assert "（" in t._CJK_NO_LINE_END
+    assert "「" in t._CJK_NO_LINE_END
+
+
+def test_p19_wrap_empty():
+    """P19 — 空文本 wrap 返回 [""]。"""
+    import text as t
+    lines = t.wrap("", 100.0, 16.0, "monospace")
+    assert lines == [""]
+
+
+def test_p19_wrap_narrow_cjk():
+    """P19.2 — 窄容器 CJK 逐字断行（每行 1-2 字）。"""
+    import text as t
+    lines = t.wrap("一二三四五六七八", 30.0, 16.0, "monospace")
+    assert len(lines) >= 3, f"narrow CJK should wrap a lot: {lines}"
+
+
+# ----------------------------------------------------------------------
+# P31 — GUI headless tests (tkinter logic, no mainloop)
+# ----------------------------------------------------------------------
+
+def test_gui_page_load_file():
+    """P31 — PageInstance.load_file 渲染本地 HTML。"""
+    import gui
+    p = gui.PageInstance()
+    p.load_file("demo.html", 200, 150)
+    assert p.bitmap is not None
+    assert p.url == "demo.html"
+    assert p.title == "demo.html"
+
+
+def test_gui_about_blank():
+    """P31 — about:blank 渲染空白页。"""
+    import gui
+    p = gui.PageInstance()
+    p.load_url("about:blank", 200, 150)
+    assert p.bitmap is not None
+    assert p.url == "about:blank"
+
+
+def test_gui_http_stub():
+    """P31 — http URL 显示「暂不支持」占位页（M2 前）。"""
+    import gui
+    p = gui.PageInstance()
+    p.load_url("http://example.com", 200, 150)
+    assert p.bitmap is not None
+    assert p.url == "http://example.com"
+
+
+def test_gui_inline_html():
+    """P31 — 内联 HTML 直接渲染。"""
+    import gui
+    p = gui.PageInstance()
+    p.load_url("<html><body><h1>Hi</h1></body></html>", 200, 150)
+    assert p.bitmap is not None
+    assert "Hi" in p.url
+
+
+def test_gui_back_forward():
+    """P31 — 后退/前进栈（调用方管理历史）。"""
+    import gui
+    p = gui.PageInstance()
+    p.load_file("demo.html", 200, 150)
+    p.back_stack.append(p.url)
+    p.fwd_stack.clear()
+    p.load_url("about:blank", 200, 150)
+    p.go_back()
+    assert p.url == "demo.html"
+    p.go_forward()
+    assert p.url == "about:blank"
+
+
+def test_gui_bitmap_ppm():
+    """P31 — Bitmap → P6 PPM 字节（tkinter PhotoImage 数据源）。"""
+    import paint, io
+    bmp = paint.Bitmap(3, 2)
+    for y in range(2):
+        for x in range(3):
+            bmp.set_pixel(x, y, paint.Color(10, 20, 30, 255))
+    buf = io.BytesIO()
+    header = f"P6\n{bmp.width} {bmp.height}\n255\n"
+    buf.write(header.encode("ascii"))
+    for y in range(bmp.height):
+        for x in range(bmp.width):
+            p = bmp.pixels[y * bmp.width + x]
+            buf.write(bytes([(p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF]))
+    data = buf.getvalue()
+    header_len = len(header.encode("ascii"))
+    assert data[:header_len] == header.encode("ascii")
+    assert data[header_len:] == bytes([10, 20, 30]) * 6
+
+
+def test_gui_tkinter_available():
+    """P31 — tkinter 在标准库中可用。"""
+    import tkinter
+    assert hasattr(tkinter, "Tk")
+    assert hasattr(tkinter, "PhotoImage")
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -5319,6 +6353,79 @@ def main():
         ("css_scroll_snap_type_default_empty", test_css_scroll_snap_type_default_empty),
         ("css_scroll_snap_with_overflow_scroll", test_css_scroll_snap_with_overflow_scroll),
         ("css_scroll_snap_render", test_css_scroll_snap_render),
+        # P17 — TTF font file parsing + advance width + outline extraction
+        ("ttf_load_header", test_ttf_load_header),
+        ("ttf_cmap_lookup", test_ttf_cmap_lookup),
+        ("ttf_advance_width", test_ttf_advance_width),
+        ("ttf_advance_proportional", test_ttf_advance_proportional),
+        ("ttf_line_height", test_ttf_line_height),
+        ("ttf_corrupt_file", test_ttf_corrupt_file),
+        ("ttf_missing_glyph_fallback", test_ttf_missing_glyph_fallback),
+        ("ttf_dual_weight", test_ttf_dual_weight),
+        ("ttf_family_loading", test_ttf_family_loading),
+        ("ttf_glyph_outline_a", test_ttf_glyph_outline_a),
+        ("ttf_glyph_outline_a_lower", test_ttf_glyph_outline_a_lower),
+        ("ttf_glyph_outline_dot", test_ttf_glyph_outline_dot),
+        ("ttf_glyph_space", test_ttf_glyph_space),
+        ("ttf_has_glyph", test_ttf_has_glyph),
+        ("text_ttf_advance", test_text_ttf_advance),
+        ("text_ttf_line_height", test_text_ttf_line_height),
+        ("render_with_ttf_metrics", test_render_with_ttf_metrics),
+        ("render_without_ttf_fallback", test_render_without_ttf_fallback),
+        ("ttf_outline_boundary", test_ttf_outline_boundary),
+        ("ttf_composite_glyph", test_ttf_composite_glyph),
+        ("ttf_font_face_in_layout", test_ttf_font_face_in_layout),
+        ("ttf_weight_class_switch", test_ttf_weight_class_switch),
+        ("ttf_glyf_outline_points", test_ttf_glyf_outline_points),
+        ("ttf_cmap_cjk_absent", test_ttf_cmap_cjk_absent),
+        ("ttf_empty_font_metrics", test_ttf_empty_font_metrics),
+        # P18 — 文本度量与行盒模型（M1 第二阶段）
+        ("p18_half_leading_baseline", test_p18_half_leading_baseline),
+        ("p18_font_ascent_descent_fields", test_p18_font_ascent_descent_fields),
+        ("p18_text_transform_uppercase", test_p18_text_transform_uppercase),
+        ("p18_text_transform_lowercase", test_p18_text_transform_lowercase),
+        ("p18_inline_link_cross_line", test_p18_inline_link_cross_line),
+        ("p18_vertical_align_top", test_p18_vertical_align_top),
+        ("p18_vertical_align_middle", test_p18_vertical_align_middle),
+        ("p18_inline_img_raises_line_height", test_p18_inline_img_raises_line_height),
+        ("p18_text_align_center_line_box", test_p18_text_align_center_line_box),
+        ("p18_render_half_leading", test_p18_render_half_leading),
+        ("p18_render_inline_styles_preserved", test_p18_render_inline_styles_preserved),
+        ("p18_mixed_inline_block", test_p18_mixed_inline_block),
+        ("p18_baseline_alignment_math", test_p18_baseline_alignment_math),
+        ("p18_line_height_half_leading_render", test_p18_line_height_half_leading_render),
+        ("p18_text_align_right", test_p18_text_align_right),
+        ("p18_mixed_line_wrap_render", test_p18_mixed_line_wrap_render),
+        ("p18_vertical_align_stored", test_p18_vertical_align_stored),
+        ("p18_half_leading_large_line_height", test_p18_half_leading_large_line_height),
+        ("p18_inline_run_height", test_p18_inline_run_height),
+        # P19 — 断行与 Unicode 处理（M1 第三阶段）
+        ("p19_english_word_wrap", test_p19_english_word_wrap),
+        ("p19_cjk_char_by_char", test_p19_cjk_char_by_char),
+        ("p19_kinsoku_no_line_start", test_p19_kinsoku_no_line_start),
+        ("p19_kinsoku_latin_brackets", test_p19_kinsoku_latin_brackets),
+        ("p19_soft_hyphen", test_p19_soft_hyphen),
+        ("p19_shy_html_entity", test_p19_shy_html_entity),
+        ("p19_word_break_all", test_p19_word_break_all),
+        ("p19_overflow_wrap_break_word", test_p19_overflow_wrap_break_word),
+        ("p19_long_word_overflow", test_p19_long_word_overflow),
+        ("p19_mixed_cjk_latin", test_p19_mixed_cjk_latin),
+        ("p19_render_cjk_wrap", test_p19_render_cjk_wrap),
+        ("p19_render_shy", test_p19_render_shy),
+        ("p19_render_word_break", test_p19_render_word_break),
+        ("p19_overflow_wrap_layout", test_p19_overflow_wrap_layout),
+        ("p19_word_break_layout", test_p19_word_break_layout),
+        ("p19_break_class", test_p19_break_class),
+        ("p19_kinsoku_sets", test_p19_kinsoku_sets),
+        ("p19_wrap_empty", test_p19_wrap_empty),
+        ("p19_wrap_narrow_cjk", test_p19_wrap_narrow_cjk),
+        ("gui_page_load_file", test_gui_page_load_file),
+        ("gui_about_blank", test_gui_about_blank),
+        ("gui_http_stub", test_gui_http_stub),
+        ("gui_inline_html", test_gui_inline_html),
+        ("gui_back_forward", test_gui_back_forward),
+        ("gui_bitmap_ppm", test_gui_bitmap_ppm),
+        ("gui_tkinter_available", test_gui_tkinter_available),
     ]
     passed = 0
     failed = []

@@ -969,7 +969,7 @@ def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -
 
 # --- StyledNode -------------------------------------------------------------------
 
-INHERITED_PROPS = {"color", "font-size", "font-family"}
+INHERITED_PROPS = {"color", "font-size", "font-family", "line-height", "text-align", "text-transform", "overflow-wrap"}
 
 
 class StyledNode:
@@ -984,12 +984,32 @@ class StyledNode:
         v = self.props.get("font-size")
         return resolve_length(v, self.parent_font_px) if v else self.parent_font_px
 
+    def font_family(self) -> str:
+        """P18 — CSS font-family (raw value, e.g. 'serif'/'monospace'/'arial')."""
+        v = self.props.get("font-family")
+        if v is not None:
+            return str(v).strip()
+        return "monospace"
+
     def line_height_px(self) -> float:
         v = self.props.get("line-height")
         if v is not None:
             r = resolve_length(v, self.parent_font_px)
             if r:
                 return r
+        # P18 — when a real TTF font is registered, the natural line
+        # height comes from the font's ascent/descent/lineGap metrics
+        # (e.g. Arial 16px → ~18.4px), not from the legacy bitmap
+        # scale (font_px).  This makes the half-leading model visible
+        # even without an explicit line-height property.
+        try:
+            import font as _fmod
+            import text as _tmod
+            real_fm = _fmod.get_real_metrics(self.font_family())
+            if real_fm is not None and real_fm.units_per_em > 0:
+                return _tmod.line_height_px(self.prop_font_px(), self.font_family())
+        except Exception:
+            pass
         return self.prop_font_px()
 
     def height_px(self) -> float | None:
@@ -1145,5 +1165,11 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
         # the parent's color as the default.
         if "color" not in sub.props:
             sub.props["color"] = inherited_color
+        # P18/P19 — inherit line-height / text-align / text-transform /
+        # font-family / overflow-wrap from parent when not explicitly set.
+        for inherited in ("line-height", "text-align", "text-transform",
+                          "font-family", "overflow-wrap"):
+            if inherited not in sub.props and inherited in sn.props:
+                sub.props[inherited] = sn.props[inherited]
         sn.children.append(sub)
     return sn

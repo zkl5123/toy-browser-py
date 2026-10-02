@@ -260,3 +260,29 @@ def family_from_css(value) -> str:
     if v in ("serif", "times", "times new roman", "georgia", "garamond"):
         return "serif"
     return "monospace"
+
+
+# ---------------------------------------------------------------------------
+# P17 — real TTF font metrics (optional, falls back to bitmap when absent)
+# ---------------------------------------------------------------------------
+
+_real_font_metrics: dict = {}   # family → ttf_font.FontMetrics
+
+
+def init_real_fonts(search_dirs: list = None) -> None:
+    """P17 — load real TTF fonts for the known families.
+
+    Call once at startup.  If no font files are found the built-in
+    bitmap font is used (no crash).
+    """
+    import ttf_font
+    dirs = search_dirs if search_dirs is not None else []
+    for family in ("serif", "monospace"):
+        m = ttf_font.load_font_for_family(family, 0.0, False, dirs)
+        if m is not None:
+            _real_font_metrics[family] = m
+
+
+def get_real_metrics(family: str):
+    """P17 — return the real TTF metrics for a family, or None."""
+    return _real_font_metrics.get(family)
