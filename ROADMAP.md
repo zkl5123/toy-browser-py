@@ -5,7 +5,7 @@
 
 ---
 
-## 已完成（437/437 测试通过）
+## 已完成（456/456 测试通过）
 
 - [x] 阶段 1 — HTML 解析（`dom.py`）
 - [x] 阶段 2 — CSS 样式 + 级联 + 内联（`css.py`）
@@ -1112,6 +1112,67 @@
   规划 425 目标）。
 - [x] 端到端 CLI `python main.py demo.html out.ppm` 通过。
 
+## P21 — URL 与 HTTP/1.1 客户端（M2 网络栈第一步）✅
+
+> 依据 `项目未来规划.txt` §P21：URL 解析（scheme/host/port/path/query/
+> fragment、相对 URL 按 urljoin 规范、规范化）、HTTP/1.1 最小客户端
+> （GET + Host + 状态码分派 200/301/404/500）、Content-Type 分派
+> （text/html → 渲染管线；其他 → 下载/忽略）、请求超时 / 连接错误 →
+> 统一错误页渲染。测试全部使用本地 `http.server` 夹具（离线可测、
+> CI 稳定）。接口设计成可替换（`http.client` 起步，为 M5 方向 B
+> 手写 socket 留口子）。
+
+### 21.1 URL 解析 ✅
+
+- [x] `net.py`：`URL` frozen dataclass（scheme/host/port/path/query/
+  fragment/user/password）+ `parse_url(url, base=None)` 相对解析
+  （WHATWG 规则：`?q`/`#f` 替换 base 的 query/fragment；`/abs` 同 host
+  新 path；`//host` scheme-relative；相对 path 按 base 目录 + `..`
+  规范化）。
+- [x] `effective_port`（默认端口 80/443 推断）+ `authority`
+  （默认端口省略）+ `to_string()` 规范化往返 + `origin` 属性。
+- [x] `normalize_url`（scheme/host 小写化、空 path → `/`）、
+  `is_network`/`is_http`/`is_https` 标志。
+- [x] 测试：`p21_parse_url_absolute`、`p21_parse_url_https_default_port`、
+  `p21_relative_url_resolution`、`p21_url_to_string_roundtrip`、
+  `p21_normalize_url`、`p21_origin_property`、`p21_url_is_network_flag`。
+
+### 21.2 HTTP/1.1 最小客户端 ✅
+
+- [x] `HttpClient.get(url)`：`http.client`（标准库）GET + `Host` 头 +
+  `User-Agent: toy-browser-py/1.0 (P21)`；3xx 原样返回（P22 跟进
+  重定向链，P21 不自动跟随）；一次瞬时网络错误重试。
+- [x] `HttpResponse`：status / status_text / headers / body /
+  final_url / `content_type` / `is_html` / `ok`（2xx 才算成功）。
+- [x] 死端口 / 连接失败 → `ConnectionError`（调用方渲染统一错误页）。
+- [x] 测试：`p21_http_get_200`、`p21_http_get_404`、
+  `p21_http_redirect_surfaced`、`p21_http_query_in_path`、
+  `p21_connection_error_retries`（全部用本地 `http.server` 夹具，离线）。
+
+### 21.3 Content-Type 分派 + 统一错误页 ✅
+
+- [x] `fetch_html(url, client)` → `(text, HttpResponse)`：`text/html`
+  （或空 / text/plain）UTF-8 解码；非 HTML Content-Type 抛
+  `FetchError`（下载/忽略路径）；4xx/5xx 抛 `FetchError` 携带 status。
+- [x] `error_page_html(title, detail)` + `render_error_page(...)`
+  （经完整管线出 Bitmap）：超时 / 连接 / 404 / 500 统一错误页。
+- [x] `gui.py`：http/https 输入走 `net.fetch_html`，`FetchError` →
+  统一错误页（替换 P31 的「M2 前暂不支持」占位页）。
+- [x] `main.py`：URL 输入走 `net` 栈；网络失败退出码 3 + 仍写
+  错误页 PPM（不崩）。
+- [x] 测试：`p21_content_type_dispatch`、`p21_fetch_error_on_4xx`、
+  `p21_unsupported_scheme`、`p21_error_page_html`、
+  `p21_error_page_renders`、`p21_fetch_html_accepts_str_url`、
+  `p21_cli_network_error_exit_code`。
+
+### 21.4 测试扩充 ✅
+
+- [x] 测试总数从 437 → **456** 条（19 条新 P21 测试，超出规划
+  445 目标）。
+- [x] 网络层全部用本地 `http.server` 夹具，离线可测、CI 稳定。
+- [x] 端到端 CLI `python main.py demo.html out.ppm` 通过；
+  `python main.py http://127.0.0.1:1/x.html` → 退出码 3 + 错误页。
+
 ## 实施顺序
 
 ```
@@ -1222,11 +1283,15 @@ P20.4 字体回退链 + weight_class 匹配 （~1.5h）
 P20.5 letter-spacing / text-rendering 玩具 （~1h）
 P20.6 曲线路径接入文字渲染管线 （~1.5h）
 P20.7 测试扩充          （随 P20 完成）
+P21.1 URL 解析（scheme/host/port/path/query/fragment + 相对 + 规范化）（~2h）
+P21.2 HTTP/1.1 最小客户端（GET + Host + 状态码分派）（~2h）
+P21.3 Content-Type 分派 + 统一错误页 （~1.5h）
+P21.4 测试扩充（本地 http.server 夹具）（随 P21 完成）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 已完成（**437/437** 测试通过）。M1 收官。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 已完成（**456/456** 测试通过）。
 
-下一站：**P21 URL/HTTP（M2 网络栈，打通后 GUI 的 http 占位页替换为真实加载）**。
+下一站：**P22 HTTP 深化与子资源加载（重定向链 / gzip / chunked / 子资源并发 / base 标签）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
