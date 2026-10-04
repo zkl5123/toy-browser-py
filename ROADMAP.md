@@ -1348,6 +1348,57 @@
 - [x] `main.py demo.html` CLI e2e 通过（41425 非白像素，与 P23 一致）；
   既有 492 条测试全绿无回归。
 
+## P25 — CSS 层叠与计算值完善（M3 第一步）✅
+
+> 依据 `项目未来规划.txt` §P25（阶段组 C：布局正确性与 JS/DOM 补全
+> → M3）：把 CSS 引擎从玩具级特异性 / 级联升级到规范级四元组特异性
+> + `!important` 来源级联 + 继承关键字 + shorthand 展开 + em/% 计算值
+> 链。测试 514 → **528**（14 条新 P25 测试）。
+
+### 25.1 specificity 四元组 + `!important` 来源级联 ✅
+
+- [x] `Selector.specificity` 从玩具三元组 `(id, cls, type)` 升级为规范
+  四元组 `(inline, id, cls, type)`；`Rule` 新增 `source`（author/ua）
+  与 `important` 标志。级联排序键 `_cascade_key = (author, important,
+  spec_sum)`：先来源层（author > ua），再 important 层，最后特异性。
+- [x] `!important` 声明经 `ImportantDecl` 包裹；`_apply_subtree` 三遍
+  应用：① 普通作者规则 → ② inline 普通（可被 author important 覆盖）
+  → ③ author !important → ④ inline !important（important 层内最高）。
+  旧的 `pseudo_class_specificity` 等 3 条测试随四元组更新断言。
+
+### 25.2 继承关键字 inherit / initial / unset ✅
+
+- [x] `INHERITED_PROPS`（color / font-size / font-family / font-weight /
+  line-height / text-align / text-transform / overflow-wrap /
+  letter-spacing / word-spacing）；`INITIAL_VALUES` 表
+  （margin / padding / border-width / display / width / height /
+  overflow / opacity / position / float / … 共 27 项初始值）。
+- [x] `_resolve_cascade_value`：`inherit` 取父级 computed 值；
+  `initial` 取 `INITIAL_VALUES`；`unset` = 继承属性走 inherit、
+  非继承走 initial。
+
+### 25.3 shorthand 展开为 longhand ✅
+
+- [x] `SHORTHAND_EXPANSION` 表 + `expand_shorthands`：`margin` →
+  `margin-top/right/bottom/left`、`padding` → 同构四项、
+  `border-width` → 四向 longhand；shorthand 原键保留（layout 读
+  `sn.props["margin"]` 不变），longhand 并存供子节点 inherit 查找。
+
+### 25.4 em/% 计算值相对父级解析链 ✅
+
+- [x] 子节点 `parent_font_px` 取父节点 *resolved* font-size（非 UA
+  默认 16）；`font-size: 2em` 在 40px 父级下计算为 80px（旧实现
+  误算 32px）；`resolve_length` 对 em/% 均以父级 computed font 为基准。
+
+### 25.5 测试扩充 ✅
+
+- [x] 测试总数 514 → **528** 条（14 条新 P25 测试）：四元组特异性 /
+  id>class / class>type、`!important` 覆盖普通 inline / author
+  important 胜过普通 inline、`inherit` 颜色继承、`initial` margin 归零、
+  `unset` text-align 继承、margin / padding shorthand 展开、em 计算链
+  80px、font-size 继承 32px、author 源层 > UA 源层、全管线渲染回归。
+- [x] 既有 514 条测试全绿无回归；`main.py demo.html` CLI e2e 通过。
+
 ## 实施顺序
 
 ```
@@ -1476,11 +1527,16 @@ P24.2 void elements + 自动闭合纠错（~2h）
 P24.3 注释/DOCTYPE/大小写 + foster parenting（~1h）
 P24.4 格式化元素重构（~1.5h）
 P24.5 html_pkg/ 子模块 + 字节流输入（~2h）
+P25.1 specificity 四元组 + !important 来源级联（~2h）
+P25.2 继承关键字 inherit/initial/unset（~1.5h）
+P25.3 shorthand 展开为 longhand（~1h）
+P25.4 em/% 计算值相对父级解析链（~1h）
+P25.5 测试扩充（随 P25 完成）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 已完成（**514/514** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 已完成（**528/528** 测试通过）。
 
-下一站：**P25 M2 总检收（渲染管线审计 / 网络栈 / 解析器整合验收 + M3 启动）**。
+下一站：**P26 块级布局修正（M3 第二步：margin 折叠 / BFC / 高度自适应 / min-max 约束 / 宽度 auto 分配）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

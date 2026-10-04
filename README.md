@@ -23,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            514 条测试（python test.py）
+├── test.py            528 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P24 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P25 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -60,6 +60,16 @@ agency 简化版）；完整 entities 表（命名子集 + 十进制 / 十六进
 引用，码点 0 / 代理区 → U+FFFD）；注释 / DOCTYPE 丢弃、大小写不敏感
 标签名、表格 foster parenting 玩具。`dom.py` 瘦身为兼容 shim，下游
 零改动。
+
+P25 — CSS 层叠与计算值完善（M3 第一步）：specificity 从玩具三元组
+升级为规范四元组 `(inline, id, cls, type)`；`!important` 声明 +
+来源层级联（author > ua，`_cascade_key` 三遍应用，important 层内
+inline > author）；继承关键字 `inherit` / `initial` / `unset`
+（`INHERITED_PROPS` 10 项 + `INITIAL_VALUES` 27 项初始值表，
+`_resolve_cascade_value` 解析）；shorthand 展开为 longhand
+（`margin` / `padding` / `border-width` 四向 longhand 并存）；
+em/% 计算值相对父级 computed font-size 解析链（40px 父级下
+`2em` = 80px，非旧实现 32px）。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -740,6 +750,30 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - **测试**：22 条新 P24 测试（总数 492 → 514，超出规划 512 目标），
   离线纯字符串 / 字节输入（CI 稳定）；既有 492 条测试全绿无回归。
 
+### CSS 层叠与计算值完善（P25）
+
+- **P25.1 specificity 四元组 + `!important` 来源级联**：
+  `Selector.specificity` 从玩具三元组 `(id, cls, type)` 升级为规范
+  四元组 `(inline, id, cls, type)`；`Rule` 新增 `source`（author/ua）
+  与 `important` 标志；级联排序键 `_cascade_key = (author, important,
+  spec_sum)`；`!important` 经 `ImportantDecl` 包裹，三遍应用
+  （普通作者 → inline 普通 → author !important → inline !important）。
+- **P25.2 继承关键字 `inherit` / `initial` / `unset`**：
+  `INHERITED_PROPS`（color / font-size / font-family / font-weight /
+  line-height / text-align / text-transform / overflow-wrap /
+  letter-spacing / word-spacing）；`INITIAL_VALUES` 27 项初始值表；
+  `_resolve_cascade_value` 解析（`unset` = 继承属性 inherit、
+  非继承 initial）。
+- **P25.3 shorthand 展开为 longhand**：`expand_shorthands` 把
+  `margin` / `padding` / `border-width` 展开为四向 longhand
+  （`margin-top` 等），shorthand 原键保留供 layout 读取。
+- **P25.4 em/% 计算值相对父级解析链**：子节点 `parent_font_px`
+  取父级 *resolved* font-size（非 UA 默认 16），`font-size: 2em`
+  在 40px 父级下 = 80px；`resolve_length` 对 em/% 均以父级
+  computed font 为基准。
+- **测试**：14 条新 P25 测试（总数 514 → 528）；既有 514 条全绿
+  无回归。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -816,7 +850,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**415 条测试**，覆盖：
+**528 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -897,6 +931,7 @@ python test.py
 | HTTP 深化与子资源（P22） | `p22_redirect_followed`、`p22_redirect_loop_detected`、`p22_redirect_exceeds_cap`、`p22_redirect_within_cap_succeeds`、`p22_redirect_no_follow_returns_302`、`p22_gzip_decoded`、`p22_gzip_no_header_passthrough`、`p22_chunked_decode_roundtrip`、`p22_chunked_with_extensions`、`p22_chunked_max_size_cap`、`p22_subresource_collection`、`p22_base_tag_overrides_doc_base`、`p22_base_tag_absent`、`p22_subresource_failure_does_not_block`、`p22_render_document_from_url`、`p22_render_from_url_gzip_doc`、`p22_render_from_url_network_error`、`p22_subresource_data_uri_skipped`、`p22_fetch_resource_returns_none_on_404`、`p22_redirect_relative_location` |
 | HTTPS 与磁盘缓存（P23） | `p23_cache_hit_skips_wire`、`p23_cache_no_store_not_cached`、`p23_cache_max_age_expiry`、`p23_cache_etag_304_reuse`、`p23_cache_heuristic_ttl`、`p23_cache_store_clear`、`p23_cache_parse_directives`、`p23_progress_events_emitted`、`p23_progress_subresource_phase`、`p23_progress_on_event_subscription`、`p23_post_form_encoded`、`p23_post_verbatim_str`、`p23_insecure_flag_accepted`、`p23_https_tls_handshake`、`p23_cache_etag_absent_refetches`、`p23_cache_disabled_store` |
 | HTML5 容错解析（P24） | `p24_entities_named`、`p24_entities_numeric_dec`、`p24_entities_numeric_hex`、`p24_entities_zero_and_surrogate`、`p24_entities_unknown_name_literal`、`p24_rawtext_script_literal`、`p24_rawtext_style_literal`、`p24_void_input_no_stack`、`p24_void_self_closing_br`、`p24_implicit_p_sibling`、`p24_block_closes_p`、`p24_adoption_b_i`、`p24_stray_close_ignored`、`p24_comment_doctype_dropped`、`p24_case_insensitive_tag`、`p24_foster_tr_in_div`、`p24_unclosed_lt_text`、`p24_utf16_bom`、`p24_utf8_bom`、`p24_dom_shim_reexport`、`p24_dom_parse_bytes`、`p24_full_pipeline_render` |
+| CSS 层叠与计算值（P25） | `p25_specificity_4tuple`、`p25_specificity_id_beats_class`、`p25_specificity_class_beats_type`、`p25_important_beats_normal`、`p25_important_author_wins_over_normal_inline`、`p25_inherit_keyword`、`p25_initial_keyword`、`p25_unset_keyword`、`p25_shorthand_margin_expands`、`p25_shorthand_padding_expands`、`p25_em_computed_chain`、`p25_inherit_font_size`、`p25_source_cascade_author_over_ua`、`p25_full_pipeline_important` |
 
 ## 改进路线图
 
@@ -1030,6 +1065,11 @@ python test.py
 - [x] P24.4 格式化元素重构（<b><i></b></i> adoption agency 简化版）
 - [x] P24.5 html_pkg/ 子模块 + 字节流输入（dom.py 兼容 shim，下游零改动）
 - [x] P24.6 测试扩充至 514 条（测试总数 492 → 514）
+- [x] P25.1 specificity 四元组 + !important 来源级联（author > ua，ImportantDecl）
+- [x] P25.2 继承关键字 inherit / initial / unset（INHERITED_PROPS + INITIAL_VALUES）
+- [x] P25.3 shorthand 展开为 longhand（margin / padding / border-width）
+- [x] P25.4 em/% 计算值相对父级 computed font 解析链
+- [x] P25.5 测试扩充至 528 条（测试总数 514 → 528）
 
 ## 与 Rust 版的对应关系
 
@@ -1037,7 +1077,7 @@ python test.py
 |---|---|---|
 | `dom.py` | `dom.rs` | P24 兼容 shim（转发 html_pkg；Node 与 html_pkg.node.Node 同一类对象） |
 | `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
-| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器 |
+| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链） |
 | `layout.py` | `layout.rs` | 盒模型 + 命中测试 |
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
 | `paint_engine.py` | `paint.rs`（显示列表部分） | 显示列表 + 光栅化 |

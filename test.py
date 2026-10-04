@@ -2186,8 +2186,8 @@ def test_focus_pseudo_layout():
 def test_pseudo_class_specificity():
     """P8.1 — pseudo-class adds one class-level point to specificity."""
     sel = css.Selector.parse("#a:hover")
-    # id=1, cls=1 (pseudo adds 1), type=0
-    assert sel.specificity == (1, 1, 0), f"specificity must be (1,1,0), got {sel.specificity}"
+    # P25.1 — 4-tuple (inline, id, cls, type): id=1, cls=1 (pseudo adds 1), type=0
+    assert sel.specificity == (0, 1, 1, 0), f"specificity must be (0,1,1,0), got {sel.specificity}"
     assert sel.pseudo == ":hover", f"pseudo must be :hover, got {sel.pseudo}"
 
 
@@ -2195,8 +2195,8 @@ def test_pseudo_class_parse_focus():
     """P8.1 — .btn:focus parses correctly."""
     sel = css.Selector.parse(".btn:focus")
     assert sel.pseudo == ":focus", f"pseudo must be :focus, got {sel.pseudo}"
-    # class + pseudo = 2 class-level points.
-    assert sel.specificity == (0, 2, 0), f"specificity must be (0,2,0), got {sel.specificity}"
+    # P25.1 — class + pseudo = 2 class-level points → (0,0,2,0)
+    assert sel.specificity == (0, 0, 2, 0), f"specificity must be (0,0,2,0), got {sel.specificity}"
 
 
 # ---------------------------------------------------------------------------
@@ -2817,8 +2817,8 @@ def test_nth_child_an_plus_b():
 def test_nth_child_specificity():
     """P10.1 — :nth-child adds one class-level point to specificity."""
     sel = css.Selector.parse("li:nth-child(2)")
-    # (id=0, cls=1 [pseudo], type=1 [li]) → sum=2
-    assert sel.specificity_sum() == (0, 1, 1), f"got {sel.specificity_sum()}"
+    # P25.1 — 4-tuple (inline, id, cls, type): li type=1, :nth-child cls=1
+    assert sel.specificity_sum() == (0, 0, 1, 1), f"got {sel.specificity_sum()}"
 
 
 # ---------------------------------------------------------------------------
@@ -7722,6 +7722,268 @@ def test_p24_full_pipeline_render():
     assert nw > 0, "fault-tolerant doc must still render pixels"
 
 
+# ---------------------------------------------------------------------------
+# P25 — CSS 层叠与计算值完善（M3 第一步）
+# ---------------------------------------------------------------------------
+
+
+def test_p25_specificity_4tuple():
+    """P25.1 — Selector.specificity is a 4-tuple (inline, id, cls, type)."""
+    import css
+    sel = css.Selector.parse("#a .b c:hover")
+    # id=1, cls=1 (.b) + pseudo (:hover) = 2, type=1 (c), inline=0
+    assert sel.specificity == (0, 1, 2, 1), f"got {sel.specificity}"
+
+
+def test_p25_specificity_id_beats_class():
+    """P25.1 — #id beats .class regardless of count."""
+    import css
+    sel_id = css.Selector.parse("#a")
+    sel_cls = css.Selector.parse(".a.b.c.d.e")
+    assert sel_id.specificity > sel_cls.specificity, (
+        f"id spec {sel_id.specificity} must exceed cls spec {sel_cls.specificity}")
+
+
+def test_p25_specificity_class_beats_type():
+    """P25.1 — .class beats element type."""
+    import css
+    sel_cls = css.Selector.parse(".a")
+    sel_type = css.Selector.parse("div span p")
+    assert sel_cls.specificity > sel_type.specificity, (
+        f"cls spec {sel_cls.specificity} must exceed type spec {sel_type.specificity}")
+
+
+def test_p25_important_beats_normal():
+    """P25.2 — !important declaration overrides a normal high-specificity rule."""
+    import dom, css
+    html = '<div id=d style="color: blue">x</div>'
+    root = dom.parse(html)
+    # Author rule with !important must beat the normal inline style.
+    css_text = "#d { color: red !important; }"
+    styled = css.apply(root, css_text)
+    def find_div(sn):
+        if sn.dom.is_element() and sn.dom.tag == "div":
+            return sn
+        for c in sn.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(styled)
+    assert div is not None
+    c = div.color()
+    assert c.r == 255 and c.g == 0 and c.b == 0, (
+        f"!important author rule must beat normal inline, got RGB({c.r},{c.g},{c.b})")
+
+
+def test_p25_important_author_wins_over_normal_inline():
+    """P25.2 — author !important beats a normal (non-important) inline style."""
+    import dom, css
+    html = '<div id=d style="color: blue">x</div>'
+    root = dom.parse(html)
+    css_text = "#d { color: red !important; }"
+    styled = css.apply(root, css_text)
+    def find_div(sn):
+        if sn.dom.is_element() and sn.dom.tag == "div":
+            return sn
+        for c in sn.children:
+            r = find_div(c)
+            if r:
+                return r
+        return None
+    div = find_div(styled)
+    c = div.color()
+    assert c.r == 255 and c.g == 0 and c.b == 0, f"got RGB({c.r},{c.g},{c.b})"
+
+
+def test_p25_inherit_keyword():
+    """P25.3 — `color: inherit` takes the parent's computed color."""
+    import dom, css
+    html = ('<div style="color: red"><span style="color: inherit">x</span></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag(sn, tag):
+        if sn.dom.is_element() and sn.dom.tag == tag:
+            return sn
+        for c in sn.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    span = find_tag(styled, "span")
+    assert span is not None
+    c = span.color()
+    assert c.r == 255 and c.g == 0 and c.b == 0, f"span color must be inherited red, got ({c.r},{c.g},{c.b})"
+
+
+def test_p25_initial_keyword():
+    """P25.3 — `margin: initial` resets to the initial value (0px)."""
+    import dom, css
+    from css import EdgeList, Length, resolve_length
+    html = '<div style="margin: 50px"><div id=inner style="margin: initial">x</div></div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag_id(sn, id_):
+        if sn.dom.is_element() and sn.dom.attr("id") == id_:
+            return sn
+        for c in sn.children:
+            r = find_tag_id(c, id_)
+            if r:
+                return r
+        return None
+    inner = find_tag_id(styled, "inner")
+    assert inner is not None
+    # After resolution + expansion, margin must be an EdgeList of zeros.
+    m = inner.props.get("margin")
+    assert isinstance(m, EdgeList), f"margin must be EdgeList, got {type(m)}: {m}"
+    assert m.top == 0.0 and m.right == 0.0 and m.bottom == 0.0 and m.left == 0.0, (
+        f"margin: initial must be 0 on all sides, got {m}")
+
+
+def test_p25_unset_keyword():
+    """P25.3 — `text-align: unset` behaves as inherit (text-align is inherited)."""
+    import dom, css
+    html = ('<div style="text-align: right"><div style="text-align: unset">x</div></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tags(sn, tag, acc=None):
+        if acc is None:
+            acc = []
+        if sn.dom.is_element() and sn.dom.tag == tag:
+            acc.append(sn)
+        for c in sn.children:
+            find_tags(c, tag, acc)
+        return acc
+    divs = find_tags(styled, "div")
+    assert len(divs) == 2
+    inner = divs[1]
+    ta = inner.text_align()
+    assert ta == "right", f"text-align: unset must inherit 'right', got {ta!r}"
+
+
+def test_p25_shorthand_margin_expands():
+    """P25.4 — margin shorthand expands to margin-top/right/bottom/left."""
+    import dom, css
+    html = '<div id=d style="margin: 10px 20px">x</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag(sn, tag):
+        if sn.dom.is_element() and sn.dom.tag == tag:
+            return sn
+        for c in sn.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    d = find_tag(styled, "div")
+    assert d is not None
+    # After expansion, margin-top / margin-right should be present.
+    assert "margin-top" in d.props, f"margin-top missing from {list(d.props.keys())}"
+    assert "margin-right" in d.props, f"margin-right missing"
+    assert "margin-bottom" in d.props
+    assert "margin-left" in d.props
+
+
+def test_p25_shorthand_padding_expands():
+    """P25.4 — padding shorthand expands to longhands."""
+    import dom, css
+    html = '<div id=d style="padding: 5px 10px">x</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag(sn, tag):
+        if sn.dom.is_element() and sn.dom.tag == tag:
+            return sn
+        for c in sn.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    d = find_tag(styled, "div")
+    assert d is not None
+    assert "padding-top" in d.props, f"padding-top missing: {list(d.props.keys())}"
+    assert "padding-right" in d.props
+    assert "padding-bottom" in d.props
+    assert "padding-left" in d.props
+
+
+def test_p25_em_computed_chain():
+    """P25.5 — em units resolve against the parent's computed font-size,
+    not the UA default."""
+    import dom, css
+    # Parent sets font-size: 40px; child uses 2em → 80px (not 32px = 2×16).
+    html = ('<div style="font-size: 40px">'
+            '<div id=inner style="font-size: 2em">text</div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag_id(sn, id_):
+        if sn.dom.is_element() and sn.dom.attr("id") == id_:
+            return sn
+        for c in sn.children:
+            r = find_tag_id(c, id_)
+            if r:
+                return r
+        return None
+    inner = find_tag_id(styled, "inner")
+    assert inner is not None
+    # The child's parent_font_px should be 40 (from the parent's font-size).
+    assert abs(inner.parent_font_px - 40.0) < 0.1, (
+        f"inner.parent_font_px must be 40 (parent computed font), got {inner.parent_font_px}")
+    # The inner's own font-size = 2em × 40 = 80px.
+    own = inner.prop_font_px()
+    assert abs(own - 80.0) < 0.1, f"inner font-size must be 80px (2em of 40px), got {own}"
+
+
+def test_p25_inherit_font_size():
+    """P25.3 — font-size inherits when not explicitly set on child."""
+    import dom, css
+    html = '<div style="font-size: 32px"><span>x</span></div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    def find_tag(sn, tag):
+        if sn.dom.is_element() and sn.dom.tag == tag:
+            return sn
+        for c in sn.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    span = find_tag(styled, "span")
+    assert span is not None
+    # The span inherits font-size 32px from the parent.
+    assert abs(span.prop_font_px() - 32.0) < 0.1, (
+        f"span font-size must be 32px (inherited), got {span.prop_font_px()}")
+
+
+def test_p25_source_cascade_author_over_ua():
+    """P25.2 — author rules override UA rules in the cascade layer."""
+    import css
+    from css import Rule, Selector, parse_selector_list
+    # Build a fake UA rule and an author rule; verify the cascade key.
+    ua_sel = parse_selector_list("body")
+    auth_sel = parse_selector_list(".a")
+    ua_rule = Rule(ua_sel, {}, ua_sel[0].specificity_sum(), "ua", False)
+    auth_rule = Rule(auth_sel, {}, auth_sel[0].specificity_sum(), "author", False)
+    # Author must sort after (beat) UA in the cascade, even with lower spec.
+    author_key = css._cascade_key(auth_rule)
+    ua_key = css._cascade_key(ua_rule)
+    assert author_key > ua_key, (
+        f"author key {author_key} must exceed ua key {ua_key}")
+
+
+def test_p25_full_pipeline_important():
+    """P25 — full render pipeline with !important and inherit works
+    end-to-end without regression."""
+    import browser
+    html = ('<html><body style="font-size: 20px">'
+            '<div style="color: blue !important"><span style="color: inherit">hi</span></div>'
+            '</body></html>')
+    bmp = browser.render_document(html, "", 400, 300)
+    assert bmp is not None and bmp.width == 400
+    nw = sum(1 for px in bmp.pixels if px != 0xFFFFFF)
+    assert nw > 0, "P25 pipeline must still render pixels"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -8305,6 +8567,21 @@ def main():
         ("p24_dom_shim_reexport", test_p24_dom_shim_reexport),
         ("p24_dom_parse_bytes", test_p24_dom_parse_bytes),
         ("p24_full_pipeline_render", test_p24_full_pipeline_render),
+        # P25 — CSS 层叠与计算值完善（M3 第一步）。
+        ("p25_specificity_4tuple", test_p25_specificity_4tuple),
+        ("p25_specificity_id_beats_class", test_p25_specificity_id_beats_class),
+        ("p25_specificity_class_beats_type", test_p25_specificity_class_beats_type),
+        ("p25_important_beats_normal", test_p25_important_beats_normal),
+        ("p25_important_author_wins_over_normal_inline", test_p25_important_author_wins_over_normal_inline),
+        ("p25_inherit_keyword", test_p25_inherit_keyword),
+        ("p25_initial_keyword", test_p25_initial_keyword),
+        ("p25_unset_keyword", test_p25_unset_keyword),
+        ("p25_shorthand_margin_expands", test_p25_shorthand_margin_expands),
+        ("p25_shorthand_padding_expands", test_p25_shorthand_padding_expands),
+        ("p25_em_computed_chain", test_p25_em_computed_chain),
+        ("p25_inherit_font_size", test_p25_inherit_font_size),
+        ("p25_source_cascade_author_over_ua", test_p25_source_cascade_author_over_ua),
+        ("p25_full_pipeline_important", test_p25_full_pipeline_important),
     ]
     passed = 0
     failed = []
