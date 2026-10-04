@@ -1276,6 +1276,78 @@
 - [x] `main.py demo.html` CLI e2e 通过；`--progress` 输出
   `[start 0%]` 事件；网络失败仍退出码 3 + 错误页。
 
+## P24 — HTML5 容错解析（M2 收官硬仗）✅
+
+> 依据 `项目未来规划.txt` §P24：Parser 独立成 `html_pkg/` 子模块、
+> 输入统一为字节流；void elements、自动闭合纠错、格式化元素重构
+> （adoption agency 简化版）、原始文本模式、完整 entities 表、注释 /
+> DOCTYPE / 大小写不敏感。测试目标 492 → 512，实际 492 → **514**
+> （22 条新 P24 测试，超出目标）。
+
+### 24.1 原始文本模式 + HTML entities 完整表 ✅
+
+- [x] `html_pkg/entities.py` — `decode_entities(text)` 单遍解码命名
+  实体（WHATWG 策展子集 ~120 条，覆盖常用字符 / 希腊字母 / 数学
+  运算符 / 上下标 / 引号）+ 数字引用（`&#65;` 十进制、`&#x1F600;`
+  十六进制，`&#X42;` 大写 X）；码点 0 与代理区 → U+FFFD（规范
+  §tokenization）；未知名实体保留原文。
+- [x] `html_pkg/tokenize.py` 的 `RAWTEXT_TAGS`（`script` / `style` /
+  `textarea` / `title` / `xmp`）— 内容原样取到匹配的关闭标签为止，
+  不做 HTML 解析、不做实体解码（`<script>if (a < b) {}</script>` 内
+  的 `<` 不被误判为标签）。
+
+### 24.2 void elements + 自动闭合纠错 ✅
+
+- [x] `VOID_TAGS`（`br` / `img` / `input` / `hr` 等 14 个）永不压栈
+  （`<br/>` XHTML 自闭合语法也合法）。
+- [x] 隐式兄弟闭合：第二个 `<p>` / `<li>` / `<dt>` / `<dd>` 关闭前
+  一个；块级开始标签（`div` / `h1`–`h6` / `ul` 等）关闭 open 的
+  `<p>`。
+- [x] 容错词法：`<` 后首字符非字母 / 冒号（如 `a < b`、`<3`）整段
+  作文本；孤立 `<>` 作文本；未闭合 `<` 尾部作文本。
+
+### 24.3 注释 / DOCTYPE / 大小写不敏感 + 表格 foster parenting ✅
+
+- [x] `<!DOCTYPE …>` 与 `<!-- … -->`（含 `<?…?>` 伪注释）词法产出
+  `doctype` / `comment` 令牌，树构建阶段直接丢弃（渲染树干净）。
+- [x] 标签名全部小写化：`<DIV>` == `<div>`，`<BODY>` == `<body>`；
+  属性名同样小写化。
+- [x] 玩具 foster parenting：`<tr>` / `<td>` / `<th>` / `<colgroup>`
+  出现在表格上下文之外时，挂到最近的非表格祖先；在表格上下文之内
+  时按正常嵌套处理。
+
+### 24.4 格式化元素重构（adoption agency 简化版）✅
+
+- [x] `<b><i>x</b></i>` — 迟到的 `</b>` 到达而栈顶是 `i` 时，把
+  中间元素（`i`）重挂到匹配的 `b` 下并关闭；`b` 保持 open 由其
+  关闭标签弹出。文本随元素移动。格式化标签族
+  （`b i u s em strong small mark sub sup span`）。
+
+### 24.5 Parser 独立成 html_pkg/ 子模块 + 字节流输入 ✅
+
+- [x] 新建 `html_pkg/` 包：`node.py`（DOM `Node` + `VOID_TAGS`）、
+  `entities.py`（P24.1）、`tokenize.py`（P24.2/5 词法 + BOM 嗅探
+  UTF-8 / UTF-16 LE-BE / Latin-1 回退）、`build.py`（P24.2/3/4 树
+  构建）、`__init__.py`（公共 API）。
+- [x] `dom.py` 瘦身为兼容 shim：`import dom` / `from dom import Node`
+  继续工作（Node 与 `html_pkg.node.Node` 是同一类对象，`isinstance`
+  跨模块有效）；`dom.parse` 接受 str 或 bytes（str 先 UTF-8 编码
+  再走字节流契约）。
+- [x] 下游零改动：`css` / `layout` / `paint` / `js` / `browser` /
+  `main` / `gui` 的现有 import 全部保持原样，492 条既有测试无
+  回归通过。
+
+### 24.6 测试扩充 ✅
+
+- [x] 测试总数 492 → **514** 条（22 条新 P24 测试，超出规划 512
+  目标）：命名 / 十进制 / 十六进制 / 零与代理 / 未知实体、
+  script / style 原文模式、void 不压栈、`<br/>` 自闭合、`<p>` 隐式
+  兄弟、块级闭合 `<p>`、`<b><i>` 重构、孤立关闭标签忽略、注释 /
+  DOCTYPE 丢弃、大小写不敏感、foster parenting、裸 `<` 容错、
+  UTF-16 / UTF-8 BOM、dom shim 同对象、bytes 输入、全管线渲染。
+- [x] `main.py demo.html` CLI e2e 通过（41425 非白像素，与 P23 一致）；
+  既有 492 条测试全绿无回归。
+
 ## 实施顺序
 
 ```
@@ -1399,11 +1471,16 @@ P23.1 HTTPS（ssl 包裹 + 校验开关）（~1h）
 P23.2 启发式磁盘缓存（max-age / no-cache / no-store + 10% 启发式）（~2h）
 P23.3 ETag / If-None-Match 304 协商缓存（~1h）
 P23.4 加载进度事件（接入事件循环）（~1h）
+P24.1 原始文本模式 + entities 完整表（~1h）
+P24.2 void elements + 自动闭合纠错（~2h）
+P24.3 注释/DOCTYPE/大小写 + foster parenting（~1h）
+P24.4 格式化元素重构（~1.5h）
+P24.5 html_pkg/ 子模块 + 字节流输入（~2h）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 已完成（**492/492** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 已完成（**514/514** 测试通过）。
 
-下一站：**P24 HTML5 容错解析（M2 收官硬仗：void elements / 自动闭合 / 格式化元素 / 原始文本模式 / entities）**。
+下一站：**P25 M2 总检收（渲染管线审计 / 网络栈 / 解析器整合验收 + M3 启动）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

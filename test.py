@@ -7417,6 +7417,311 @@ def test_p23_cache_disabled_store():
     assert store.get_stale(u) is None
 
 
+# ---------------------------------------------------------------------------
+# P24 — HTML5 容错解析（M2 收官：html_pkg 子模块 + 字节流输入）
+# ---------------------------------------------------------------------------
+
+
+def test_p24_entities_named():
+    """P24.1 — named entities decode (amp/lt/nbsp/hellip/alpha…)."""
+    from html_pkg.entities import decode_entities
+    assert decode_entities("&amp;") == "&"
+    assert decode_entities("&lt;tag&gt;") == "<tag>"
+    assert decode_entities("&nbsp;") == "\u00A0"
+    assert decode_entities("&hellip;") == "…"
+    assert decode_entities("&alpha;") == "α"
+    assert decode_entities("x&shy;") == "x\u00AD"
+
+
+def test_p24_entities_numeric_dec():
+    """P24.1 — decimal numeric references (&#65; → A, &#8364; → €)."""
+    from html_pkg.entities import decode_entities
+    assert decode_entities("&#65;&#66;&#67;") == "ABC"
+    assert decode_entities("&#8364;") == "\u20AC"
+    assert decode_entities("&#8704;") == "\u2200"
+    assert decode_entities("&#8710;") == "\u2206"
+
+
+def test_p24_entities_numeric_hex():
+    """P24.1 — hex numeric references (&#x1F600; → 😀, spec case)."""
+    from html_pkg.entities import decode_entities
+    assert decode_entities("&#x1F600;") == "\U0001F600"
+    assert decode_entities("&#x41;") == "A"
+    assert decode_entities("&#X42;") == "B"
+
+
+def test_p24_entities_zero_and_surrogate():
+    """P24.1 — codepoint 0 and surrogates decode to U+FFFD (spec)."""
+    from html_pkg.entities import decode_entities
+    assert decode_entities("&#0;") == "\uFFFD"
+    assert decode_entities("&#x41;") == "A"
+    assert decode_entities("&#xD800;") == "\uFFFD"
+
+
+def test_p24_entities_unknown_name_literal():
+    """P24.1 — an unknown named entity stays literal (&bogus; → &bogus;)."""
+    from html_pkg.entities import decode_entities
+    assert decode_entities("&bogus;") == "&bogus;"
+    # A mix: known + unknown.
+    assert decode_entities("&amp;&bogus;") == "&&bogus;"
+
+
+def test_p24_rawtext_script_literal():
+    """P24.1 — <script> content is NOT parsed as HTML (raw text mode)."""
+    import dom
+    html = ('<html><body><script>'
+            'var x = 1 < 2; document.write("<not a tag>");'
+            '</script><p>after</p></body></html>')
+    root = dom.parse(html)
+    # Find the script element; it must have a single text child with
+    # the literal source (including the "<").
+    def find_tag(n, tag):
+        if n.is_element() and n.tag == tag:
+            return n
+        for c in n.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    script = find_tag(root, "script")
+    assert script is not None, "script element must be in the tree"
+    texts = [c.text for c in script.children if not c.is_element()]
+    assert any("1 < 2" in t for t in texts), f"script raw text lost: {texts}"
+
+
+def test_p24_rawtext_style_literal():
+    """P24.1 — <style> content is raw text (selectors with < survive)."""
+    import dom
+    html = "<style>.a > .b { color: red; }</style><div>x</div>"
+    root = dom.parse(html)
+    def find_tag(n, tag):
+        if n.is_element() and n.tag == tag:
+            return n
+        for c in n.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    style = find_tag(root, "style")
+    assert style is not None
+    txt = style.text_content()
+    assert ".a > .b" in txt, f"style raw text lost: {txt!r}"
+
+
+def test_p24_void_input_no_stack():
+    """P24.2 — void elements never push onto the open-element stack
+    (input followed by a sibling stays a sibling, not a child)."""
+    import dom
+    root = dom.parse("<body><input id=i><span id=s>hi</span></body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    assert body is not None
+    tags = [c.tag for c in body.children if c.is_element()]
+    assert "input" in tags and "span" in tags
+    # The span must NOT be a child of the input (void never opens).
+    input_el = body.children[0]
+    assert input_el.tag == "input" and input_el.children == []
+
+
+def test_p24_void_self_closing_br():
+    """P24.2 — XHTML-style self-closing <br/> is a void element."""
+    import dom
+    root = dom.parse("<body>a<br/>b</body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    assert body is not None
+    texts = [c.text for c in body.children if not c.is_element()]
+    assert "a" in "".join(texts) and "b" in "".join(texts)
+    brs = [c for c in body.children if c.is_element() and c.tag == "br"]
+    assert len(brs) == 1
+
+
+def test_p24_implicit_p_sibling():
+    """P24.2 — a second <p> closes the first (implicit sibling close)."""
+    import dom
+    root = dom.parse("<body><p>one<p>two</body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    p_nodes = [c for c in body.children if c.is_element() and c.tag == "p"]
+    assert len(p_nodes) == 2, f"two <p> siblings expected, got {[n.text_content() for n in p_nodes]}"
+    assert p_nodes[0].text_content() == "one"
+    assert p_nodes[1].text_content() == "two"
+
+
+def test_p24_block_closes_p():
+    """P24.2 — a block-level start tag (div) closes an open <p>."""
+    import dom
+    root = dom.parse("<body><p>para<div>block</div></body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    tags = [c.tag for c in body.children if c.is_element()]
+    assert tags == ["p", "div"], f"div must close p (siblings), got {tags}"
+
+
+def test_p24_adoption_b_i():
+    """P24.4 — <b><i>x</b></i>: the stray </b> re-nests <i> under
+    <b> (simplified adoption agency)."""
+    import dom
+    root = dom.parse("<body><b><i>x</b></i></body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    b = body.children[0]
+    assert b.tag == "b"
+    # The <i> must be re-parented under the <b>.
+    assert b.children and b.children[0].tag == "i"
+    assert b.children[0].text_content() == "x"
+    assert b.text_content() == "x"
+
+
+def test_p24_stray_close_ignored():
+    """P24.2 — a close tag with no matching open element is ignored
+    (the document still renders; no crash, no stray node)."""
+    import dom
+    root = dom.parse("<body><div id=d>x</div></div></body>")
+    body = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            body = c
+    divs = [c for c in body.children if c.is_element() and c.tag == "div"]
+    assert len(divs) == 1, f"exactly one <div>, got {len(divs)}"
+    assert divs[0].text_content() == "x"
+
+
+def test_p24_comment_doctype_dropped():
+    """P24.3 — <!DOCTYPE> and <!-- comments --> do not appear in the
+    DOM (the toy drops them; renderer stays clean)."""
+    import dom
+    root = dom.parse("<!DOCTYPE html><html><!-- top comment --><body><!-- x --><p>ok</p></body></html>")
+    def walk_tags(n, acc):
+        if n.is_element():
+            acc.append(n.tag)
+        for c in n.children:
+            walk_tags(c, acc)
+        return acc
+    tags = walk_tags(root, [])
+    assert "html" in tags and "body" in tags and "p" in tags
+    # No comment/doctype node type leaks into the tree.
+    assert all(t in ("document", "html", "body", "p") for t in tags), tags
+
+
+def test_p24_case_insensitive_tag():
+    """P24.3 — <DIV> == <div> (tag names case-insensitive)."""
+    import dom
+    root = dom.parse("<body><DIV id=d>hi</DIV></body>")
+    def find_tag(n, tag):
+        if n.is_element() and n.tag == tag:
+            return n
+        for c in n.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    div = find_tag(root, "div")
+    assert div is not None, f"case-insensitive <DIV> must yield a div node"
+    assert div.attr("id") == "d"
+    assert div.text_content() == "hi"
+
+
+def test_p24_foster_tr_in_div():
+    """P24.3 — a <tr> inside a <div> (no <table>) is fostered to the
+    nearest non-table ancestor (the div), not dropped."""
+    import dom
+    root = dom.parse("<body><div id=d><tr><td>x</td></tr></div></body>")
+    def find_tag(n, tag):
+        if n.is_element() and n.tag == tag:
+            return n
+        for c in n.children:
+            r = find_tag(c, tag)
+            if r:
+                return r
+        return None
+    tr = find_tag(root, "tr")
+    assert tr is not None, "<tr> must be retained (fostered)"
+    # The foster parent is the div (the nearest non-table ancestor).
+    assert tr.parent.tag == "div"
+    td = find_tag(root, "td")
+    assert td is not None and td.parent.tag == "tr"
+    assert td.text_content() == "x"
+
+
+def test_p24_unclosed_lt_text():
+    """P24.2 — a stray '<' with no following '>' is literal text."""
+    import dom
+    root = dom.parse("<body><p>a < b</p></body>")
+    p = None
+    for c in root.children:
+        if c.is_element() and c.tag == "body":
+            for gc in c.children:
+                if gc.is_element() and gc.tag == "p":
+                    p = gc
+    assert p is not None
+    assert "a < b" in p.text_content(), p.text_content()
+
+
+def test_p24_utf16_bom():
+    """P24.5 — a UTF-16 LE BOM byte stream decodes correctly."""
+    import dom
+    data = "<html><body>hi</body></html>".encode("utf-16-le")
+    data = b"\xff\xfe" + data
+    root = dom.parse(data)
+    assert "hi" in root.text_content()
+
+
+def test_p24_utf8_bom():
+    """P24.5 — a UTF-8 BOM byte stream decodes correctly."""
+    import dom
+    data = b"\xef\xbb\xbf" + "<html><body>hi</body></html>".encode("utf-8")
+    root = dom.parse(data)
+    assert "hi" in root.text_content()
+
+
+def test_p24_dom_shim_reexport():
+    """P24.5 — the legacy `dom` shim re-exports html_pkg's Node (the
+    SAME class object, so isinstance checks stay valid)."""
+    import dom
+    import html_pkg
+    from html_pkg.node import Node
+    assert dom.Node is Node
+    assert dom.parse is not None
+    r = dom.parse("<html><body>x</body></html>")
+    assert isinstance(r, Node)
+    assert isinstance(r, html_pkg.Node)
+
+
+def test_p24_dom_parse_bytes():
+    """P24.5 — dom.parse accepts a byte stream (UTF-8)."""
+    import dom
+    root = dom.parse(b"<html><body>hi</body></html>")
+    assert "hi" in root.text_content()
+
+
+def test_p24_full_pipeline_render():
+    """P24 — the whole render pipeline (dom→css→layout→paint→
+    rasterize) still works end-to-end on a fault-tolerant document
+    (unclosed <p>, void <br>, entities)."""
+    import dom, css, browser
+    html = ("<html><body>"
+            "<h3 id=h>T&amp;l</h3>"
+            "<p>line1<br>line2<p>second para"
+            "</body></html>")
+    bmp = browser.render_document(html, "", 400, 300)
+    assert bmp is not None
+    assert bmp.width == 400 and bmp.height == 300
+    # Non-white pixels must exist (text rendered).
+    nw = sum(1 for px in bmp.pixels if px != 0xFFFFFF)
+    assert nw > 0, "fault-tolerant doc must still render pixels"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -7978,6 +8283,28 @@ def main():
         ("p23_https_tls_handshake", test_p23_https_tls_handshake),
         ("p23_cache_etag_absent_refetches", test_p23_cache_etag_absent_refetches),
         ("p23_cache_disabled_store", test_p23_cache_disabled_store),
+        ("p24_entities_named", test_p24_entities_named),
+        ("p24_entities_numeric_dec", test_p24_entities_numeric_dec),
+        ("p24_entities_numeric_hex", test_p24_entities_numeric_hex),
+        ("p24_entities_zero_and_surrogate", test_p24_entities_zero_and_surrogate),
+        ("p24_entities_unknown_name_literal", test_p24_entities_unknown_name_literal),
+        ("p24_rawtext_script_literal", test_p24_rawtext_script_literal),
+        ("p24_rawtext_style_literal", test_p24_rawtext_style_literal),
+        ("p24_void_input_no_stack", test_p24_void_input_no_stack),
+        ("p24_void_self_closing_br", test_p24_void_self_closing_br),
+        ("p24_implicit_p_sibling", test_p24_implicit_p_sibling),
+        ("p24_block_closes_p", test_p24_block_closes_p),
+        ("p24_adoption_b_i", test_p24_adoption_b_i),
+        ("p24_stray_close_ignored", test_p24_stray_close_ignored),
+        ("p24_comment_doctype_dropped", test_p24_comment_doctype_dropped),
+        ("p24_case_insensitive_tag", test_p24_case_insensitive_tag),
+        ("p24_foster_tr_in_div", test_p24_foster_tr_in_div),
+        ("p24_unclosed_lt_text", test_p24_unclosed_lt_text),
+        ("p24_utf16_bom", test_p24_utf16_bom),
+        ("p24_utf8_bom", test_p24_utf8_bom),
+        ("p24_dom_shim_reexport", test_p24_dom_shim_reexport),
+        ("p24_dom_parse_bytes", test_p24_dom_parse_bytes),
+        ("p24_full_pipeline_render", test_p24_full_pipeline_render),
     ]
     passed = 0
     failed = []
