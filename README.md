@@ -8,7 +8,8 @@
 ```
 toy-browser-py/
 ├── main.py            CLI 入口（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress）
-├── dom.py             HTML 解析器（词法 + 树构建）
+├── dom.py             P24 兼容 shim（转发 html_pkg；import dom / from dom import Node 不变）
+├── html_pkg/          P24 HTML 解析器子模块（node / entities / tokenize / build，字节流输入）
 ├── css.py             CSS 解析 + 级联 + 选择器（后代/子/多类）+ @keyframes
 ├── layout.py          盒模型布局（块/内联/文本/占位/flex/grid + 命中测试）
 ├── paint.py           位图 + 颜色混合
@@ -22,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            492 条测试（python test.py）
+├── test.py            514 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P23 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P24 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -48,6 +49,17 @@ P23 — HTTPS（ssl 包裹，`--insecure` 关校验）；启发式磁盘缓存
 （`CacheStore`）；加载进度事件（`LoadEventSink` → M3.2 GUI 进度条）；
 `HttpClient.post`（表单 urlencoded）。CLI 新旗标：`--insecure` /
 `--cache DIR` / `--progress`。
+
+P24 — HTML5 容错解析（M2 收官）：Parser 独立成 `html_pkg/` 子模块
+（node / entities / tokenize / build），输入统一为字节流（UTF-8 /
+UTF-16 BOM 嗅探 + Latin-1 回退）；原始文本模式（`<script>` /
+`<style>` / `<textarea>` 内容不按 HTML 解析）；void elements
+（`<br>` / `<img>` / `<input>` 不压栈）+ 自动闭合纠错（`<p>` 遇块级
+/ `<li>` 遇 `<li>`）；格式化元素重构（`<b><i>x</b></i>` adoption
+agency 简化版）；完整 entities 表（命名子集 + 十进制 / 十六进制数字
+引用，码点 0 / 代理区 → U+FFFD）；注释 / DOCTYPE 丢弃、大小写不敏感
+标签名、表格 foster parenting 玩具。`dom.py` 瘦身为兼容 shim，下游
+零改动。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -694,6 +706,40 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - **测试**：16 条新 P23 测试（总数 476 → 492，超出规划 485 目标），
   全部用本地 `http.server` 夹具 + `ssl` 自签名证书（离线可测、CI 稳定）。
 
+### HTML5 容错解析（P24）
+
+- **P24.1 原始文本模式 + entities 完整表**：`html_pkg/entities.py` —
+  `decode_entities(text)` 单遍解码命名实体（WHATWG 策展子集，常用
+  字符 / 希腊 / 数学 / 上下标 / 引号）+ 数字引用（`&#65;` 十进制、
+  `&#x1F600;` / `&#X42;` 十六进制）；码点 0 与代理区 → U+FFFD（规范
+  §tokenization）；未知名实体保留原文。`tokenize.py` 的
+  `RAWTEXT_TAGS`（`script` / `style` / `textarea` / `title` / `xmp`）
+  内容原样取到匹配的关闭标签为止，不做 HTML 解析 / 实体解码。
+- **P24.2 void elements + 自动闭合纠错**：`VOID_TAGS`
+  （`br` / `img` / `input` / `hr` 等 14 个）永不压栈（`<br/>` 自
+  闭合语法合法）；隐式兄弟闭合（第二个 `<p>` / `<li>` / `<dt>` /
+  `<dd>` 关闭前一个）；块级开始标签（`div` / `h1`–`h6` / `ul` 等）
+  关闭 open 的 `<p>`；`<` 后首字符非字母（`a < b`、`<3`）整段作文本。
+- **P24.3 注释 / DOCTYPE / 大小写不敏感 + foster parenting**：
+  `<!DOCTYPE …>` / `<!-- … -->`（含 `<?…?>` 伪注释）词法产出
+  `doctype` / `comment` 令牌，树构建直接丢弃；标签名 / 属性名全部
+  小写化（`<DIV>` == `<div>`）；`<tr>` / `<td>` / `<th>` /
+  `<colgroup>` 出现在表格上下文之外时挂到最近的非表格祖先（玩具
+  foster parenting）。
+- **P24.4 格式化元素重构（adoption agency 简化版）**：
+  `<b><i>x</b></i>` — 迟到的 `</b>` 到达而栈顶是 `i` 时，把中间
+  元素重挂到匹配的 `b` 下并关闭；`b` 保持 open 由其关闭标签弹出。
+  格式化标签族 `b i u s em strong small mark sub sup span`。
+- **P24.5 Parser 独立成 html_pkg/ + 字节流输入**：新建 `html_pkg/`
+  包（`node.py` / `entities.py` / `tokenize.py` / `build.py` /
+  `__init__.py`）；输入统一为字节流（UTF-8 / UTF-16 BOM 嗅探 +
+  Latin-1 回退，`decode_bytes`）；`dom.py` 瘦身为兼容 shim
+  （`import dom` / `from dom import Node` 不变，Node 与
+  `html_pkg.node.Node` 同一类对象）；下游 `css` / `layout` /
+  `paint` / `js` / `browser` / `main` / `gui` 零改动。
+- **测试**：22 条新 P24 测试（总数 492 → 514，超出规划 512 目标），
+  离线纯字符串 / 字节输入（CI 稳定）；既有 492 条测试全绿无回归。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -850,6 +896,7 @@ python test.py
 | URL 与 HTTP/1.1（P21） | `p21_parse_url_absolute`、`p21_parse_url_https_default_port`、`p21_relative_url_resolution`、`p21_url_to_string_roundtrip`、`p21_normalize_url`、`p21_origin_property`、`p21_url_is_network_flag`、`p21_http_get_200`、`p21_http_get_404`、`p21_http_redirect_surfaced`、`p21_content_type_dispatch`、`p21_fetch_error_on_4xx`、`p21_unsupported_scheme`、`p21_error_page_html`、`p21_error_page_renders`、`p21_connection_error_retries`、`p21_http_query_in_path`、`p21_fetch_html_accepts_str_url`、`p21_cli_network_error_exit_code` |
 | HTTP 深化与子资源（P22） | `p22_redirect_followed`、`p22_redirect_loop_detected`、`p22_redirect_exceeds_cap`、`p22_redirect_within_cap_succeeds`、`p22_redirect_no_follow_returns_302`、`p22_gzip_decoded`、`p22_gzip_no_header_passthrough`、`p22_chunked_decode_roundtrip`、`p22_chunked_with_extensions`、`p22_chunked_max_size_cap`、`p22_subresource_collection`、`p22_base_tag_overrides_doc_base`、`p22_base_tag_absent`、`p22_subresource_failure_does_not_block`、`p22_render_document_from_url`、`p22_render_from_url_gzip_doc`、`p22_render_from_url_network_error`、`p22_subresource_data_uri_skipped`、`p22_fetch_resource_returns_none_on_404`、`p22_redirect_relative_location` |
 | HTTPS 与磁盘缓存（P23） | `p23_cache_hit_skips_wire`、`p23_cache_no_store_not_cached`、`p23_cache_max_age_expiry`、`p23_cache_etag_304_reuse`、`p23_cache_heuristic_ttl`、`p23_cache_store_clear`、`p23_cache_parse_directives`、`p23_progress_events_emitted`、`p23_progress_subresource_phase`、`p23_progress_on_event_subscription`、`p23_post_form_encoded`、`p23_post_verbatim_str`、`p23_insecure_flag_accepted`、`p23_https_tls_handshake`、`p23_cache_etag_absent_refetches`、`p23_cache_disabled_store` |
+| HTML5 容错解析（P24） | `p24_entities_named`、`p24_entities_numeric_dec`、`p24_entities_numeric_hex`、`p24_entities_zero_and_surrogate`、`p24_entities_unknown_name_literal`、`p24_rawtext_script_literal`、`p24_rawtext_style_literal`、`p24_void_input_no_stack`、`p24_void_self_closing_br`、`p24_implicit_p_sibling`、`p24_block_closes_p`、`p24_adoption_b_i`、`p24_stray_close_ignored`、`p24_comment_doctype_dropped`、`p24_case_insensitive_tag`、`p24_foster_tr_in_div`、`p24_unclosed_lt_text`、`p24_utf16_bom`、`p24_utf8_bom`、`p24_dom_shim_reexport`、`p24_dom_parse_bytes`、`p24_full_pipeline_render` |
 
 ## 改进路线图
 
@@ -977,12 +1024,19 @@ python test.py
 - [x] P23.3 ETag / If-None-Match 304 协商缓存
 - [x] P23.4 加载进度事件（接现有事件循环；--progress）
 - [x] P23.5 测试扩充至 492 条 + POST 表单（测试总数 476 → 492）
+- [x] P24.1 原始文本模式 + entities 完整表（script/style/textarea 原文 + 命名/数字引用）
+- [x] P24.2 void elements + 自动闭合纠错（br/img 不压栈、<p> 隐式兄弟、块级闭合 <p>、裸 < 容错）
+- [x] P24.3 注释 / DOCTYPE / 大小写不敏感 + 表格 foster parenting
+- [x] P24.4 格式化元素重构（<b><i></b></i> adoption agency 简化版）
+- [x] P24.5 html_pkg/ 子模块 + 字节流输入（dom.py 兼容 shim，下游零改动）
+- [x] P24.6 测试扩充至 514 条（测试总数 492 → 514）
 
 ## 与 Rust 版的对应关系
 
 | Python 模块 | Rust 模块 | 说明 |
 |---|---|---|
-| `dom.py` | `dom.rs` | HTML 解析器 |
+| `dom.py` | `dom.rs` | P24 兼容 shim（转发 html_pkg；Node 与 html_pkg.node.Node 同一类对象） |
+| `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
 | `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器 |
 | `layout.py` | `layout.rs` | 盒模型 + 命中测试 |
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
