@@ -27,9 +27,18 @@ class Length:
 @dataclass
 class Keyword:
     value: str
+    important: bool = False  # P25.2 — `!important` flag
 
 
-# Value = Length | Keyword | Color
+@dataclass
+class ImportantDecl:
+    """P25.2 — wraps a Value that carries `!important`."""
+    value: object
+    prop: str = ""
+    important: bool = True
+
+
+# Value = Length | Keyword | Color | ImportantDecl
 Value = object
 
 
@@ -68,7 +77,10 @@ def parse_color(text: str) -> Color | None:
 
 
 def parse_declaration_pairs(src: str) -> dict[str, Value]:
-    """Parse 'color: red; font-size: 14px;' into a property map."""
+    """Parse 'color: red; font-size: 14px;' into a property map.
+
+    P25.2 — supports ``!important`` suffix: ``color: red !important``
+    wraps the value in :class:`ImportantDecl`."""
     out: dict[str, Value] = {}
     for decl in src.split(";"):
         if ":" not in decl:
@@ -78,7 +90,13 @@ def parse_declaration_pairs(src: str) -> dict[str, Value]:
         val = val.strip()
         if not prop or not val:
             continue
-        out[prop] = parse_value(val)
+        # P25.2 — detect `!important` suffix.
+        important = False
+        if val.lower().endswith("!important"):
+            important = True
+            val = val[: -len("!important")].strip()
+        v = parse_value(val)
+        out[prop] = ImportantDecl(v, prop, important) if important else v
     return out
 
 
@@ -174,14 +192,14 @@ class Selector:
     ``parts`` holds the simple-selector strings from leftmost to rightmost
     (e.g. ``("div", "p")`` for ``div p``, ``(".a", "b")`` for ``.a > b``).
     ``combinator`` is ``" "`` (descendant, default) or ``">"`` (child).
-    ``specificity`` is a ``(id, cls, type)`` tuple.
+    ``specificity`` is a ``(inline, id, cls, type)`` 4-tuple.
     ``pseudo`` is an optional pseudo-class (":hover", ":focus") for the
     rightmost part.  Pseudo-classes are matched against the current
     interaction state, not the DOM tree.
     """
     parts: tuple[str, ...]
     combinator: str
-    specificity: tuple[int, int, int]
+    specificity: tuple[int, int, int, int]  # P25.1 — (inline, id, cls, type)
     pseudo: str = ""  # ":hover" / ":focus" / ""
 
     def matches(self, node: Node, interaction_state: dict | None = None) -> bool:
@@ -406,26 +424,28 @@ class Selector:
         if not parts:
             raise ValueError(f"selector has no simple parts: {text!r}")
 
-        # Compute specificity: (ids, classes, types).
+        # P25.1 — Compute 4-tuple specificity: (inline, id, cls, type).
+        # Inline = 0 here (inline styles are handled separately in the
+        # cascade); we only compute the selector part.
         spec_a = spec_b = spec_c = 0
         for p in parts:
             p = p.strip()
             if p.startswith("#"):
-                spec_a += 1
+                spec_a += 1  # id
             elif p.startswith("."):
-                # Count classes: ".a" → 1, ".a.b" → 2, ".a.b.c" → 3
+                # Count classes/attrs: ".a" → 1, ".a.b" → 2
                 body = p[1:]
                 cls_count = body.count(".") + 1
                 spec_b += cls_count
             else:
-                spec_c += 1
+                spec_c += 1  # element type
         # P8.1 / P10.1 — any pseudo-class adds one class-level point.
         if pseudo:
             spec_b += 1
+        # P25.1 — 4-tuple: (inline=0, id, cls, type)
+        return cls(tuple(parts), combinator, (0, spec_a, spec_b, spec_c), pseudo)
 
-        return cls(tuple(parts), combinator, (spec_a, spec_b, spec_c), pseudo)
-
-    def specificity_sum(self) -> tuple[int, int, int]:
+    def specificity_sum(self) -> tuple[int, int, int, int]:
         return self.specificity
 
 
@@ -690,7 +710,9 @@ def resolve_animation_property(target: "StyledNode", prop: str) -> object:
 class Rule:
     selectors: list[Selector]
     declarations: dict[str, Value]
-    specificity: tuple[int, int, int]
+    specificity: tuple[int, int, int, int]
+    source: str = "author"  # P25.2 — "author" or "ua"
+    important: bool = False  # P25.2 — True if any decl is !important
 
 
 def parse_rulesheet(css_text: str) -> list[Rule]:
@@ -727,8 +749,16 @@ def parse_rulesheet(css_text: str) -> list[Rule]:
         sels = parse_selector_list(selector_text)
         if not sels:
             continue
-        max_spec = max((s.specificity_sum() for s in sels), key=sum, default=(0, 0, 0))
-        rules.append(Rule(sels, parse_declaration_pairs(decl_src), max_spec))
+        max_spec = max((s.specificity_sum() for s in sels), key=sum, default=(0, 0, 0, 0))
+        # P25.2 — detect if any declaration in this rule is !important.
+        rule_important = any(
+            isinstance(v, ImportantDecl) and v.important
+            for v in parse_declaration_pairs(decl_src).values()
+        )
+        # Re-parse declarations (parse_declaration_pairs returns a fresh
+        # dict each call; the double-parse is cheap for the toy).
+        decls = parse_declaration_pairs(decl_src)
+        rules.append(Rule(sels, decls, max_spec, "author", rule_important))
     return rules
 
 
@@ -948,7 +978,10 @@ EDGE_PROPS = {"margin", "padding", "border-width"}
 
 
 def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -> dict[str, Value]:
-    """Parse 'color: red; font-size: 14px;' into a property map."""
+    """Parse 'color: red; font-size: 14px;' into a property map.
+
+    P25.2 — supports ``!important`` suffix: ``color: red !important``
+    wraps the value in :class:`ImportantDecl`."""
     out: dict[str, Value] = {}
     for decl in src.split(";"):
         if ":" not in decl:
@@ -958,18 +991,107 @@ def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -
         val = val.strip()
         if not prop or not val:
             continue
+        # P25.2 — detect `!important` suffix.
+        important = False
+        if val.lower().endswith("!important"):
+            important = True
+            val = val[: -len("!important")].strip()
         if prop in EDGE_PROPS:
             e = parse_shorthand(val, parent_font_px)
             if e is not None:
-                out[prop] = e
+                out[prop] = ImportantDecl(e, prop, important) if important else e
             continue
-        out[prop] = parse_value(val)
+        v = parse_value(val)
+        out[prop] = ImportantDecl(v, prop, important) if important else v
     return out
 
 
 # --- StyledNode -------------------------------------------------------------------
 
-INHERITED_PROPS = {"color", "font-size", "font-family", "line-height", "text-align", "text-transform", "overflow-wrap"}
+# P25.3 — CSS inheritance groups.
+# Inheriting properties: value propagates to children automatically.
+# Non-inheriting: children get the property's *initial value* unless
+# set explicitly.
+INHERITED_PROPS = {
+    "color", "font-size", "font-family", "font-weight",
+    "line-height", "text-align", "text-transform",
+    "overflow-wrap", "letter-spacing", "word-spacing",
+}
+# P25.3 — initial values for non-inheriting properties.
+INITIAL_VALUES: dict[str, Value] = {
+    "margin": Length(0, "px"),
+    "margin-top": Length(0, "px"), "margin-right": Length(0, "px"),
+    "margin-bottom": Length(0, "px"), "margin-left": Length(0, "px"),
+    "padding": Length(0, "px"),
+    "padding-top": Length(0, "px"), "padding-right": Length(0, "px"),
+    "padding-bottom": Length(0, "px"), "padding-left": Length(0, "px"),
+    "border-width": Length(0, "px"),
+    "border-style": Keyword("none"),
+    "border-color": Keyword("currentcolor"),
+    "display": Keyword("block"),
+    "width": Keyword("auto"),
+    "height": Keyword("auto"),
+    "overflow": Keyword("visible"),
+    "opacity": Keyword("1"),
+    "position": Keyword("static"),
+    "float": Keyword("none"),
+    "clear": Keyword("none"),
+    "z-index": Keyword("auto"),
+    "text-indent": Length(0, "px"),
+    "white-space": Keyword("normal"),
+    "word-break": Keyword("normal"),
+    "background": Keyword("none"),
+}
+
+
+def _resolve_cascade_value(prop: str, raw: Value,
+                           parent_props: dict[str, Value],
+                           parent_font_px: float) -> Value:
+    """P25.3 — resolve inherit / initial / unset keywords on *raw*."""
+    # If raw is a regular Keyword/Length/Color, return as-is.
+    if isinstance(raw, ImportantDecl):
+        inner = raw.value
+    else:
+        inner = raw
+    if isinstance(inner, Keyword):
+        v = inner.value.lower()
+        if v == "inherit":
+            # P25.3 — take the value from the parent's computed props.
+            return parent_props.get(prop, INITIAL_VALUES.get(prop, Keyword(v)))
+        if v == "initial":
+            return INITIAL_VALUES.get(prop, Keyword("initial"))
+        if v == "unset":
+            # unset = inherit if inheriting, else initial.
+            if prop in INHERITED_PROPS:
+                return parent_props.get(prop, Keyword("unset"))
+            return INITIAL_VALUES.get(prop, Keyword("unset"))
+    return raw
+
+
+# P25.4 — shorthand → longhand expansion table.
+SHORTHAND_EXPANSION: dict[str, list[str]] = {
+    "margin": ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+    "padding": ["padding-top", "padding-right", "padding-bottom", "padding-left"],
+    "border-width": ["border-top-width", "border-right-width",
+                     "border-bottom-width", "border-left-width"],
+}
+
+
+def expand_shorthands(decls: dict[str, Value]) -> dict[str, Value]:
+    """P25.4 — expand shorthand properties into their longhand components.
+
+    ``margin: 10px`` → ``margin-top/right/bottom/left: 10px``.
+    The original shorthand key is kept in the result (layout still reads
+    it via ``sn.props.get("margin")``); the longhands are added alongside
+    so that a child's ``inherit`` for ``margin-top`` finds a value.
+    """
+    out = dict(decls)
+    for sh, lh in SHORTHAND_EXPANSION.items():
+        if sh in decls:
+            val = decls[sh]
+            for k in lh:
+                out[k] = val
+    return out
 
 
 class StyledNode:
@@ -1131,32 +1253,87 @@ def apply(
     return root_sn
 
 
-def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None = None) -> StyledNode:
+def _unimportant(v: Value) -> Value:
+    """P25.2 — unwrap an ImportantDecl; return the raw value otherwise."""
+    if isinstance(v, ImportantDecl):
+        return v.value
+    return v
+
+
+def _cascade_key(r: Rule) -> tuple:
+    """P25.1/2 — sort key: source (author > ua), !important flag, 4-tuple
+    specificity (summed), rule order (stable)."""
+    spec_sum = sum(r.specificity)
+    return (r.source == "author", r.important, spec_sum)
+
+
+def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None = None,
+                   parent_props: dict[str, Value] | None = None) -> StyledNode:
     parent_font = DEFAULT_FONT_PX
     sn = StyledNode(node, parent_font)
-    # Cascade: collect matching rules.
+    # P25 — Cascade: collect matching rules, sort by (source, important,
+    # specificity, order).  Later rules with equal key win (CSS source
+    # order rule).
     matching: list[Rule] = [
         r for r in rules
         if any(s.matches(node, interaction_state) for s in r.selectors)
     ]
-    matching.sort(key=lambda r: sum(r.specificity))
+    matching.sort(key=_cascade_key)
+    # P25.2 — apply in two passes:
+    #   1. normal declarations (sorted by cascade key; later wins on ties).
+    #   2. !important declarations (they always beat normal regardless of
+    #      source/specificity; within the important layer, author beats UA).
+    # The inline pass is split so that:
+    #   - inline normal declarations are applied *before* author !important
+    #     (so author !important can overwrite them), but
+    #   - inline !important declarations are applied *after* author !important
+    #     (so inline !important wins within the important layer).
+    # Pass 1 — normal (author rules + inline normal, in source order).
     for r in matching:
         for k, v in r.declarations.items():
-            sn.props[k] = v
-    # Inline style="" beats everything.
+            if isinstance(v, ImportantDecl) and v.important:
+                continue
+            sn.props[k] = _unimportant(v)
+    # Pass 1.5 — inline *normal* declarations (override author normal,
+    # but are still below author !important).
     inline = node.attr("style")
+    inline_normal: dict[str, Value] = {}
+    inline_important: dict[str, Value] = {}
     if inline:
         inline_props = parse_declaration_pairs(inline, parent_font)
         for k, v in inline_props.items():
+            if isinstance(v, ImportantDecl) and v.important:
+                inline_important[k] = _unimportant(v)
+            else:
+                inline_normal[k] = _unimportant(v)
+        for k, v in inline_normal.items():
             sn.props[k] = v
+    # Pass 2 — author !important declarations.
+    for r in matching:
+        for k, v in r.declarations.items():
+            if isinstance(v, ImportantDecl) and v.important:
+                sn.props[k] = _unimportant(v)
+    # Pass 3 — inline !important declarations (top of the important layer).
+    for k, v in inline_important.items():
+        sn.props[k] = v
+    # P25.3 — resolve inherit/initial/unset keywords.
+    pp = parent_props or {}
+    for k, v in list(sn.props.items()):
+        resolved = _resolve_cascade_value(k, v, pp, parent_font)
+        if resolved is not v:
+            sn.props[k] = resolved
+    # P25.4 — expand shorthands into longhands.
+    sn.props = expand_shorthands(sn.props)
     # Compute the font this node gives to its children.
     child_font = sn.prop_font_px()
-    # The color this node passes to children (its own resolved color).
+    # P25.5 — em/% computed-value chain: resolve the child's parent font.
+    # The child's parent_font_px is the *current* node's resolved font-size,
+    # which is what em/% reference in the child's context.
     inherited_color = sn.props.get("color", Color(0, 0, 0))
     for c in node.children:
-        sub = _apply_subtree(c, rules, interaction_state)
+        sub = _apply_subtree(c, rules, interaction_state, sn.props)
         sub.parent_font_px = child_font
-        # Inherit font-size when not explicitly set.
+        # P25.3 — inherit font-size when not explicitly set.
         if "font-size" not in sub.props:
             sub.props["font-size"] = Length(child_font, "px")
         # Inherit color ONLY when the child neither matched a rule that set
@@ -1165,10 +1342,11 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
         # the parent's color as the default.
         if "color" not in sub.props:
             sub.props["color"] = inherited_color
-        # P18/P19 — inherit line-height / text-align / text-transform /
+        # P18/P19/P25.3 — inherit line-height / text-align / text-transform /
         # font-family / overflow-wrap from parent when not explicitly set.
         for inherited in ("line-height", "text-align", "text-transform",
-                          "font-family", "overflow-wrap"):
+                          "font-family", "overflow-wrap", "font-weight",
+                          "letter-spacing", "word-spacing"):
             if inherited not in sub.props and inherited in sn.props:
                 sub.props[inherited] = sn.props[inherited]
         sn.children.append(sub)
