@@ -82,12 +82,36 @@ class PageInstance:
         if os.path.isfile(url):
             self.load_file(url, w, h)
             return
-        # http/https — toy browser has no network (M2); show a stub.
+        # P21 — http/https network loading (M2 网络栈第一步)。
+        # Unified error page on timeout / connection failure / 4xx/5xx /
+        # unsupported Content-Type (net.FetchError).
+        import net
+        lowered = url.lower()
+        if lowered.startswith("http://") or lowered.startswith("https://"):
+            self.url = url
+            self.title = url
+            try:
+                html, _resp = net.fetch_html(url, timeout=10.0)
+                self.load_html(html, "", w, h)
+            except net.FetchError as e:
+                err_html = net.error_page_html(
+                    f"Network error: {e}",
+                    f"Loading {url} failed (status={e.status}).",
+                )
+                self.load_html(err_html, "", w, h)
+            except Exception as e:
+                # ConnectionError / DNS / socket.timeout → unified error page.
+                err_html = net.error_page_html(
+                    "Connection error",
+                    f"Loading {url} failed: {e}",
+                )
+                self.load_html(err_html, "", w, h)
+            return
+        # last resort — show the not-supported stub.
         self.url = url
         self.title = url
         html = (
             f"<html><body><h1>Not supported yet</h1>"
-            f"<p>Network loading (http/https) arrives in P21.</p>"
             f"<p>URL: {url}</p></body></html>"
         )
         self.load_html(html, "", w, h)
@@ -100,7 +124,7 @@ class PageInstance:
         elif "version" in lower:
             html = (
                 '<html><body><h1>toy-browser-py</h1>'
-                '<p>Version 1.0 (P0–P19)</p>'
+                '<p>Version 1.1 (P0–P21)</p>'
                 '<p>Pure standard-library Python toy browser.</p>'
                 '</body></html>'
             )
@@ -142,11 +166,32 @@ class PageInstance:
         if os.path.isfile(url):
             self.load_file(url, w, h)
             return
+        # P21 — http/https network loading (M2 网络栈第一步)。
+        import net
+        lowered = url.lower()
+        if lowered.startswith("http://") or lowered.startswith("https://"):
+            self.url = url
+            self.title = url
+            try:
+                html, _resp = net.fetch_html(url, timeout=10.0)
+                self.load_html(html, "", w, h)
+            except net.FetchError as e:
+                err_html = net.error_page_html(
+                    f"Network error: {e}",
+                    f"Loading {url} failed (status={e.status}).",
+                )
+                self.load_html(err_html, "", w, h)
+            except Exception as e:
+                err_html = net.error_page_html(
+                    "Connection error",
+                    f"Loading {url} failed: {e}",
+                )
+                self.load_html(err_html, "", w, h)
+            return
         self.url = url
         self.title = url
         html = (
             f"<html><body><h1>Not supported yet</h1>"
-            f"<p>Network loading (http/https) arrives in P21.</p>"
             f"<p>URL: {url}</p></body></html>"
         )
         self.load_html(html, "", w, h)

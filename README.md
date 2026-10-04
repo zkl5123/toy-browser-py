@@ -17,13 +17,14 @@ toy-browser-py/
 ├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
 ├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
 ├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体）
+├── net.py             P21 URL 解析 + HTTP/1.1 最小客户端（本地 http.server 夹具可测）
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
-├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页）
-├── test.py            437 条测试（python test.py）
+├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
+├── test.py            456 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P20 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P21 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -32,6 +33,10 @@ toy-browser-py/
 ```
 HTML → dom.parse → css.apply → layout.layout → paint_engine.emit_commands → rasterize → PPM
 ```
+
+P21 — 地址栏输入 URL（http/https）时：`net.parse_url` →
+`HttpClient.get` → `fetch_html`（Content-Type 分派）→ 渲染管线；
+网络失败 → 统一错误页。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -566,7 +571,8 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
   P6 二进制 PPM 字节，喂给 `tk.PhotoImage(data=...)`。
 - **本地文件 / about: / 内联 HTML**：`load_file` 本地渲染、
   `about:blank`/`about:version`/`about:history`、内联 HTML
-  （以 `<` 开头）直接渲染；http/https 显示「M2 前暂不支持」占位页。
+  （以 `<` 开头）直接渲染；P21 后 http/https 走 `net.fetch_html`
+  真实加载，网络失败显示统一错误页（替换原「M2 前暂不支持」占位页）。
 - **运行**：`python gui.py demo.html`（或 `python gui.py` 打开空白页）。
 
 ### 渲染质量与字重体系（P20）
@@ -600,6 +606,30 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - `paint_engine.py`：`DisplayCommand` 三新字段。
 - `font.py`：`get_metrics_for_weight(family, weight)`。
 - 测试：22 条新 P20 测试（总数 415 → 437）。
+
+### URL 与 HTTP/1.1 客户端（P21）
+
+- **P21.1 URL 解析**：`net.py` — `URL` frozen dataclass
+  （scheme/host/port/path/query/fragment/user/password）+
+  `parse_url(url, base)` 相对解析（WHATWG 规则：`?q`/`#f` 替换 base 的
+  query/fragment、`/abs` 同 host 新 path、`//host` scheme-relative、
+  相对 path 按 base 目录 + `..` 规范化）；`effective_port`（默认 80/443
+  推断）+ `authority`（默认端口省略）+ `to_string()` 往返 + `origin`；
+  `normalize_url`（小写化 + 空 path → `/`）。
+- **P21.2 HTTP/1.1 最小客户端**：`HttpClient.get(url)` —
+  `http.client`（标准库，接口可替换）GET + `Host` 头；状态码分派
+  200/301/404/500（3xx 原样返回，P22 跟进重定向链）；一次瞬时网络
+  错误重试；死端口 → `ConnectionError`。`HttpResponse` 携带
+  status/headers/body + `content_type` / `is_html` / `ok`。
+- **P21.3 Content-Type 分派 + 统一错误页**：`fetch_html(url)` →
+  `(text, resp)`：text/html UTF-8 解码；非 HTML Content-Type 或
+  4xx/5xx 抛 `FetchError`。`error_page_html` / `render_error_page`
+  超时 / 连接 / 404 / 500 统一错误页（经完整管线出 Bitmap）。
+  `gui.py` http/https 输入走 `net.fetch_html`，`FetchError` → 统一错误页
+  （替换 P31 的「M2 前暂不支持」占位页）；`main.py` URL 输入走 net 栈，
+  网络失败退出码 3 + 仍写错误页 PPM。
+- **测试**：19 条新 P21 测试（总数 437 → 456），全部用本地
+  `http.server` 夹具（离线可测、CI 稳定）。
 
 ### 失效（P0.5）
 
@@ -754,6 +784,7 @@ python test.py
 | 断行与 Unicode（P19） | `p19_english_word_wrap`、`p19_cjk_char_by_char`、`p19_kinsoku_no_line_start`、`p19_soft_hyphen`、`p19_shy_html_entity`、`p19_word_break_all`、`p19_overflow_wrap_break_word`、`p19_long_word_overflow` |
 | GUI 外壳（P31） | `gui_page_load_file`、`gui_about_blank`、`gui_http_stub`、`gui_inline_html`、`gui_back_forward`、`gui_bitmap_ppm`、`gui_tkinter_available` |
 | 渲染质量与字重（P20） | `p20_quadratic_flatten`、`p20_offcurve_midpoint_rule`、`p20_fill_polygon_aa`、`p20_fill_polygon_speed`、`p20_synthetic_bold_increases_ink`、`p20_dilate_poly`、`p20_outline_bbox_validation`、`p20_letter_spacing_widens`、`p20_text_rendering_stored`、`p20_font_weight_stored`、`p20_metrics_for_weight`、`p20_font_fallback_chain`、`p20_match_weight`、`p20_draw_text_curves_letter_spacing`、`p20_glyf_instruction_count_layout`、`p20_point_flags_bits`、`p20_curve_glyph_fallback`、`p20_paint_command_fields`、`p20_layout_box_fields`、`p20_synthetic_bold_flag_roundtrip`、`p20_render_full_pipeline_weight`、`p20_glyf_offcurve_yreversed` |
+| URL 与 HTTP/1.1（P21） | `p21_parse_url_absolute`、`p21_parse_url_https_default_port`、`p21_relative_url_resolution`、`p21_url_to_string_roundtrip`、`p21_normalize_url`、`p21_origin_property`、`p21_url_is_network_flag`、`p21_http_get_200`、`p21_http_get_404`、`p21_http_redirect_surfaced`、`p21_content_type_dispatch`、`p21_fetch_error_on_4xx`、`p21_unsupported_scheme`、`p21_error_page_html`、`p21_error_page_renders`、`p21_connection_error_retries`、`p21_http_query_in_path`、`p21_fetch_html_accepts_str_url`、`p21_cli_network_error_exit_code` |
 
 ## 改进路线图
 
@@ -867,6 +898,10 @@ python test.py
 - [x] P20.5 letter-spacing / text-rendering 玩具
 - [x] P20.6 曲线路径接入文字渲染管线
 - [x] P20.7 测试扩充至 437 条（M1 收官）
+- [x] P21.1 URL 解析（scheme/host/port/path/query/fragment + 相对 + 规范化）
+- [x] P21.2 HTTP/1.1 最小客户端（GET + Host + 状态码分派）
+- [x] P21.3 Content-Type 分派 + 统一错误页
+- [x] P21.4 测试扩充至 456 条（本地 http.server 夹具，离线可测）
 
 ## 与 Rust 版的对应关系
 
@@ -883,7 +918,8 @@ python test.py
 | `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派） |
 | `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
-| `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳 |
+| `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳（P21 http 加载） |
+| `net.py` | （新增） | P21 URL 解析 + HTTP/1.1 最小客户端（本地 http.server 夹具可测） |
 | `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate） |
 
 ## 环境

@@ -5896,12 +5896,16 @@ def test_gui_about_blank():
 
 
 def test_gui_http_stub():
-    """P31 — http URL 显示「暂不支持」占位页（M2 前）。"""
+    """P31/P21 — http URL renders a bitmap: the unified error page when
+    the network fails (offline / dead port), a real page when it
+    succeeds.  The GUI must never show a blank on a network URL."""
     import gui
     p = gui.PageInstance()
-    p.load_url("http://example.com", 200, 150)
-    assert p.bitmap is not None
-    assert p.url == "http://example.com"
+    p.load_url("http://127.0.0.1:1/x", 200, 150)
+    assert p.bitmap is not None, "http URL must always produce a bitmap"
+    assert p.url == "http://127.0.0.1:1/x"
+    assert sum(1 for px in p.bitmap.pixels if px != 0xFFFFFF) > 0, \
+        "network error page must paint ink"
 
 
 def test_gui_inline_html():
@@ -6335,6 +6339,299 @@ def test_p20_glyf_offcurve_yreversed():
     assert pts[1][:2] == (15, 40), f"p1={pts[1]}"
     assert pts[2][:2] == (35, -40), f"p2 yReversed must negate: {pts[2]}"
     assert pts[0][2] and pts[2][2] and not pts[1][2], "on-curve flags wrong"
+
+
+# ---------------------------------------------------------------------------
+# P21 — URL 与 HTTP/1.1 客户端（M2 网络栈第一步）
+# ---------------------------------------------------------------------------
+
+def _p21_start_server(routes):
+    """Spin up a local http.server on a random port; return
+    (server, port) that the caller must shutdown."""
+    import http.server, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            key = self.path.split("?")[0]
+            r = routes.get(key)
+            if r is None:
+                body = b"404x"
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            status, ctype, body = r
+            self.send_response(status)
+            if ctype:
+                self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, port
+
+
+def test_p21_parse_url_absolute():
+    """P21.1 — absolute URL parses into all six components."""
+    import net
+    u = net.parse_url("http://example.com:8080/a/b?c=1#f")
+    assert u.scheme == "http"
+    assert u.host == "example.com"
+    assert u.port == 8080
+    assert u.path == "/a/b"
+    assert u.query == "c=1"
+    assert u.fragment == "f"
+
+
+def test_p21_parse_url_https_default_port():
+    """P21.1 — https without an explicit port keeps port=0 but
+    effective_port is 443; http default is 80."""
+    import net
+    u = net.parse_url("https://example.com/x")
+    assert u.port == 0 and u.effective_port == 443
+    u2 = net.parse_url("http://example.com")
+    assert u2.effective_port == 80
+    # Canonicalization: explicit default port is dropped from authority.
+    u3 = net.parse_url("https://x.com:443/")
+    assert u3.authority == "x.com", f"443 is default, got {u3.authority!r}"
+
+
+def test_p21_relative_url_resolution():
+    """P21.1 — relative URL resolution against a base (WHATWG rules)."""
+    import net
+    base = net.parse_url("http://h.com:8080/a/b?c=1#f")
+    p = net.parse_url("page.html", base)
+    assert p.path == "/a/page.html" and p.host == "h.com"
+    up = net.parse_url("../x", base)
+    assert up.path == "/x"
+    abs_p = net.parse_url("/abs", base)
+    assert abs_p.path == "/abs" and abs_p.port == 8080
+    q = net.parse_url("?q=2", base)
+    assert q.query == "q=2" and q.path == "/a/b"
+    sr = net.parse_url("//other.com/p", base)
+    assert sr.host == "other.com" and sr.scheme == "http"
+
+
+def test_p21_url_to_string_roundtrip():
+    """P21.1 — to_string() round-trips through parse_url without loss."""
+    import net
+    src = "http://h.com:8080/a/b?c=1#f"
+    u = net.parse_url(src)
+    assert u.to_string() == src
+    # Default port dropped.
+    u2 = net.parse_url("https://h.com:443/x")
+    assert u2.to_string() == "https://h.com/x"
+
+
+def test_p21_normalize_url():
+    """P21.1 — normalize lowercases scheme/host, fills empty path."""
+    import net
+    u = net.parse_url("HTTP://H.COM")
+    n = net.normalize_url(u)
+    assert n.scheme == "http" and n.host == "h.com"
+    assert n.path == "/", f"empty path must become /, got {n.path!r}"
+
+
+def test_p21_origin_property():
+    """P21.1 — origin is scheme://host[:port] without the default port."""
+    import net
+    u = net.parse_url("http://h.com:8080/a")
+    assert u.origin == "http://h.com:8080"
+    u2 = net.parse_url("https://h.com/a")
+    assert u2.origin == "https://h.com"
+
+
+def test_p21_http_get_200():
+    """P21.2 — a 200 GET returns the body + content-type via the
+    local http.server fixture (offline, CI-stable)."""
+    import net
+    routes = {"/": (200, "text/html", b"<html><body>hi</body></html>")}
+    srv, port = _p21_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/")
+        assert r.status == 200
+        assert r.is_html
+        assert b"hi" in r.body
+        assert r.ok
+    finally:
+        srv.shutdown()
+
+
+def test_p21_http_get_404():
+    """P21.2 — a 404 is returned as-is (client does NOT hide errors);
+    the caller decides whether to render the error page."""
+    import net
+    routes = {}  # no matching route → fixture returns 404
+    srv, port = _p21_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/missing")
+        assert r.status == 404
+        assert not r.ok
+    finally:
+        srv.shutdown()
+
+
+def test_p21_http_redirect_surfaced():
+    """P21.2 — a 301 is returned as-is with its status (P22 will follow
+    the chain; P21 surfaces it, does not follow automatically)."""
+    import net
+    routes = {"/a": (301, "", b"")}
+    srv, port = _p21_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/a")
+        assert r.status == 301
+        assert not r.ok, "3xx is not 2xx"
+    finally:
+        srv.shutdown()
+
+
+def test_p21_content_type_dispatch():
+    """P21.3 — fetch_html returns decoded text for text/html and raises
+    FetchError for a non-HTML Content-Type (the 'download/ignore' path)."""
+    import net
+    routes = {
+        "/html": (200, "text/html", b"<p>ok</p>"),
+        "/json": (200, "application/json", b'{"a":1}'),
+    }
+    srv, port = _p21_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        text, resp = net.fetch_html(f"http://127.0.0.1:{port}/html", c)
+        assert text == "<p>ok</p>" and resp.status == 200
+        try:
+            net.fetch_html(f"http://127.0.0.1:{port}/json", c)
+            assert False, "non-HTML content-type must raise FetchError"
+        except net.FetchError as e:
+            assert e.status == 200
+    finally:
+        srv.shutdown()
+
+
+def test_p21_fetch_error_on_4xx():
+    """P21.3 — fetch_html raises FetchError carrying the status on 4xx."""
+    import net
+    routes = {}
+    srv, port = _p21_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        try:
+            net.fetch_html(f"http://127.0.0.1:{port}/nope", c)
+            assert False, "404 must raise FetchError"
+        except net.FetchError as e:
+            assert e.status == 404
+            assert "404" in str(e)
+    finally:
+        srv.shutdown()
+
+
+def test_p21_unsupported_scheme():
+    """P21.3 — schemes other than http/https are rejected outright."""
+    import net
+    c = net.HttpClient()
+    for bad in ("ftp://x.com", "mailto:a@b.c"):
+        u = net.parse_url(bad)
+        try:
+            c.get(u)
+            assert False, f"{bad} must raise UnsupportedScheme"
+        except net.UnsupportedScheme:
+            pass
+
+
+def test_p21_error_page_html():
+    """P21.3 — the unified error page HTML contains the title/detail."""
+    import net
+    html = net.error_page_html("Timeout", "cannot reach host")
+    assert "Timeout" in html
+    assert "cannot reach host" in html
+    assert "<h1>" in html
+
+
+def test_p21_error_page_renders():
+    """P21.3 — render_error_page produces a non-blank Bitmap via the
+    full pipeline (so the GUI/CLI can drop it in directly)."""
+    import net, paint
+    bmp = net.render_error_page("Not Found", "404 on x", 200, 120)
+    assert isinstance(bmp, paint.Bitmap)
+    assert bmp.width == 200 and bmp.height == 120
+    assert sum(1 for p in bmp.pixels if p != 0xFFFFFF) > 0, \
+        "error page must paint ink"
+
+
+def test_p21_connection_error_retries():
+    """P21.2 — a connection to a dead port retries then raises
+    ConnectionError (the unified error the caller renders)."""
+    import net
+    c = net.HttpClient(timeout=0.5)
+    try:
+        c.get("http://127.0.0.1:1/x")
+        assert False, "dead port must raise"
+    except ConnectionError as e:
+        assert "GET" in str(e)
+
+
+def test_p21_http_query_in_path():
+    """P21.2 — the query string is appended to the wire path."""
+    import net
+    srv, port = _p21_start_server({"/x": (200, "text/html", b"got")})
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/x?a=1")
+        assert r.status == 200 and b"got" in r.body
+    finally:
+        srv.shutdown()
+
+
+def test_p21_url_is_network_flag():
+    """P21.1 — is_network / is_http / is_https flags are consistent."""
+    import net
+    u = net.parse_url("http://h/p")
+    assert u.is_http and u.is_network
+    u2 = net.parse_url("https://h/p")
+    assert u2.is_https and u2.is_network and not u2.is_http
+    u3 = net.parse_url("mailto:x@y.z")
+    assert not u3.is_network
+
+
+def test_p21_fetch_html_accepts_str_url():
+    """P21.3 — fetch_html accepts a bare string (parsed on the fly)."""
+    import net
+    routes = {"/": (200, "text/html", b"<b>x</b>")}
+    srv, port = _p21_start_server(routes)
+    try:
+        text, _ = net.fetch_html(f"http://127.0.0.1:{port}/")
+        assert text == "<b>x</b>"
+    finally:
+        srv.shutdown()
+
+
+def test_p21_cli_network_error_exit_code():
+    """P21.3 — main.py exits 3 and writes the error PPM on a network
+    failure (the error page is still rendered, not a crash)."""
+    import subprocess, sys, os
+    p = subprocess.run(
+        [sys.executable, "main.py", "http://127.0.0.1:1/x.html",
+         "p21_err.ppm", "--width", "100", "--height", "60"],
+        cwd=os.getcwd(), capture_output=True, text=True, timeout=45,
+    )
+    assert p.returncode == 3, \
+        f"expected exit 3, got {p.returncode}: {p.stderr[-400:]}"
+    assert os.path.exists("p21_err.ppm"), "error PPM must be written"
+    try:
+        os.remove("p21_err.ppm")
+    except OSError:
+        pass
 
 
 def main():
@@ -6842,6 +7139,26 @@ def main():
         ("p20_synthetic_bold_flag_roundtrip", test_p20_synthetic_bold_flag_roundtrip),
         ("p20_render_full_pipeline_weight", test_p20_render_full_pipeline_weight),
         ("p20_glyf_offcurve_yreversed", test_p20_glyf_offcurve_yreversed),
+        # P21 — URL 与 HTTP/1.1 客户端（M2 网络栈第一步）。
+        ("p21_parse_url_absolute", test_p21_parse_url_absolute),
+        ("p21_parse_url_https_default_port", test_p21_parse_url_https_default_port),
+        ("p21_relative_url_resolution", test_p21_relative_url_resolution),
+        ("p21_url_to_string_roundtrip", test_p21_url_to_string_roundtrip),
+        ("p21_normalize_url", test_p21_normalize_url),
+        ("p21_origin_property", test_p21_origin_property),
+        ("p21_http_get_200", test_p21_http_get_200),
+        ("p21_http_get_404", test_p21_http_get_404),
+        ("p21_http_redirect_surfaced", test_p21_http_redirect_surfaced),
+        ("p21_content_type_dispatch", test_p21_content_type_dispatch),
+        ("p21_fetch_error_on_4xx", test_p21_fetch_error_on_4xx),
+        ("p21_unsupported_scheme", test_p21_unsupported_scheme),
+        ("p21_error_page_html", test_p21_error_page_html),
+        ("p21_error_page_renders", test_p21_error_page_renders),
+        ("p21_connection_error_retries", test_p21_connection_error_retries),
+        ("p21_http_query_in_path", test_p21_http_query_in_path),
+        ("p21_url_is_network_flag", test_p21_url_is_network_flag),
+        ("p21_fetch_html_accepts_str_url", test_p21_fetch_html_accepts_str_url),
+        ("p21_cli_network_error_exit_code", test_p21_cli_network_error_exit_code),
     ]
     passed = 0
     failed = []

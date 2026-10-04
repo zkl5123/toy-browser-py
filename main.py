@@ -48,14 +48,59 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _render_error_and_exit(html: str, args) -> None:
+    """P21.3 — render the unified error-page HTML and write the image,
+    so a network failure still produces a viewable PPM/PNG."""
+    import paint, paint_engine, layout, css, dom
+    bmp = paint.Bitmap(args.width, args.height)
+    dl = paint_engine.emit_commands(
+        layout.build_box(css.apply(dom.parse(html), ""), 0.0),
+    )
+    out = paint_engine.rasterize(dl, args.width, args.height)
+    if args.png:
+        browser.write_png(out, args.output)
+    else:
+        browser.write_ppm(out, args.output)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     # Read the input document.
     if os.path.exists(args.input):
         with open(args.input, encoding="utf-8", errors="replace") as f:
             html = f.read()
+        css_text = ""
+    elif args.input.lower().startswith(("http://", "https://")):
+        # P21 — URL input through the new network stack.
+        import net
+        try:
+            html, _resp = net.fetch_html(args.input, timeout=10.0)
+            css_text = ""
+        except net.FetchError as e:
+            print(f"network error: {e}", file=sys.stderr)
+            # Unified error page (P21.3) so the user still gets an image.
+            html = net.error_page_html(
+                f"Network error: {e}",
+                f"Loading {args.input} failed.",
+            )
+            css_text = ""
+            _render_error_and_exit(html, args)
+            return 3
+        except Exception as e:
+            print(f"connection error: {e}", file=sys.stderr)
+            html = net.error_page_html("Connection error", str(e))
+            css_text = ""
+            _render_error_and_exit(html, args)
+            return 3
     else:
-        html = _fetch_url(args.input)
+        # P21 — unknown input → try as URL through the network stack.
+        import net
+        try:
+            html, _resp = net.fetch_html(args.input, timeout=10.0)
+            css_text = ""
+        except Exception as e:
+            print(f"cannot load {args.input!r}: {e}", file=sys.stderr)
+            return 2
     css_text = ""
     if args.css and os.path.exists(args.css):
         with open(args.css, encoding="utf-8", errors="replace") as f:
@@ -122,13 +167,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {len(frames)} frames to {out_dir}/")
 
     return 0
-
-
-def _fetch_url(url: str) -> str:
-    import urllib.request
-
-    with urllib.request.urlopen(url, timeout=10) as r:
-        return r.read().decode("utf-8", errors="replace")
 
 
 if __name__ == "__main__":
