@@ -45,6 +45,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="number of frames for --animate (default 10)")
     p.add_argument("--anim-out", metavar="DIR",
                    help="directory to write animation frames to (P4.1)")
+    # P23 — HTTPS / cache / progress
+    p.add_argument("--insecure", action="store_true",
+                   help="disable TLS cert verification (P23.1 --insecure)")
+    p.add_argument("--cache", metavar="DIR",
+                   help="enable on-disk HTTP cache under DIR (P23.2/3)")
+    p.add_argument("--progress", action="store_true",
+                   help="print load-progress events to stderr (P23.4)")
     return p.parse_args(argv)
 
 
@@ -87,8 +94,24 @@ def main(argv: list[str] | None = None) -> int:
         import net
         import browser as _browser
         try:
+            import net as _net
+            _client = None
+            _cache = None
+            _prog = None
+            if args.cache:
+                _cache = _net.CacheStore(args.cache)
+            if args.progress:
+                _prog = _net.LoadEventSink()
+                _prog.on_event(lambda ev: print(str(ev), file=sys.stderr))
+            if _cache is not None or args.insecure or _prog is not None:
+                _client = _net.HttpClient(
+                    verify_tls=not args.insecure,
+                    cache=_cache, progress=_prog,
+                )
             bmp = _browser.render_document_from_url(
                 args.input, "", args.width, args.height,
+                client=_client, use_cache=(args.cache or None),
+                progress=_prog,
             )
             _write_image(bmp, args)
             return 0
