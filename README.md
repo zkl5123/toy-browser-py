@@ -17,14 +17,14 @@ toy-browser-py/
 ├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
 ├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
 ├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体）
-├── net.py             P21 URL 解析 + HTTP/1.1 最小客户端（本地 http.server 夹具可测）
+├── net.py             P21/P22 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 子资源
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            456 条测试（python test.py）
+├── test.py            476 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P21 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P22 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -631,6 +631,31 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - **测试**：19 条新 P21 测试（总数 437 → 456），全部用本地
   `http.server` 夹具（离线可测、CI 稳定）。
 
+### HTTP 深化与子资源加载（P22）
+
+- **P22.1 重定向链**：`HttpClient.get(url, follow_redirects=True,
+  max_redirects=5)` — 301/302/303/307/308 自动跟随；上限 5 层 + 已见
+  URL 集合循环检测，超限/循环抛 `net.RedirectLoop`（`FetchError` 子类，
+  携带 `chain`）。`follow_redirects=False` 保留 P21 行为（3xx 原样返回，
+  `redirected=True`）。相对 `Location` 按重定向源 URL 解析（WHATWG）。
+- **P22.2 gzip**：`maybe_gunzip(resp)` — `Content-Encoding: gzip` 时透明
+  解压；无该头或解压失败则原样返回（不崩页面）。请求携带
+  `Accept-Encoding: gzip`。
+- **P22.3 chunked**：`net.decode_chunked(raw)` 纯函数解析原始 chunked
+  流（hex size `[;ext]` 帧 + 终止 `0` 块；畸形 size 行安全停止）。
+  线上由 `http.client` 透明处理，此钩子供 M5 手写 socket 客户端复用。
+- **P22.4 子资源 + P22.5 `<base>`**：`collect_subresources(dom)`
+  文档序收集 `<link rel=stylesheet>` + `<img src>`；`base_url_from_dom`
+  读 `<base href>`（无则 None，回退文档 URL）。`load_subresources(dom,
+  base, client)` 按 base 解析相对 src、`data:` 跳过网络、顺序 GET、
+  **失败不阻塞**（404/超时 → None，不中断、不崩页面），返回
+  `{kind: {abs_url: HttpResponse|None}}`。`fetch_resource(url)` 子资源
+  语义（成功返 resp，失败返 None）。`browser.render_document_from_url`
+  文档走重定向链 + gzip，成功 CSS 子资源并入样式表后跑完整管线出
+  Bitmap。`main.py` URL 输入改走此 API（网络失败仍退出码 3 + 错误页）。
+- **测试**：20 条新 P22 测试（总数 456 → 476），全部用本地
+  `http.server` 夹具（离线可测、CI 稳定）。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -785,6 +810,7 @@ python test.py
 | GUI 外壳（P31） | `gui_page_load_file`、`gui_about_blank`、`gui_http_stub`、`gui_inline_html`、`gui_back_forward`、`gui_bitmap_ppm`、`gui_tkinter_available` |
 | 渲染质量与字重（P20） | `p20_quadratic_flatten`、`p20_offcurve_midpoint_rule`、`p20_fill_polygon_aa`、`p20_fill_polygon_speed`、`p20_synthetic_bold_increases_ink`、`p20_dilate_poly`、`p20_outline_bbox_validation`、`p20_letter_spacing_widens`、`p20_text_rendering_stored`、`p20_font_weight_stored`、`p20_metrics_for_weight`、`p20_font_fallback_chain`、`p20_match_weight`、`p20_draw_text_curves_letter_spacing`、`p20_glyf_instruction_count_layout`、`p20_point_flags_bits`、`p20_curve_glyph_fallback`、`p20_paint_command_fields`、`p20_layout_box_fields`、`p20_synthetic_bold_flag_roundtrip`、`p20_render_full_pipeline_weight`、`p20_glyf_offcurve_yreversed` |
 | URL 与 HTTP/1.1（P21） | `p21_parse_url_absolute`、`p21_parse_url_https_default_port`、`p21_relative_url_resolution`、`p21_url_to_string_roundtrip`、`p21_normalize_url`、`p21_origin_property`、`p21_url_is_network_flag`、`p21_http_get_200`、`p21_http_get_404`、`p21_http_redirect_surfaced`、`p21_content_type_dispatch`、`p21_fetch_error_on_4xx`、`p21_unsupported_scheme`、`p21_error_page_html`、`p21_error_page_renders`、`p21_connection_error_retries`、`p21_http_query_in_path`、`p21_fetch_html_accepts_str_url`、`p21_cli_network_error_exit_code` |
+| HTTP 深化与子资源（P22） | `p22_redirect_followed`、`p22_redirect_loop_detected`、`p22_redirect_exceeds_cap`、`p22_redirect_within_cap_succeeds`、`p22_redirect_no_follow_returns_302`、`p22_gzip_decoded`、`p22_gzip_no_header_passthrough`、`p22_chunked_decode_roundtrip`、`p22_chunked_with_extensions`、`p22_chunked_max_size_cap`、`p22_subresource_collection`、`p22_base_tag_overrides_doc_base`、`p22_base_tag_absent`、`p22_subresource_failure_does_not_block`、`p22_render_document_from_url`、`p22_render_from_url_gzip_doc`、`p22_render_from_url_network_error`、`p22_subresource_data_uri_skipped`、`p22_fetch_resource_returns_none_on_404`、`p22_redirect_relative_location` |
 
 ## 改进路线图
 
@@ -902,6 +928,11 @@ python test.py
 - [x] P21.2 HTTP/1.1 最小客户端（GET + Host + 状态码分派）
 - [x] P21.3 Content-Type 分派 + 统一错误页
 - [x] P21.4 测试扩充至 456 条（本地 http.server 夹具，离线可测）
+- [x] P22.1 重定向链（≤5 层 + 循环检测）
+- [x] P22.2 Content-Encoding: gzip 解压
+- [x] P22.3 Transfer-Encoding: chunked 解析钩子
+- [x] P22.4 子资源并发加载 + 失败不阻塞
+- [x] P22.5 `<base>` 标签玩具（测试总数 456 → 476）
 
 ## 与 Rust 版的对应关系
 
@@ -919,7 +950,7 @@ python test.py
 | `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
 | `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳（P21 http 加载） |
-| `net.py` | （新增） | P21 URL 解析 + HTTP/1.1 最小客户端（本地 http.server 夹具可测） |
+| `net.py` | （新增） | P21/P22 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 子资源 |
 | `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate） |
 
 ## 环境

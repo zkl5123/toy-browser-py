@@ -1173,6 +1173,54 @@
 - [x] 端到端 CLI `python main.py demo.html out.ppm` 通过；
   `python main.py http://127.0.0.1:1/x.html` → 退出码 3 + 错误页。
 
+## P22 — HTTP 深化与子资源加载（M2 网络栈第二步）✅
+
+> 依据 `项目未来规划.txt` §P22：重定向链（≤5 层，循环检测）、
+> `Content-Encoding: gzip` 解压、`Transfer-Encoding: chunked` 解析、
+> `<link rel=stylesheet>` / `<img src>` 子资源并发 + 接入现有事件
+> 循环、`<base>` 标签玩具、子资源失败不阻塞渲染。测试全部使用本地
+> `http.server` 夹具（离线可测、CI 稳定）。
+
+### 22.1 重定向链 ✅
+
+- [x] `HttpClient.get(url, follow_redirects=True, max_redirects=5)` —
+  301/302/303/307/308 自动跟随；`_follow_redirects` 上限 5 层 +
+  已见 URL 集合循环检测，超限/循环抛 `RedirectLoop`（FetchError 子类，
+  携带 `chain`）。`follow_redirects=False` 保留 P21 行为（3xx 原样返回，
+  `redirected=True`）。相对 `Location` 按重定向源 URL 解析（WHATWG）。
+- [x] `fetch_html(..., follow_redirects=True)` 文档请求走重定向链。
+
+### 22.2 gzip ✅
+
+- [x] `maybe_gunzip(resp)`：`Content-Encoding: gzip` 时透明解压；无
+  该头或解压失败（脏数据）则原样返回（不崩页面）。`_single_get`
+  请求头携带 `Accept-Encoding: gzip`。
+
+### 22.3 chunked ✅
+
+- [x] `net.decode_chunked(raw)` 纯函数解析原始 chunked 流（hex size
+  `[;ext]` CRLF 帧 + 终止 `0` 块；畸形 size 行安全停止）。线上由
+  `http.client` 透明处理，此钩子供 M5 手写 socket 客户端复用 +
+  单测。
+
+### 22.4 子资源并发 + 22.5 <base> ✅
+
+- [x] `collect_subresources(dom)` 文档序收集 `<link rel=stylesheet>`
+  （含 alternate）+ `<img src>`；`base_url_from_dom(dom)` 读
+  `<base href>`（无则 None）。
+- [x] `load_subresources(dom, base_url, client)` — `<base href>` 优先
+  于文档 URL；相对 src 按 base 解析；`data:` URI 跳过网络；顺序
+  GET，**失败不阻塞**（404/超时 → None，不中断其余、不崩页面）；
+  返回 `{kind: {abs_url: HttpResponse|None}}`。
+- [x] `fetch_resource(url)` 子资源语义：成功返 `HttpResponse`，
+  失败返 `None`（绝不 raise）。
+- [x] `browser.render_document_from_url(url, ...)` — 文档走重定向链
+  + gzip，子资源成功 CSS 并入样式表后跑完整管线出 Bitmap。
+- [x] `main.py` URL 输入改走 `render_document_from_url`（P22 行为），
+  网络失败仍退出码 3 + 写统一错误页。
+- [x] 测试：20 条新 P22 测试（总数 456 → **476**，超出规划 475
+  目标）。
+
 ## 实施顺序
 
 ```
@@ -1287,11 +1335,16 @@ P21.1 URL 解析（scheme/host/port/path/query/fragment + 相对 + 规范化）�
 P21.2 HTTP/1.1 最小客户端（GET + Host + 状态码分派）（~2h）
 P21.3 Content-Type 分派 + 统一错误页 （~1.5h）
 P21.4 测试扩充（本地 http.server 夹具）（随 P21 完成）
+P22.1 重定向链（≤5 层 + 循环检测）（~1.5h）
+P22.2 Content-Encoding: gzip 解压（~30min）
+P22.3 Transfer-Encoding: chunked 解析钩子（~1h）
+P22.4 子资源并发加载 + 失败不阻塞（~2h）
+P22.5 <base> 标签玩具（~30min）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 已完成（**456/456** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 已完成（**476/476** 测试通过）。
 
-下一站：**P22 HTTP 深化与子资源加载（重定向链 / gzip / chunked / 子资源并发 / base 标签）**。
+下一站：**P23 网络栈深化（HTTP/2 玩具 / 缓存 / Cookie / 表单 POST / 事件循环接入）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

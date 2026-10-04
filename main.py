@@ -52,7 +52,6 @@ def _render_error_and_exit(html: str, args) -> None:
     """P21.3 — render the unified error-page HTML and write the image,
     so a network failure still produces a viewable PPM/PNG."""
     import paint, paint_engine, layout, css, dom
-    bmp = paint.Bitmap(args.width, args.height)
     dl = paint_engine.emit_commands(
         layout.build_box(css.apply(dom.parse(html), ""), 0.0),
     )
@@ -63,6 +62,14 @@ def _render_error_and_exit(html: str, args) -> None:
         browser.write_ppm(out, args.output)
 
 
+def _write_image(bmp, args) -> None:
+    """Write the rendered bitmap as PPM (default) or PNG (--png)."""
+    if args.png:
+        browser.write_png(bmp, args.output)
+    else:
+        browser.write_ppm(bmp, args.output)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     # Read the input document.
@@ -71,25 +78,31 @@ def main(argv: list[str] | None = None) -> int:
             html = f.read()
         css_text = ""
     elif args.input.lower().startswith(("http://", "https://")):
-        # P21 — URL input through the new network stack.
+        # P21/P22 — URL input through the network stack.  P22.4 —
+        # subresources (<link rel=stylesheet> / <img>) are loaded
+        # against the document base; P22.1 — redirect chains are
+        # followed (cap 5, loop detection); P22.2 — gzip bodies are
+        # decoded transparently.  A network failure still writes the
+        # unified error page (exit 3, no crash).
         import net
+        import browser as _browser
         try:
-            html, _resp = net.fetch_html(args.input, timeout=10.0)
-            css_text = ""
+            bmp = _browser.render_document_from_url(
+                args.input, "", args.width, args.height,
+            )
+            _write_image(bmp, args)
+            return 0
         except net.FetchError as e:
             print(f"network error: {e}", file=sys.stderr)
-            # Unified error page (P21.3) so the user still gets an image.
             html = net.error_page_html(
                 f"Network error: {e}",
                 f"Loading {args.input} failed.",
             )
-            css_text = ""
             _render_error_and_exit(html, args)
             return 3
         except Exception as e:
             print(f"connection error: {e}", file=sys.stderr)
             html = net.error_page_html("Connection error", str(e))
-            css_text = ""
             _render_error_and_exit(html, args)
             return 3
     else:
@@ -101,7 +114,6 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             print(f"cannot load {args.input!r}: {e}", file=sys.stderr)
             return 2
-    css_text = ""
     if args.css and os.path.exists(args.css):
         with open(args.css, encoding="utf-8", errors="replace") as f:
             css_text = f.read()

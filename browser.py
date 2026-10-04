@@ -44,6 +44,72 @@ def render_document(
     return paint_engine.rasterize(dl, width, height)
 
 
+def render_document_from_url(
+    url: str,
+    css_text: str = "",
+    width: int = 800,
+    height: int = 600,
+    load_subresources: bool = True,
+    client=None,
+    timeout: float | None = None,
+) -> Bitmap:
+    """P22 — load an http(s) *url* and render it, plus fetch its
+    subresources (``<link rel=stylesheet>`` / ``<img src>``) against
+    the document base.
+
+    * P22.1 — the document fetch follows a 3xx redirect chain (cap 5,
+      loop detection).
+    * P22.2 — a ``Content-Encoding: gzip`` body is decoded transparently.
+    * P22.4 — subresources are resolved relative to the document URL
+      (or ``<base href>`` when present, P22.5) and fetched; a failed
+      subresource (404 / timeout / non-HTML) is skipped silently and
+      never blocks page rendering.  A successfully fetched stylesheet
+      is appended to *css_text* before the pipeline runs.
+    * P22.3 — chunked transfer-encoding is handled by ``http.client``
+      transparently (``net.decode_chunked`` is the unit-testable hook).
+
+    A top-level network failure raises :class:`net.FetchError`
+    (including :class:`net.RedirectLoop`); the caller renders the
+    unified error page.
+    """
+    import net
+    html, resp = net.fetch_html(
+        url, client=client, timeout=timeout,
+        follow_redirects=True,
+    )
+    tree = dom_mod.parse(html)
+    full_css = _full_css(tree, css_text)
+
+    # P22.4/P22.5 — load subresources against the document base.
+    if load_subresources:
+        base = net.parse_url(resp.final_url or url)
+        try:
+            loaded = net.load_subresources(tree, base,
+                                            client=client, timeout=timeout)
+            # Append any successfully fetched stylesheets.
+            for _u, r in (loaded.get("stylesheet") or {}).items():
+                if r is not None and r.ok:
+                    full_css += "\n" + r.body.decode("utf-8",
+                                                     errors="replace")
+        except Exception:
+            # Subresource loading must never break page rendering (P22.4).
+            pass
+
+    host = _run_scripts(tree)
+    media_rules = css_mod.parse_media_queries(full_css)
+    supports_rules = css_mod.parse_supports_blocks(full_css)
+    styled = css_mod.apply(
+        tree, full_css,
+        media_rules=media_rules,
+        supports_rules=supports_rules,
+        viewport_w=float(width),
+        viewport_h=float(height),
+    )
+    root = layout_mod.layout(styled, float(width), float(height))
+    dl = paint_engine.emit_commands(root)
+    return paint_engine.rasterize(dl, width, height)
+
+
 def _run_scripts(tree):
     """Execute inline <script> blocks in document order via the toy JS engine."""
     import js as js_mod

@@ -6634,6 +6634,395 @@ def test_p21_cli_network_error_exit_code():
         pass
 
 
+# ---------------------------------------------------------------------------
+# P22 — 重定向链 + gzip + chunked + 子资源并发 + <base>
+# ---------------------------------------------------------------------------
+
+def _p22_start_server(routes):
+    """P22 — http.server with optional extra-headers and gzip/chunked
+    support.  ``routes`` maps path → (status, ctype, body, extra_hdrs).
+    ``extra_hdrs`` may include ``Content-Encoding: gzip`` (body is
+    sent verbatim, caller gzips it) or ``Transfer-Encoding: chunked``
+    is NOT honored by BaseHTTPRequestHandler, so chunked is tested via
+    ``net.decode_chunked`` on a raw stream instead."""
+    import http.server, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            key = self.path.split("?")[0]
+            r = routes.get(key)
+            if r is None:
+                body = b"404x"
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if len(r) == 4:
+                status, ctype, body, extra = r
+            else:
+                status, ctype, body = r
+                extra = {}
+            self.send_response(status)
+            if ctype:
+                self.send_header("Content-Type", ctype)
+            for k, v in extra.items():
+                self.send_header(k, v)
+            if "Content-Length" not in {k.upper() for k in extra}:
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, port
+
+
+def test_p22_redirect_followed():
+    """P22.1 — a 302 chain is followed to the final 200."""
+    import net
+    routes = {
+        "/a": (302, "text/plain", b"", {"Location": "/b"}),
+        "/b": (301, "text/plain", b"", {"Location": "/c"}),
+        "/c": (200, "text/html", b"<h1>final</h1>"),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/a")
+        assert r.status == 200, f"expected 200 after redirects, got {r.status}"
+        assert r.redirected is True, "redirected flag must be set"
+        assert b"final" in r.body
+    finally:
+        srv.shutdown()
+
+
+def test_p22_redirect_loop_detected():
+    """P22.1 — a 302 → 302 self-loop raises RedirectLoop."""
+    import net
+    routes = {
+        "/a": (302, "text/plain", b"", {"Location": "/b"}),
+        "/b": (302, "text/plain", b"", {"Location": "/a"}),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        try:
+            c.get(f"http://127.0.0.1:{port}/a")
+            assert False, "loop must raise RedirectLoop"
+        except net.RedirectLoop as e:
+            assert len(e.chain) >= 2, f"chain too short: {e.chain}"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_redirect_exceeds_cap():
+    """P22.1 — a 7-hop chain exceeds the 5-hop cap and raises
+    RedirectLoop (not silently truncated)."""
+    import net
+    # /n → /n+1 for n in 0..6, /7 = 200.  7 hops > MAX_REDIRECTS=5.
+    routes = {}
+    for i in range(7):
+        routes[f"/{i}"] = (302, "text/plain", b"",
+                            {"Location": f"/{i+1}"})
+    routes["/7"] = (200, "text/html", b"done")
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        try:
+            c.get(f"http://127.0.0.1:{port}/0")
+            assert False, "7-hop chain must exceed cap 5"
+        except net.RedirectLoop:
+            pass
+    finally:
+        srv.shutdown()
+
+
+def test_p22_redirect_within_cap_succeeds():
+    """P22.1 — a 5-hop chain (== cap) succeeds without error."""
+    import net
+    routes = {}
+    for i in range(5):
+        routes[f"/{i}"] = (302, "text/plain", b"",
+                            {"Location": f"/{i+1}"})
+    routes["/5"] = (200, "text/html", b"ok")
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/0")
+        assert r.status == 200, f"5 hops should succeed, got {r.status}"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_redirect_no_follow_returns_302():
+    """P22.1 — follow_redirects=False returns the 3xx as-is (P21
+    behavior preserved)."""
+    import net
+    routes = {
+        "/a": (302, "text/plain", b"", {"Location": "/b"}),
+        "/b": (200, "text/html", b"b"),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/a", follow_redirects=False)
+        assert r.status == 302, f"expected 302, got {r.status}"
+        assert r.redirected is True
+        assert r.headers.get("location") == "/b"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_gzip_decoded():
+    """P22.2 — a gzip-encoded body is transparently decoded."""
+    import net, gzip
+    payload = b"<html><body>P22 gzip</body></html>"
+    routes = {
+        "/g": (200, "text/html", gzip.compress(payload),
+               {"Content-Encoding": "gzip"}),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/g")
+        assert r.status == 200
+        assert r.body == payload, "gzip body must be decoded to original"
+        assert b"P22 gzip" in r.body
+    finally:
+        srv.shutdown()
+
+
+def test_p22_gzip_no_header_passthrough():
+    """P22.2 — without Content-Encoding: gzip the body is returned
+    verbatim (idempotent decoder)."""
+    import net
+    routes = {"/p": (200, "text/html", b"plain")}
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/p")
+        assert r.body == b"plain", "no gzip header → body unchanged"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_chunked_decode_roundtrip():
+    """P22.3 — net.decode_chunked decodes a raw chunked body
+    (unit-testable hook; http.client handles the wire transparently)."""
+    import net
+    raw = b"5\r\nhello\r\n6\r\n world\r\n0\r\n"
+    assert net.decode_chunked(raw) == b"hello world"
+    # Empty / single-chunk edge cases.
+    assert net.decode_chunked(b"0\r\n") == b""
+    assert net.decode_chunked(b"a\r\n0123456789\r\n0\r\n") == b"0123456789"
+
+
+def test_p22_chunked_with_extensions():
+    """P22.3 — chunk size lines may carry ``;ext`` suffixes that are
+    ignored (spec §4.1.2)."""
+    import net
+    raw = b"4;name=value\r\nWiki\r\n5\r\npedia\r\n0\r\n"
+    assert net.decode_chunked(raw) == b"Wikipedia"
+
+
+def test_p22_chunked_max_size_cap():
+    """P22.3 — a malformed size line terminates the decode (no crash)."""
+    import net
+    # Garbage size line → int() fails → decode stops, returns what we
+    # accumulated so far (empty here).
+    assert net.decode_chunked(b"xyz\r\n") == b""
+
+
+def test_p22_subresource_collection():
+    """P22.4 — collect_subresources returns <link rel=stylesheet> and
+    <img src> in document order."""
+    import net, dom
+    tree = dom.parse(
+        "<html><head>"
+        '<link rel="stylesheet" href="a.css">'
+        '<link rel="icon" href="f.ico">'
+        "</head><body>"
+        '<img src="p1.png"><img src="p2.png">'
+        "</body></html>"
+    )
+    specs = net.collect_subresources(tree)
+    kinds = [(s["kind"], s["src"]) for s in specs]
+    assert ("stylesheet", "a.css") in kinds, kinds
+    assert ("image", "p1.png") in kinds, kinds
+    assert ("image", "p2.png") in kinds, kinds
+    # <link rel=icon> is NOT a stylesheet → excluded.
+    assert not any(s["src"] == "f.ico" for s in specs), \
+        "non-stylesheet <link> must be excluded"
+
+
+def test_p22_base_tag_overrides_doc_base():
+    """P22.5 — a <base href> overrides the document URL as the base
+    for relative subresource resolution."""
+    import net, dom
+    tree = dom.parse(
+        "<html><head>"
+        '<base href="/override/">'
+        '<link rel="stylesheet" href="x.css">'
+        "</head><body></body></html>"
+    )
+    base = net.base_url_from_dom(tree)
+    assert base is not None, "base href must be detected"
+    assert base.path == "/override/", f"got {base.path}"
+    # The stylesheet resolves against /override/, not the doc root.
+    resolved = net.parse_url("x.css", base=base)
+    assert resolved.path == "/override/x.css", f"got {resolved.path}"
+
+
+def test_p22_base_tag_absent():
+    """P22.5 — without a <base> tag, base_url_from_dom returns None
+    (caller falls back to the document URL)."""
+    import net, dom
+    tree = dom.parse(
+        "<html><head>"
+        '<link rel="stylesheet" href="a.css">'
+        "</head><body></body></html>"
+    )
+    assert net.base_url_from_dom(tree) is None
+
+
+def test_p22_subresource_failure_does_not_block():
+    """P22.4 — a 404 subresource maps to None; the page still renders
+    (load_subresources never raises for a bad subresource)."""
+    import net, dom
+    routes = {"/ok.css": (200, "text/css", b"body{color:red}"),
+              "/missing.css": (404, None, b"")}
+    srv, port = _p22_start_server(routes)
+    base = f"http://127.0.0.1:{port}"
+    tree = dom.parse(
+        f"<html><head>"
+        f'<link rel="stylesheet" href="ok.css">'
+        f'<link rel="stylesheet" href="missing.css">'
+        f"</head><body><p>hi</p></body></html>"
+    )
+    try:
+        loaded = net.load_subresources(tree, net.parse_url(base + "/"),
+                                       client=net.HttpClient(timeout=5))
+        styles = loaded.get("stylesheet", {})
+        ok_key = [k for k in styles if k.endswith("ok.css")][0]
+        miss_key = [k for k in styles if k.endswith("missing.css")][0]
+        assert styles[ok_key] is not None, "ok.css must load"
+        assert styles[ok_key].ok is True
+        assert styles[miss_key] is None, "404 css must map to None"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_render_document_from_url():
+    """P22 — render_document_from_url loads a doc + subresources and
+    returns a Bitmap (full pipeline, no crash)."""
+    import net, dom, browser, paint
+    routes = {
+        "/": (200, "text/html",
+              b"<html><head>"
+              b'<link rel="stylesheet" href="s.css">'
+              b"</head><body><p style='color:red'>P22</p></body></html>"),
+        "/s.css": (200, "text/css", b"p{font-size:20px}"),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        bmp = browser.render_document_from_url(
+            f"http://127.0.0.1:{port}/", width=300, height=200,
+        )
+        assert isinstance(bmp, paint.Bitmap)
+        assert sum(1 for p in bmp.pixels if p != 0xFFFFFF) > 0, \
+            "P22 doc must paint ink"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_render_from_url_gzip_doc():
+    """P22.2 — a gzip-encoded HTML doc is decoded and rendered."""
+    import net, browser, paint, gzip
+    html = b"<html><body><h1>P22z</h1></body></html>"
+    routes = {"/": (200, "text/html", gzip.compress(html),
+                     {"Content-Encoding": "gzip"})}
+    srv, port = _p22_start_server(routes)
+    try:
+        bmp = browser.render_document_from_url(
+            f"http://127.0.0.1:{port}/", width=200, height=150,
+        )
+        assert isinstance(bmp, paint.Bitmap)
+        assert sum(1 for p in bmp.pixels if p != 0xFFFFFF) > 0
+    finally:
+        srv.shutdown()
+
+
+def test_p22_render_from_url_network_error():
+    """P22 — a dead host raises FetchError (caller renders the error
+    page); the API never silently returns a blank."""
+    import net, browser
+    try:
+        browser.render_document_from_url(
+            "http://127.0.0.1:1/x", width=100, height=60,
+        )
+        assert False, "dead host must raise"
+    except (net.FetchError, ConnectionError):
+        pass
+
+
+def test_p22_subresource_data_uri_skipped():
+    """P22.4 — a data: URI in <img src> is recorded but not fetched
+    (no network round-trip)."""
+    import net, dom
+    tree = dom.parse(
+        "<html><body>"
+        '<img src="data:image/png;base64,AAA">'
+        "</body></html>"
+    )
+    specs = net.collect_subresources(tree)
+    assert len(specs) == 1
+    assert specs[0]["src"].startswith("data:")
+    # load_subresources maps it to None (no fetch) without raising.
+    loaded = net.load_subresources(tree, net.parse_url("http://h/"))
+    imgs = loaded.get("image", {})
+    assert any(k.startswith("data:") for k in imgs)
+    assert all(v is None for k, v in imgs.items()
+               if k.startswith("data:"))
+
+
+def test_p22_fetch_resource_returns_none_on_404():
+    """P22.4 — fetch_resource returns None on a 404 (subresource
+    semantics: never raise)."""
+    import net
+    routes = {"/x.css": (404, None, b"")}
+    srv, port = _p22_start_server(routes)
+    try:
+        r = net.fetch_resource(f"http://127.0.0.1:{port}/x.css")
+        assert r is None, "404 subresource must map to None"
+    finally:
+        srv.shutdown()
+
+
+def test_p22_redirect_relative_location():
+    """P22.1 — a relative Location (no scheme/host) is resolved
+    against the redirecting URL, not the original."""
+    import net
+    routes = {
+        "/start": (302, "text/plain", b"", {"Location": "mid"}),
+        "/mid": (200, "text/html", b"rel-loc"),
+    }
+    srv, port = _p22_start_server(routes)
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.get(f"http://127.0.0.1:{port}/start")
+        assert r.status == 200, f"relative Location must resolve, got {r.status}"
+        assert b"rel-loc" in r.body
+    finally:
+        srv.shutdown()
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -7159,6 +7548,26 @@ def main():
         ("p21_url_is_network_flag", test_p21_url_is_network_flag),
         ("p21_fetch_html_accepts_str_url", test_p21_fetch_html_accepts_str_url),
         ("p21_cli_network_error_exit_code", test_p21_cli_network_error_exit_code),
+        ("p22_redirect_followed", test_p22_redirect_followed),
+        ("p22_redirect_loop_detected", test_p22_redirect_loop_detected),
+        ("p22_redirect_exceeds_cap", test_p22_redirect_exceeds_cap),
+        ("p22_redirect_within_cap_succeeds", test_p22_redirect_within_cap_succeeds),
+        ("p22_redirect_no_follow_returns_302", test_p22_redirect_no_follow_returns_302),
+        ("p22_gzip_decoded", test_p22_gzip_decoded),
+        ("p22_gzip_no_header_passthrough", test_p22_gzip_no_header_passthrough),
+        ("p22_chunked_decode_roundtrip", test_p22_chunked_decode_roundtrip),
+        ("p22_chunked_with_extensions", test_p22_chunked_with_extensions),
+        ("p22_chunked_max_size_cap", test_p22_chunked_max_size_cap),
+        ("p22_subresource_collection", test_p22_subresource_collection),
+        ("p22_base_tag_overrides_doc_base", test_p22_base_tag_overrides_doc_base),
+        ("p22_base_tag_absent", test_p22_base_tag_absent),
+        ("p22_subresource_failure_does_not_block", test_p22_subresource_failure_does_not_block),
+        ("p22_render_document_from_url", test_p22_render_document_from_url),
+        ("p22_render_from_url_gzip_doc", test_p22_render_from_url_gzip_doc),
+        ("p22_render_from_url_network_error", test_p22_render_from_url_network_error),
+        ("p22_subresource_data_uri_skipped", test_p22_subresource_data_uri_skipped),
+        ("p22_fetch_resource_returns_none_on_404", test_p22_fetch_resource_returns_none_on_404),
+        ("p22_redirect_relative_location", test_p22_redirect_relative_location),
     ]
     passed = 0
     failed = []
