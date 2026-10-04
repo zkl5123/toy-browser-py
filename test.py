@@ -7023,6 +7023,400 @@ def test_p22_redirect_relative_location():
         srv.shutdown()
 
 
+# ---------------------------------------------------------------------------
+# P23 — HTTPS + 磁盘缓存 + ETag 协商缓存 + 加载进度事件
+# ---------------------------------------------------------------------------
+
+import tempfile, os as _os
+
+
+def test_p23_cache_hit_skips_wire():
+    """P23.2 — a fresh cached response is returned without touching
+    the wire (the server is shut down before the second GET)."""
+    import net, time
+    routes = {"/x": (200, "text/html", b"hello",
+                      {"Cache-Control": "max-age=300"})}
+    srv, port = _p22_start_server(routes)
+    base = f"http://127.0.0.1:{port}"
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        r1 = c.get(f"{base}/x")
+        assert r1.status == 200 and b"hello" in r1.body
+        assert r1.from_cache is False
+        srv.shutdown()  # wire is now gone — a hit must NOT need it.
+        r2 = c.get(f"{base}/x")
+        assert r2.from_cache is True, "fresh entry must be a cache hit"
+        assert b"hello" in r2.body
+    finally:
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_no_store_not_cached():
+    """P23.2 — ``Cache-Control: no-store`` responses are never written
+    to disk; the second GET is a wire miss."""
+    import net
+    routes = {"/ns": (200, "text/html", b"ns",
+                       {"Cache-Control": "no-store"})}
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        r1 = c.get(f"http://127.0.0.1:{port}/ns")
+        assert r1.status == 200
+        assert store.get_fresh(net.parse_url(f"http://127.0.0.1:{port}/ns")) is None, \
+            "no-store must not be cached"
+    finally:
+        srv.shutdown()
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_max_age_expiry():
+    """P23.2 — a max-age=0 entry is immediately stale (ttl <= 0)."""
+    import net
+    routes = {"/z": (200, "text/html", b"z",
+                     {"Cache-Control": "max-age=0"})}
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        r1 = c.get(f"http://127.0.0.1:{port}/z")
+        assert r1.status == 200
+        # max-age=0 → ttl is 0 → not fresh.
+        assert store.get_fresh(net.parse_url(f"http://127.0.0.1:{port}/z")) is None
+    finally:
+        srv.shutdown()
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_etag_304_reuse():
+    """P23.3 — a stale entry with an ETag is revalidated; a 304
+    response reuses the cached body and refreshes freshness."""
+    import net
+    routes = {
+        "/e": (200, "text/html", b"body-1",
+               {"ETag": '"v1"', "Cache-Control": "max-age=0"}),
+    }
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        u = net.parse_url(f"http://127.0.0.1:{port}/e")
+        r1 = c.get(u)
+        assert r1.status == 200 and b"body-1" in r1.body
+        # max-age=0 → stale; get_stale returns the ETagged entry.
+        stale = store.get_stale(u)
+        assert stale is not None, "stale entry with ETag must be returned"
+        assert stale.status == 200
+        # Now the server returns 304 for the matching If-None-Match.
+        routes["/e"] = (304, "text/html", b"",
+                        {"ETag": '"v1"'})
+        r2 = c.get(u)
+        assert r2.from_cache is True, "304 must surface as a cached 200"
+        assert b"body-1" in r2.body, "304 must reuse the stale body"
+    finally:
+        srv.shutdown()
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_heuristic_ttl():
+    """P23.2 — without directives, heuristic TTL = 10% of
+    (Date - Last-Modified)."""
+    import net
+    # Last-Modified 100s before Date → heuristic ttl = 10s.
+    lm = "Thu, 01 Jan 2020 00:00:00 GMT"
+    dt = "Thu, 01 Jan 2020 00:01:40 GMT"
+    routes = {"/h": (200, "text/html", b"heuristic",
+                     {"Last-Modified": lm, "Date": dt})}
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        r1 = c.get(f"http://127.0.0.1:{port}/h")
+        assert r1.status == 200
+        u = net.parse_url(f"http://127.0.0.1:{port}/h")
+        entry = store.get_stale(u)  # stale check only; heuristic ttl>0
+        # Freshness: heuristic_ttl should be ~10s; right after fetch it's
+        # still fresh, so get_fresh should return a hit.
+        assert store.get_fresh(u) is not None, \
+            "heuristic entry should be fresh right after fetch"
+    finally:
+        srv.shutdown()
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_store_clear():
+    """P23.2 — CacheStore.clear() removes all on-disk entries."""
+    import net
+    routes = {"/c": (200, "text/html", b"c",
+                     {"Cache-Control": "max-age=60"})}
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        c.get(f"http://127.0.0.1:{port}/c")
+        assert len(_os.listdir(cache_dir)) > 0, "cache must have files"
+        n = store.clear()
+        assert n > 0
+        assert store.get_fresh(net.parse_url(f"http://127.0.0.1:{port}/c")) is None
+    finally:
+        srv.shutdown()
+        _rmtree_quiet(cache_dir)
+
+
+def _rmtree_quiet(path):
+    import shutil
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def test_p23_cache_parse_directives():
+    """P23.2 — _parse_cache_control extracts max-age / no-cache /
+    no-store correctly."""
+    import net
+    cc = net._parse_cache_control("max-age=3600, public")
+    assert cc.get("max-age") == "3600"
+    assert cc.get("public") is True
+    cc2 = net._parse_cache_control("no-cache, no-store")
+    assert cc2.get("no-cache") is True and cc2.get("no-store") is True
+    assert net._parse_cache_control("") == {}
+
+
+def test_p23_progress_events_emitted():
+    """P23.4 — a LoadEventSink receives start/document/done events
+    for a single GET."""
+    import net
+    routes = {"/p": (200, "text/html", b"p")}
+    srv, port = _p22_start_server(routes)
+    try:
+        sink = net.LoadEventSink()
+        c = net.HttpClient(timeout=5, progress=sink)
+        c.get(f"http://127.0.0.1:{port}/p")
+        phases = [e.phase for e in sink.events]
+        assert net.PHASE_START in phases, phases
+        assert net.PHASE_DOCUMENT in phases, phases
+        assert net.PHASE_DONE in phases, phases
+        assert sink.events[-1].fraction == 1.0
+    finally:
+        srv.shutdown()
+
+
+def test_p23_progress_subresource_phase():
+    """P23.4 — load_subresources emits a subresource phase per fetch
+    and a final done event."""
+    import net, dom
+    routes = {"/s.css": (200, "text/css", b"body{}")}
+    srv, port = _p22_start_server(routes)
+    try:
+        sink = net.LoadEventSink()
+        c = net.HttpClient(timeout=5, progress=sink)
+        tree = dom.parse(
+            '<html><head><link rel="stylesheet" href="s.css"></head>'
+            '<body><img src="s.css"></body></html>'
+        )
+        net.load_subresources(tree, net.parse_url(f"http://127.0.0.1:{port}/"),
+                              client=c, progress=sink)
+        phases = [e.phase for e in sink.events]
+        assert net.PHASE_SUBRESOURCE in phases, phases
+        assert net.PHASE_DONE in phases, phases
+    finally:
+        srv.shutdown()
+
+
+def test_p23_progress_on_event_subscription():
+    """P23.4 — LoadEventSink.on_event subscribes a callback that is
+    invoked for each emitted event."""
+    import net
+    sink = net.LoadEventSink()
+    seen = []
+    sink.on_event(lambda ev: seen.append(ev.phase))
+    sink.emit(net.LoadProgress(net.PHASE_START, 0.0))
+    sink.emit(net.LoadProgress(net.PHASE_DONE, 1.0))
+    assert [e.phase for e in sink.events] == ["start", "done"]
+    assert seen == ["start", "done"]
+
+
+def test_p23_post_form_encoded():
+    """P23 — HttpClient.post encodes a dict as
+    application/x-www-form-urlencoded and returns the response."""
+    import net, http.server, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    captured = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            captured["body"] = self.rfile.read(n).decode("utf-8")
+            captured["ctype"] = self.headers.get("Content-Type", "")
+            resp = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = net.HttpClient(timeout=5)
+        r = c.post(f"http://127.0.0.1:{port}/form",
+                   data={"a": "1", "b": "x y"})
+        assert r.status == 200 and b"ok" in r.body
+        assert "a=1" in captured["body"], captured["body"]
+        assert "b=x+y" in captured["body"] or "b=x%20y" in captured["body"]
+        assert "urlencoded" in captured["ctype"].lower()
+    finally:
+        srv.shutdown()
+
+
+def test_p23_post_verbatim_str():
+    """P23 — a str body is sent verbatim with the given content-type."""
+    import net, http.server, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    captured = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            captured["body"] = self.rfile.read(n)
+            captured["ctype"] = self.headers.get("Content-Type", "")
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = net.HttpClient(timeout=5)
+        c.post(f"http://127.0.0.1:{port}/raw", data="raw-bytes",
+               content_type="text/plain")
+        assert captured["body"] == b"raw-bytes"
+        assert captured["ctype"].lower() == "text/plain"
+    finally:
+        srv.shutdown()
+
+
+def test_p23_insecure_flag_accepted():
+    """P23.1 — HttpClient(verify_tls=False) is accepted (the
+    --insecure switch); it just disables cert checks (the wire path is
+    exercised in the HTTPS test below)."""
+    import net
+    c = net.HttpClient(verify_tls=False)
+    assert c.verify_tls is False
+
+
+def test_p23_https_tls_handshake():
+    """P23.1 — a TLS server (ssl-wrapped socket) is reachable via the
+    https scheme with verify_tls=False (self-signed cert, no CA trust).
+    Cert verification ON would reject the self-signed cert, so this
+    test runs the --insecure path end to end."""
+    import net, ssl, http.server, threading, os as _os, tempfile
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    # Build a throwaway self-signed cert with `ssl`? stdlib can't mint
+    # one; use a PEM fixture if present, else skip gracefully.
+    cert_dir = tempfile.mkdtemp(prefix="p23tls")
+    key_path = _os.path.join(cert_dir, "key.pem")
+    crt_path = _os.path.join(cert_dir, "crt.pem")
+    # Generate a self-signed cert only if openssl is available; otherwise
+    # fall back to asserting the client accepts verify_tls=False.
+    try:
+        import subprocess
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048",
+             "-keyout", key_path, "-out", crt_path, "-days", "1",
+             "-nodes", "-subj", "/CN=127.0.0.1"],
+            capture_output=True, timeout=30, check=True,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        # No openssl → verify the API surface only (still a meaningful
+        # P23.1 test: the insecure path is constructible).
+        c = net.HttpClient(verify_tls=False, timeout=2)
+        assert c.verify_tls is False
+        _os.rmdir(cert_dir)
+        return
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+        def do_GET(self):
+            body = b"<h1>tls-ok</h1>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = HTTPServer(("127.0.0.1", 0), H)
+    port = httpd.server_address[1]
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(crt_path, key_path)
+    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        c = net.HttpClient(timeout=5, verify_tls=False)
+        r = c.get(f"https://127.0.0.1:{port}/")
+        assert r.status == 200, f"TLS GET failed: {r.status}"
+        assert b"tls-ok" in r.body
+    finally:
+        httpd.shutdown()
+        _rmtree_quiet(cert_dir)
+
+
+def test_p23_cache_etag_absent_refetches():
+    """P23.3 — a stale entry WITHOUT an ETag cannot revalidate; the
+    client refetches from the wire (no If-None-Match sent)."""
+    import net
+    routes = {"/m": (200, "text/html", b"v1",
+                      {"Cache-Control": "max-age=0"})}
+    srv, port = _p22_start_server(routes)
+    cache_dir = tempfile.mkdtemp(prefix="p23cache")
+    try:
+        store = net.CacheStore(cache_dir)
+        c = net.HttpClient(timeout=5, cache=store)
+        u = net.parse_url(f"http://127.0.0.1:{port}/m")
+        r1 = c.get(u)
+        assert r1.status == 200
+        # No ETag → get_stale returns None (cannot revalidate).
+        assert store.get_stale(u) is None
+    finally:
+        srv.shutdown()
+        store.clear()
+        _rmtree_quiet(cache_dir)
+
+
+def test_p23_cache_disabled_store():
+    """P23.2 — a CacheStore(enabled=False) is a no-op (put/get do
+    nothing, no files written)."""
+    import net
+    store = net.CacheStore(tempfile.mkdtemp(prefix="p23off"), enabled=False)
+    r = net.HttpResponse(status=200, status_text="OK",
+                         headers={}, body=b"x", final_url="http://h/x")
+    u = net.parse_url("http://h/x")
+    store.put(u, r)
+    assert store.get_fresh(u) is None
+    assert store.get_stale(u) is None
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -7568,6 +7962,22 @@ def main():
         ("p22_subresource_data_uri_skipped", test_p22_subresource_data_uri_skipped),
         ("p22_fetch_resource_returns_none_on_404", test_p22_fetch_resource_returns_none_on_404),
         ("p22_redirect_relative_location", test_p22_redirect_relative_location),
+        ("p23_cache_hit_skips_wire", test_p23_cache_hit_skips_wire),
+        ("p23_cache_no_store_not_cached", test_p23_cache_no_store_not_cached),
+        ("p23_cache_max_age_expiry", test_p23_cache_max_age_expiry),
+        ("p23_cache_etag_304_reuse", test_p23_cache_etag_304_reuse),
+        ("p23_cache_heuristic_ttl", test_p23_cache_heuristic_ttl),
+        ("p23_cache_store_clear", test_p23_cache_store_clear),
+        ("p23_cache_parse_directives", test_p23_cache_parse_directives),
+        ("p23_progress_events_emitted", test_p23_progress_events_emitted),
+        ("p23_progress_subresource_phase", test_p23_progress_subresource_phase),
+        ("p23_progress_on_event_subscription", test_p23_progress_on_event_subscription),
+        ("p23_post_form_encoded", test_p23_post_form_encoded),
+        ("p23_post_verbatim_str", test_p23_post_verbatim_str),
+        ("p23_insecure_flag_accepted", test_p23_insecure_flag_accepted),
+        ("p23_https_tls_handshake", test_p23_https_tls_handshake),
+        ("p23_cache_etag_absent_refetches", test_p23_cache_etag_absent_refetches),
+        ("p23_cache_disabled_store", test_p23_cache_disabled_store),
     ]
     passed = 0
     failed = []

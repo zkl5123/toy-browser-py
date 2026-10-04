@@ -52,6 +52,8 @@ def render_document_from_url(
     load_subresources: bool = True,
     client=None,
     timeout: float | None = None,
+    use_cache: "str | bool" = False,
+    progress: "net.LoadEventSink | None" = None,
 ) -> Bitmap:
     """P22 — load an http(s) *url* and render it, plus fetch its
     subresources (``<link rel=stylesheet>`` / ``<img src>``) against
@@ -67,14 +69,36 @@ def render_document_from_url(
       is appended to *css_text* before the pipeline runs.
     * P22.3 — chunked transfer-encoding is handled by ``http.client``
       transparently (``net.decode_chunked`` is the unit-testable hook).
+    * P23.1 — TLS is on by default; pass a client with
+      ``verify_tls=False`` (the ``--insecure`` switch) for self-signed
+      / debug servers.
+    * P23.2/P23.3 — when *use_cache* is a directory path (or True for
+      the default ``.toy_cache``), GETs consult the on-disk cache first
+      (fresh → no wire; stale-with-ETag → ``If-None-Match``
+      revalidation, 304 reuses the body).
+    * P23.4 — when *progress* is a :class:`net.LoadEventSink`, each
+      fetch emits start/document/subresource/done events (drive a GUI
+      progress bar).
 
     A top-level network failure raises :class:`net.FetchError`
     (including :class:`net.RedirectLoop`); the caller renders the
     unified error page.
     """
     import net
+    eff_client = client
+    if eff_client is None:
+        eff_client = net.HttpClient(
+            timeout=timeout,
+            cache=(net.CacheStore(use_cache if isinstance(use_cache, str)
+                                  else ".toy_cache")
+                   if use_cache else None),
+            progress=progress,
+        )
+    elif progress is not None and getattr(eff_client, "progress", None) is None:
+        eff_client.progress = progress
+
     html, resp = net.fetch_html(
-        url, client=client, timeout=timeout,
+        url, client=eff_client,
         follow_redirects=True,
     )
     tree = dom_mod.parse(html)
@@ -84,8 +108,11 @@ def render_document_from_url(
     if load_subresources:
         base = net.parse_url(resp.final_url or url)
         try:
-            loaded = net.load_subresources(tree, base,
-                                            client=client, timeout=timeout)
+            loaded = net.load_subresources(
+                tree, base,
+                client=eff_client, timeout=timeout,
+                progress=progress,
+            )
             # Append any successfully fetched stylesheets.
             for _u, r in (loaded.get("stylesheet") or {}).items():
                 if r is not None and r.ok:

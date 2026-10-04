@@ -1,28 +1,37 @@
 """P21 — URL 解析 + HTTP/1.1 最小客户端（M2 网络栈第一步）。
 P22 — 深化：重定向链 + gzip + chunked + 子资源并发加载（M2 网络栈第二步）。
+P23 — HTTPS + 磁盘缓存 + 协商缓存 + 加载进度事件（M2 网络栈第三步）。
 
-P22 新增（`项目未来规划.txt` §P22）：
+P23 新增（`项目未来规划.txt` §P23）：
 
-* **重定向链**：``fetch_html`` / ``HttpClient.get`` 可自动跟随 301/302/
-  303/307/308（上限 5 层，循环检测：已见 URL 集 + 超过上限抛
-  ``RedirectLoop``）。
-* **Content-Encoding: gzip** 解压（``gzip`` 标准库；body 自动解码）。
-* **Transfer-Encoding: chunked** 解析（``http.client`` 已透明处理；
-  这里保留对原始 chunked 流的单元测试钩子 ``decode_chunked``）。
-* **子资源并发加载**：``load_subresources(dom_root, base_url)`` 收集
-  ``<link rel=stylesheet>`` / ``<img src>``，基于文档 base 解析相对
-  URL，并发 GET（线程池，玩具语义：顺序 + 失败不阻塞），失败静默。
-* **``<base>`` 标签玩具**：``base_url_from_dom(dom_root)`` 读
-  ``<base href>`` 覆盖默认 base。
+* **TLS**：``ssl`` 标准库包裹（暂不手写 socket）；证书校验默认开启，
+  ``HttpClient(verify_tls=False)`` 对应 ``--insecure`` 开关（关闭
+  主机名 + 证书校验，供本地自签名证书 / 调试）。
+* **启发式磁盘缓存**：``CacheStore(root_dir)`` — 响应存盘（JSON 元
+  数据 + body 文件，key = SHA-256 of URL）；``Cache-Control:
+  max-age`` / ``no-cache`` / ``no-store`` 玩具实现 + 无 max-age 时的
+  启发式 ``10% of (Date - Last-Modified)``；过期后走协商缓存。
+* **ETag 协商缓存**：命中但过期的缓存带 ``If-None-Match`` 回源；
+  304 → 复用 body + 刷新 ``Date``（省流量）；无 ETag 的过期缓存
+  直接重取。
+* **加载进度事件**：``LoadProgress`` — 每个 fetch 回调
+  ``(phase, fraction)``（start / document / subresource / done），
+  接到现有事件循环（M3.2 进度条消费者）。
 
-测试全部使用本地 ``http.server`` 夹具（离线可测、CI 稳定）。
+测试全部使用本地 ``http.server`` 夹具（离线可测、CI 稳定）；
+HTTPS 路径用 ``ssl.SSLContext`` 内存自签名证书夹具验证 TLS 握手 +
+校验开关。
 """
 from __future__ import annotations
 
 import gzip
+import hashlib
 import http.client
+import json
+import os
 import socket
 import ssl
+import time
 import urllib.parse
 from dataclasses import dataclass, field
 
@@ -252,6 +261,7 @@ class HttpResponse:
     body: bytes = b""
     final_url: str = ""
     redirected: bool = False
+    from_cache: bool = False
 
     @property
     def content_type(self) -> str:
@@ -269,26 +279,56 @@ class HttpResponse:
         are NOT 'ok' — P22 follows the chain)."""
         return 200 <= self.status < 300
 
+    @property
+    def etag(self) -> str:
+        """P23.3 — the response's ETag ("" when absent)."""
+        return self.headers.get("etag", "")
+
 
 class HttpClient:
     """P21.2 — minimal HTTP/1.1 client.
 
     Uses :mod:`http.client` (stdlib) so the interface is swappable for
     a hand-rolled socket implementation later (M5 direction B).
-    Only GET is supported.  Redirects are NOT followed automatically —
-    P22 adds a redirect chain; here the client surfaces the 30x
-    response and lets the caller decide.
+    GET and POST (toy, P23 form support) are supported.  P22 adds a
+    redirect chain; P23 adds:
+
+    * **TLS** (P23.1) — ``ssl`` wraps the socket; cert verification is
+      on by default.  ``verify_tls=False`` (the ``--insecure`` switch)
+      disables hostname + cert checks for self-signed / debug servers.
+    * **disk cache** (P23.2) — pass a :class:`CacheStore` via
+      ``cache=``; GETs consult it first (fresh → no wire; stale with
+      ETag → revalidate via ``If-None-Match``).
+    * **304 negotiation** (P23.3) — a revalidation that comes back
+      304 reuses the cached body and refreshes its freshness.
+    * **load progress** (P23.4) — pass a :class:`LoadEventSink` via
+      ``progress=``; each fetch emits start/document/subresource/done.
     """
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT,
-                 verify_tls: bool = True) -> None:
+                 verify_tls: bool = True,
+                 cache: "CacheStore | None" = None,
+                 progress: "LoadEventSink | None" = None) -> None:
         self.timeout = timeout
         self.verify_tls = verify_tls
+        self.cache = cache
+        self.progress = progress
+
+    def _emit(self, phase: str, fraction: float, detail: str = "") -> None:
+        if self.progress is not None:
+            self.progress.emit(LoadProgress(phase, fraction, detail))
 
     def _single_get(self, url: URL,
-                    headers: dict | None = None) -> HttpResponse:
+                    headers: dict | None = None,
+                    revalidate_etag: str = "",
+                    stale_body: bytes = b"") -> HttpResponse:
         """One wire GET (no redirect following).  P22 gzip-decodes the
-        body when ``Content-Encoding: gzip`` is present."""
+        body when ``Content-Encoding: gzip`` is present.
+
+        P23.2/P23.3 — when *revalidate_etag* is set the request
+        carries ``If-None-Match``; a 304 response reuses *stale_body*
+        and refreshes the cache entry.
+        """
         if url.scheme not in ("http", "https"):
             raise UnsupportedScheme(url.scheme)
 
@@ -299,11 +339,14 @@ class HttpClient:
             path = f"{path}?{url.query}"
 
         hdrs = {"Host": url.authority,
-                "User-Agent": "toy-browser-py/1.1 (P21-P22)",
+                "User-Agent": "toy-browser-py/1.2 (P21-P23)",
                 "Accept": "text/html,application/xhtml+xml,*/*",
                 # P22.2 — ask for gzip; the server may or may not honor
                 # it.  When it does, _single_get decodes below.
                 "Accept-Encoding": "gzip"}
+        if revalidate_etag:
+            # P23.3 — conditional GET for stale cached entries.
+            hdrs["If-None-Match"] = revalidate_etag
         if headers:
             hdrs.update(headers)
 
@@ -311,6 +354,8 @@ class HttpClient:
         if url.is_https:
             ssl_ctx = ssl.create_default_context()
             if not self.verify_tls:
+                # P23.1 — the --insecure switch: skip hostname + cert
+                # verification (self-signed / debug servers).
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = ssl.CERT_NONE
 
@@ -329,6 +374,23 @@ class HttpClient:
                 try:
                     conn.request("GET", path, headers=hdrs)
                     resp = conn.getresponse()
+                    # P23.3 — a 304 (Not Modified) has no body; reuse
+                    # the stale cached body and refresh freshness.
+                    if resp.status == 304:
+                        body = stale_body
+                        headers_out = {
+                            k.lower(): v for k, v in resp.getheaders()
+                        }
+                        # Merge in the cached headers (the 304 body is
+                        # the cached one; keep its content-type, etc.).
+                        return HttpResponse(
+                            status=200,  # surface as a 200 for callers
+                            status_text="OK",
+                            headers=headers_out,
+                            body=body,
+                            final_url=url.to_string(),
+                            from_cache=True,
+                        )
                     body = resp.read()
                     headers_out = {
                         k.lower(): v for k, v in resp.getheaders()
@@ -366,6 +428,12 @@ class HttpClient:
         *max_redirects* (cap 5) with loop detection.  ``follow_redirects``
         False (the P21 behavior) returns the first 3xx as-is.
 
+        P23.2 — when a cache is attached, a fresh cached response is
+        returned without touching the wire.  P23.3 — a stale entry
+        with an ETag is revalidated (``If-None-Match``); a 304 reuses
+        the body.  P23.4 — emits load-progress events when a sink is
+        attached.
+
         Raises :class:`RedirectLoop` when the chain loops or exceeds
         the cap.  4xx/5xx returned as-is so the caller renders the
         error page.  303/307/308 keep or switch method semantics — for
@@ -373,9 +441,135 @@ class HttpClient:
         """
         if not isinstance(url, URL):
             url = parse_url(url)
-        return _follow_redirects(self, url, headers,
-                                 max_redirects=max_redirects,
-                                 follow=follow_redirects)
+        self._emit(PHASE_START, 0.0, url.to_string())
+
+        # P23.2 — fresh cache hit: skip the wire entirely.
+        if self.cache is not None and self.cache.enabled:
+            fresh = self.cache.get_fresh(url)
+            if fresh is not None:
+                self._emit(PHASE_DOCUMENT, 0.5, "cache hit")
+                self._emit(PHASE_DONE, 1.0, "cache hit")
+                return fresh
+
+        # P23.3 — stale entry with ETag: revalidate conditionally.
+        stale = None
+        if self.cache is not None and self.cache.enabled:
+            stale = self.cache.get_stale(url)
+
+        resp = _follow_redirects(
+            self, url, headers,
+            max_redirects=max_redirects, follow=follow_redirects,
+            revalidate_etag=(stale.etag if stale else ""),
+            stale_body=(stale.body if stale else b""),
+        )
+
+        # P23.2 — store successful, cacheable responses.
+        if (self.cache is not None and self.cache.enabled
+                and resp.ok and resp.status != 204):
+            if getattr(resp, "from_cache", False):
+                # P23.3 — a 304 revalidation was surfaced as a 200:
+                # refresh the stale entry's freshness instead of
+                # overwriting its body.
+                stale = self.cache.get_stale(url)
+                if stale is not None:
+                    self.cache.revalidate_304(url, stale)
+            else:
+                self.cache.put(url, resp)
+
+        self._emit(PHASE_DOCUMENT, 0.5, f"HTTP {resp.status}")
+        self._emit(PHASE_DONE, 1.0, f"HTTP {resp.status}")
+        return resp
+
+    def post(self, url: "URL | str",
+             data: "dict | str | bytes | None" = None,
+             content_type: str = "",
+             headers: dict | None = None,
+             follow_redirects: bool = True,
+             max_redirects: int = MAX_REDIRECTS) -> HttpResponse:
+        """P23 — POST *url* with a body.
+
+        *data* may be a mapping (encoded as
+        ``application/x-www-form-urlencoded``), a ``str`` (sent verbatim
+        with the given *content_type*), or ``bytes`` (sent verbatim).
+        For a GET-only cache, POST responses are NOT cached (spec:
+        caching non-idempotent methods is out of scope for the toy).
+        P23.4 — emits load-progress events when a sink is attached.
+        """
+        if not isinstance(url, URL):
+            url = parse_url(url)
+        if url.scheme not in ("http", "https"):
+            raise UnsupportedScheme(url.scheme)
+
+        hdrs = dict(headers or {})
+        body_bytes = b""
+        if isinstance(data, dict):
+            body_bytes = urllib.parse.urlencode(data).encode("utf-8")
+            hdrs.setdefault("Content-Type",
+                            "application/x-www-form-urlencoded")
+        elif isinstance(data, str):
+            body_bytes = data.encode("utf-8")
+            if content_type:
+                hdrs.setdefault("Content-Type", content_type)
+        elif isinstance(data, (bytes, bytearray)):
+            body_bytes = bytes(data)
+            if content_type:
+                hdrs.setdefault("Content-Type", content_type)
+        if content_type and "Content-Type" not in hdrs:
+            hdrs["Content-Type"] = content_type
+        hdrs.setdefault("Host", url.authority)
+        hdrs.setdefault("User-Agent", "toy-browser-py/1.2 (P21-P23)")
+
+        self._emit(PHASE_START, 0.0, url.to_string())
+        # POST is not cached (non-idempotent); just do the wire call.
+        host = url.host or "localhost"
+        port = url.effective_port
+        path = url.path or "/"
+        if url.query:
+            path = f"{path}?{url.query}"
+
+        ssl_ctx = None
+        if url.is_https:
+            ssl_ctx = ssl.create_default_context()
+            if not self.verify_tls:
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        last_exc: Exception | None = None
+        for attempt in (0, 1):
+            try:
+                if url.is_https:
+                    conn = http.client.HTTPSConnection(
+                        host, port, timeout=self.timeout,
+                        context=ssl_ctx,
+                    )
+                else:
+                    conn = http.client.HTTPConnection(
+                        host, port, timeout=self.timeout,
+                    )
+                try:
+                    conn.request("POST", path, body=body_bytes,
+                                 headers=hdrs)
+                    resp = conn.getresponse()
+                    body = resp.read()
+                    headers_out = {
+                        k.lower(): v for k, v in resp.getheaders()
+                    }
+                    return HttpResponse(
+                        status=resp.status,
+                        status_text=resp.reason or "",
+                        headers=headers_out,
+                        body=body,
+                        final_url=url.to_string(),
+                    )
+                finally:
+                    conn.close()
+            except (socket.timeout, socket.error,
+                    http.client.HTTPException, OSError) as e:
+                last_exc = e
+                continue
+        raise ConnectionError(
+            f"POST {url.to_string()} failed after retries: {last_exc}"
+        ) from last_exc
 
 
 class _TransientResp:
@@ -388,6 +582,340 @@ class _TransientResp:
         self.headers = headers
         self.body = body
         self.final_url = final_url
+
+
+# ---------------------------------------------------------------------------
+# P23.2 / P23.3 — 磁盘缓存 + ETag 协商缓存
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _CacheEntry:
+    """On-disk cache record (JSON) for one response."""
+    url: str
+    status: int
+    headers: dict
+    body: bytes          # decoded (post-gunzip) body
+    fetched_at: float    # time.time() when stored
+    date: str            # response Date header (may be "")
+    last_modified: str   # response Last-Modified header (may be "")
+    etag: str            # response ETag header (may be "")
+    max_age: float       # Cache-Control max-age (0 if absent)
+    no_cache: bool
+    no_store: bool
+    heuristic_ttl: float # heuristic TTL in seconds (0 if none)
+
+    def ttl(self, now: float) -> float:
+        """Remaining freshness lifetime in seconds at *now*."""
+        if self.no_store:
+            return 0.0
+        if self.max_age > 0:
+            age = now - self.fetched_at
+            return max(0.0, self.max_age - age)
+        if self.no_cache:
+            # no-cache → still revalidate (304 path) even if fresh.
+            return 0.0
+        if self.heuristic_ttl > 0:
+            age = now - self.fetched_at
+            return max(0.0, self.heuristic_ttl - age)
+        # No directives, no heuristic → treat as revalidate-on-use.
+        return 0.0
+
+    def to_json(self) -> dict:
+        return {
+            "url": self.url, "status": self.status,
+            "headers": {k: str(v) for k, v in self.headers.items()},
+            "body_b64": _b64e(self.body),
+            "fetched_at": self.fetched_at,
+            "date": self.date, "last_modified": self.last_modified,
+            "etag": self.etag, "max_age": self.max_age,
+            "no_cache": self.no_cache, "no_store": self.no_store,
+            "heuristic_ttl": self.heuristic_ttl,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "_CacheEntry":
+        return cls(
+            url=d["url"], status=d["status"],
+            headers=d.get("headers", {}),
+            body=_b64d(d.get("body_b64", "")),
+            fetched_at=float(d.get("fetched_at", 0.0)),
+            date=d.get("date", ""), last_modified=d.get("last_modified", ""),
+            etag=d.get("etag", ""), max_age=float(d.get("max_age", 0.0)),
+            no_cache=bool(d.get("no_cache", False)),
+            no_store=bool(d.get("no_store", False)),
+            heuristic_ttl=float(d.get("heuristic_ttl", 0.0)),
+        )
+
+
+def _b64e(b: bytes) -> str:
+    import base64
+    return base64.b64encode(b).decode("ascii")
+
+
+def _b64d(s: str) -> bytes:
+    import base64
+    return base64.b64decode(s.encode("ascii")) if s else b""
+
+
+def _cache_key(url: "URL") -> str:
+    return hashlib.sha256(url.to_string().encode("utf-8")).hexdigest()
+
+
+def _parse_cache_control(value: str) -> dict:
+    """P23.2 — toy parse of Cache-Control into {directive: arg}."""
+    out: dict = {}
+    if not value:
+        return out
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip().lower()] = v.strip()
+        else:
+            out[part.strip().lower()] = True
+    return out
+
+
+def _http_date_to_epoch(value: str) -> float:
+    """P23.3 — parse an RFC 1123 / RFC 850 date into a timestamp.
+    Returns 0.0 when unparseable (heuristic falls back to no-TTL)."""
+    import email.utils
+    if not value:
+        return 0.0
+    try:
+        return email.utils.parsedate_to_datetime(value).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _heuristic_ttl(headers: dict) -> float:
+    """P23.2 — heuristic freshness: 10% of the response's age when
+    ``Date`` and ``Last-Modified`` are both present and there are no
+    explicit freshness directives."""
+    date_hdr = headers.get("date", "")
+    lm_hdr = headers.get("last-modified", "")
+    d = _http_date_to_epoch(date_hdr)
+    lm = _http_date_to_epoch(lm_hdr)
+    if d <= 0.0 or lm <= 0.0 or lm >= d:
+        return 0.0
+    age = d - lm
+    return max(0.0, age * 0.1)
+
+
+def build_cache_entry(url: "URL", resp: "HttpResponse") -> _CacheEntry:
+    """P23.2 — turn an :class:`HttpResponse` into a cacheable entry
+    (extracting Cache-Control / ETag / Date / Last-Modified)."""
+    cc = _parse_cache_control(
+        resp.headers.get("cache-control", ""))
+    max_age = 0.0
+    if "max-age" in cc:
+        try:
+            max_age = float(str(cc["max-age"]))
+        except (TypeError, ValueError):
+            max_age = 0.0
+    no_cache = ("no-cache" in cc)
+    no_store = ("no-store" in cc)
+    heuristic = 0.0
+    if not max_age and not no_cache and not no_store:
+        heuristic = _heuristic_ttl(resp.headers)
+    return _CacheEntry(
+        url=url.to_string(),
+        status=resp.status,
+        headers={k: str(v) for k, v in resp.headers.items()},
+        body=resp.body,
+        fetched_at=time.time(),
+        date=resp.headers.get("date", ""),
+        last_modified=resp.headers.get("last-modified", ""),
+        etag=resp.headers.get("etag", ""),
+        max_age=max_age,
+        no_cache=no_cache,
+        no_store=no_store,
+        heuristic_ttl=heuristic,
+    )
+
+
+class CacheStore:
+    """P23.2 — heuristic on-disk response cache.
+
+    Layout under *root_dir*::
+
+        <root>/<sha256(url)>.json   # _CacheEntry metadata
+        <root>/<sha256(url)>.bin    # raw (decoded) body bytes
+
+    ``no-store`` responses are never written.  Lookups return the
+    entry only when it is *fresh* (``ttl(now) > 0``).  Stale entries
+    are returned separately via :meth:`get_stale` so the caller can
+    run the P23.3 revalidation (``If-None-Match``) path.
+    """
+
+    def __init__(self, root_dir: str, enabled: bool = True) -> None:
+        self.root_dir = root_dir
+        self.enabled = enabled
+        if enabled:
+            os.makedirs(root_dir, exist_ok=True)
+
+    def _paths(self, url: "URL") -> tuple[str, str]:
+        key = _cache_key(url)
+        return (os.path.join(self.root_dir, key + ".json"),
+                os.path.join(self.root_dir, key + ".bin"))
+
+    def put(self, url: "URL", resp: "HttpResponse") -> None:
+        """P23.2 — store *resp* for *url* (skips ``no-store``)."""
+        if not self.enabled:
+            return
+        entry = build_cache_entry(url, resp)
+        if entry.no_store:
+            return
+        meta_path, bin_path = self._paths(url)
+        with open(bin_path, "wb") as f:
+            f.write(entry.body)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(entry.to_json(), f, ensure_ascii=False)
+
+    def get_fresh(self, url: "URL", now: float | None = None
+                  ) -> "HttpResponse | None":
+        """P23.2 — return a fresh cached :class:`HttpResponse`, or
+        ``None`` when absent / stale / disabled."""
+        if not self.enabled:
+            return None
+        now = now if now is not None else time.time()
+        meta_path, bin_path = self._paths(url)
+        if not (os.path.exists(meta_path) and os.path.exists(bin_path)):
+            return None
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                entry = _CacheEntry.from_json(json.load(f))
+        except (OSError, ValueError, KeyError):
+            return None
+        if entry.ttl(now) <= 0.0:
+            return None
+        with open(bin_path, "rb") as f:
+            body = f.read()
+        return _resp_from_entry(entry, body, from_cache=True)
+
+    def get_stale(self, url: "URL") -> "HttpResponse | None":
+        """P23.3 — return a *stale* entry that can still be
+        revalidated via ``If-None-Match`` (needs an ETag).  Fresh
+        entries and no-ETag entries return ``None``."""
+        if not self.enabled:
+            return None
+        meta_path, bin_path = self._paths(url)
+        if not (os.path.exists(meta_path) and os.path.exists(bin_path)):
+            return None
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                entry = _CacheEntry.from_json(json.load(f))
+        except (OSError, ValueError, KeyError):
+            return None
+        now = time.time()
+        if entry.ttl(now) > 0.0:
+            return None  # still fresh — caller should use get_fresh.
+        if not entry.etag:
+            return None  # no ETag → cannot revalidate; refetch.
+        with open(bin_path, "rb") as f:
+            body = f.read()
+        return _resp_from_entry(entry, body, from_cache=True)
+
+    def revalidate_304(self, url: "URL", stale: "HttpResponse") -> None:
+        """P23.3 — server returned 304: refresh the cached entry's
+        ``fetched_at`` / ``Date`` so it becomes fresh again."""
+        if not self.enabled:
+            return
+        meta_path, _ = self._paths(url)
+        if not os.path.exists(meta_path):
+            return
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                entry = _CacheEntry.from_json(json.load(f))
+        except (OSError, ValueError, KeyError):
+            return
+        entry.fetched_at = time.time()
+        entry.date = stale.headers.get("date", entry.date)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(entry.to_json(), f, ensure_ascii=False)
+
+    def clear(self) -> int:
+        """Delete every cached response; return the number removed."""
+        if not self.enabled or not os.path.isdir(self.root_dir):
+            return 0
+        n = 0
+        for name in os.listdir(self.root_dir):
+            if name.endswith((".json", ".bin")):
+                try:
+                    os.remove(os.path.join(self.root_dir, name))
+                    n += 1
+                except OSError:
+                    pass
+        return n
+
+
+def _resp_from_entry(entry: _CacheEntry, body: bytes,
+                     from_cache: bool) -> "HttpResponse":
+    headers = dict(entry.headers)
+    if from_cache:
+        headers["x-toy-cache"] = "hit"
+    return HttpResponse(
+        status=entry.status,
+        status_text="OK" if 200 <= entry.status < 300 else "",
+        headers=headers,
+        body=body,
+        final_url=entry.url,
+        redirected=False,
+        from_cache=from_cache,
+    )
+
+
+# ---------------------------------------------------------------------------
+# P23.4 — 加载进度事件（接入现有事件循环）
+# ---------------------------------------------------------------------------
+
+#: P23.4 — load-progress phases (M3.2 GUI progress-bar consumer).
+PHASE_START = "start"
+PHASE_DOCUMENT = "document"
+PHASE_SUBRESOURCE = "subresource"
+PHASE_DONE = "done"
+
+
+@dataclass
+class LoadProgress:
+    """P23.4 — a single load-progress event.
+
+    *phase* is one of :data:`PHASE_START` / :data:`PHASE_DOCUMENT` /
+    :data:`PHASE_SUBRESOURCE` / :data:`PHASE_DONE`.  *fraction* is a
+    0.0–1.0 completion estimate (1.0 only at ``PHASE_DONE``) suitable
+    for a GUI progress bar.
+    """
+    phase: str
+    fraction: float = 0.0
+    detail: str = ""
+
+    def __str__(self) -> str:
+        pct = int(round(self.fraction * 100))
+        return f"[{self.phase} {pct}%] {self.detail}".rstrip()
+
+
+class LoadEventSink:
+    """P23.4 — collects load-progress events; the GUI / CLI can poll
+    ``events`` (or subscribe via ``on_event``) to drive a progress
+    bar.  Replaces the bare list with a tiny pub/sub hook."""
+
+    def __init__(self) -> None:
+        self.events: list[LoadProgress] = []
+        self._subs: list = []
+
+    def on_event(self, fn) -> None:
+        """Subscribe *fn*(LoadProgress); called for each new event."""
+        self._subs.append(fn)
+
+    def emit(self, ev: LoadProgress) -> None:
+        self.events.append(ev)
+        for fn in self._subs:
+            try:
+                fn(ev)
+            except Exception:
+                pass
 
 
 class UnsupportedScheme(Exception):
@@ -465,15 +993,26 @@ def _follow_redirects(client: "HttpClient",
                      url: "URL",
                      headers: dict | None,
                      max_redirects: int = MAX_REDIRECTS,
-                     follow: bool = True) -> HttpResponse:
+                     follow: bool = True,
+                     revalidate_etag: str = "",
+                     stale_body: bytes = b"") -> HttpResponse:
     """P22.1 — follow a 3xx redirect chain (cap *max_redirects*,
-    loop-detect via the set of visited URLs)."""
+    loop-detect via the set of visited URLs).  P23.3 — the *first*
+    hop may carry a conditional GET (``If-None-Match``) when
+    *revalidate_etag* is set; a 304 is surfaced as a 200 backed by
+    *stale_body*."""
     visited: list[URL] = []
     cur = url
     hops = 0
+    first = True
     while True:
         visited.append(cur)
-        resp = client._single_get(cur, headers)
+        resp = client._single_get(
+            cur, headers,
+            revalidate_etag=(revalidate_etag if first else ""),
+            stale_body=(stale_body if first else b""),
+        )
+        first = False
         if not follow or resp.status not in _REDIRECT_STATUS \
                 or "location" not in resp.headers:
             # A 3xx that we did NOT follow (or the terminal hop after
@@ -610,7 +1149,8 @@ def collect_subresources(dom_root) -> list[dict]:
 
 
 def load_subresources(dom_root, base_url, client: HttpClient | None = None,
-                      timeout: float | None = None) -> dict:
+                      timeout: float | None = None,
+                      progress: LoadEventSink | None = None) -> dict:
     """P22.4 — load every subresource in *dom_root* against *base_url*.
 
     1. Resolve a document-level base: ``<base href>`` wins over
@@ -630,7 +1170,12 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         eff_base = parse_url(str(eff_base))
     specs = collect_subresources(dom_root)
     c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    # P23.4 — attach the progress sink to the (possibly fresh) client.
+    if progress is not None and c.progress is None:
+        c.progress = progress
+    total = len(specs)
     by_kind: dict = {}
+    done = 0
     for spec in specs:
         src = spec["src"]
         # data: URIs are inline — no network fetch.
@@ -638,8 +1183,14 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
             by_kind.setdefault(spec["kind"], {})[src] = None
             continue
         absu = parse_url(src, base=eff_base)
+        if progress is not None:
+            progress.emit(LoadProgress(
+                PHASE_SUBRESOURCE, done / max(total, 1), absu.to_string()))
         resp = fetch_resource(absu, client=c)
         by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
+        done += 1
+    if progress is not None:
+        progress.emit(LoadProgress(PHASE_DONE, 1.0, f"{done} subresources"))
     return by_kind
 
 

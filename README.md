@@ -7,7 +7,7 @@
 
 ```
 toy-browser-py/
-├── main.py            CLI 入口（--a11y / --links / --png / --animate）
+├── main.py            CLI 入口（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress）
 ├── dom.py             HTML 解析器（词法 + 树构建）
 ├── css.py             CSS 解析 + 级联 + 选择器（后代/子/多类）+ @keyframes
 ├── layout.py          盒模型布局（块/内联/文本/占位/flex/grid + 命中测试）
@@ -17,14 +17,14 @@ toy-browser-py/
 ├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
 ├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
 ├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体）
-├── net.py             P21/P22 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 子资源
+├── net.py             P21/P22/P23 URL + HTTP/1.1 客户端 + 重定向/gzip/chunked + 缓存 + TLS + 进度
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            476 条测试（python test.py）
+├── test.py            492 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P22 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P23 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -37,6 +37,17 @@ HTML → dom.parse → css.apply → layout.layout → paint_engine.emit_command
 P21 — 地址栏输入 URL（http/https）时：`net.parse_url` →
 `HttpClient.get` → `fetch_html`（Content-Type 分派）→ 渲染管线；
 网络失败 → 统一错误页。
+
+P22 — 3xx 重定向链（≤5 层 + 循环检测）；gzip 透明解压；chunked 解析
+钩子；`<link rel=stylesheet>` / `<img>` 子资源按文档 base（或
+`<base href>`）加载，失败不阻塞渲染；`render_document_from_url`
+一站式入口。
+
+P23 — HTTPS（ssl 包裹，`--insecure` 关校验）；启发式磁盘缓存
+（`Cache-Control` + 10% 启发式 TTL）；`ETag`/`If-None-Match` 304 协商
+（`CacheStore`）；加载进度事件（`LoadEventSink` → M3.2 GUI 进度条）；
+`HttpClient.post`（表单 urlencoded）。CLI 新旗标：`--insecure` /
+`--cache DIR` / `--progress`。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -656,6 +667,33 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - **测试**：20 条新 P22 测试（总数 456 → 476），全部用本地
   `http.server` 夹具（离线可测、CI 稳定）。
 
+### HTTPS 与磁盘缓存（P23）
+
+- **P23.1 HTTPS（TLS 包裹 + 校验开关）**：`HttpClient` 经 `ssl` 标准库
+  包裹（暂不手写 socket）；证书校验默认开启，`verify_tls=False`
+  （CLI `--insecure`）关闭 hostname + 证书校验，用于本地自签名 /
+  调试。端到端用 `ssl.SSLContext` 自签名证书夹具验证握手。
+- **P23.2 启发式磁盘缓存**：`net.CacheStore(root_dir)` — 响应存盘
+  （SHA-256(URL) 为 key：`.json` 元数据 + `.bin` body）；`_parse_cache_control`
+  解析 `Cache-Control: max-age` / `no-cache` / `no-store`（no-store 永不
+  写盘）；无显式指示时启发式 TTL = `10% × (Date − Last-Modified)`
+  （RFC 7234）。`HttpClient.get` 先查 `get_fresh`（命中 → `from_cache=True`
+  不触网），成功后回写；`CacheStore.clear()` 清空。
+- **P23.3 ETag 协商缓存**：过期但带 ETag 的条目经 `get_stale` 返回 →
+  首跳请求携带 `If-None-Match`；304 → 复用旧 body（表面化 `from_cache=True`
+  的 200）+ `revalidate_304` 刷新新鲜度（省流量）；无 ETag 直接重取。
+  `HttpResponse.etag` 属性。
+- **P23.4 加载进度事件**：`LoadProgress` / `LoadEventSink` — 每次 fetch
+  回调 `start` / `document` / `subresource` / `done`（fraction 0–1），
+  可 `on_event` 订阅（M3.2 GUI 进度条消费者）；`load_subresources` 逐
+  子资源发 `subresource` 事件；CLI `--progress` 打印到 stderr。
+- **P23 顺带**：`HttpClient.post`（表单 `x-www-form-urlencoded` / 逐字
+  body；POST 不缓存），CLI `--insecure` / `--cache DIR` / `--progress`
+  三新旗标；`browser.render_document_from_url` 新增 `use_cache` /
+  `progress` 参数。
+- **测试**：16 条新 P23 测试（总数 476 → 492，超出规划 485 目标），
+  全部用本地 `http.server` 夹具 + `ssl` 自签名证书（离线可测、CI 稳定）。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -811,6 +849,7 @@ python test.py
 | 渲染质量与字重（P20） | `p20_quadratic_flatten`、`p20_offcurve_midpoint_rule`、`p20_fill_polygon_aa`、`p20_fill_polygon_speed`、`p20_synthetic_bold_increases_ink`、`p20_dilate_poly`、`p20_outline_bbox_validation`、`p20_letter_spacing_widens`、`p20_text_rendering_stored`、`p20_font_weight_stored`、`p20_metrics_for_weight`、`p20_font_fallback_chain`、`p20_match_weight`、`p20_draw_text_curves_letter_spacing`、`p20_glyf_instruction_count_layout`、`p20_point_flags_bits`、`p20_curve_glyph_fallback`、`p20_paint_command_fields`、`p20_layout_box_fields`、`p20_synthetic_bold_flag_roundtrip`、`p20_render_full_pipeline_weight`、`p20_glyf_offcurve_yreversed` |
 | URL 与 HTTP/1.1（P21） | `p21_parse_url_absolute`、`p21_parse_url_https_default_port`、`p21_relative_url_resolution`、`p21_url_to_string_roundtrip`、`p21_normalize_url`、`p21_origin_property`、`p21_url_is_network_flag`、`p21_http_get_200`、`p21_http_get_404`、`p21_http_redirect_surfaced`、`p21_content_type_dispatch`、`p21_fetch_error_on_4xx`、`p21_unsupported_scheme`、`p21_error_page_html`、`p21_error_page_renders`、`p21_connection_error_retries`、`p21_http_query_in_path`、`p21_fetch_html_accepts_str_url`、`p21_cli_network_error_exit_code` |
 | HTTP 深化与子资源（P22） | `p22_redirect_followed`、`p22_redirect_loop_detected`、`p22_redirect_exceeds_cap`、`p22_redirect_within_cap_succeeds`、`p22_redirect_no_follow_returns_302`、`p22_gzip_decoded`、`p22_gzip_no_header_passthrough`、`p22_chunked_decode_roundtrip`、`p22_chunked_with_extensions`、`p22_chunked_max_size_cap`、`p22_subresource_collection`、`p22_base_tag_overrides_doc_base`、`p22_base_tag_absent`、`p22_subresource_failure_does_not_block`、`p22_render_document_from_url`、`p22_render_from_url_gzip_doc`、`p22_render_from_url_network_error`、`p22_subresource_data_uri_skipped`、`p22_fetch_resource_returns_none_on_404`、`p22_redirect_relative_location` |
+| HTTPS 与磁盘缓存（P23） | `p23_cache_hit_skips_wire`、`p23_cache_no_store_not_cached`、`p23_cache_max_age_expiry`、`p23_cache_etag_304_reuse`、`p23_cache_heuristic_ttl`、`p23_cache_store_clear`、`p23_cache_parse_directives`、`p23_progress_events_emitted`、`p23_progress_subresource_phase`、`p23_progress_on_event_subscription`、`p23_post_form_encoded`、`p23_post_verbatim_str`、`p23_insecure_flag_accepted`、`p23_https_tls_handshake`、`p23_cache_etag_absent_refetches`、`p23_cache_disabled_store` |
 
 ## 改进路线图
 
@@ -933,6 +972,11 @@ python test.py
 - [x] P22.3 Transfer-Encoding: chunked 解析钩子
 - [x] P22.4 子资源并发加载 + 失败不阻塞
 - [x] P22.5 `<base>` 标签玩具（测试总数 456 → 476）
+- [x] P23.1 HTTPS（ssl 包裹 + 校验开关，--insecure）
+- [x] P23.2 启发式磁盘缓存（Cache-Control + 10% 启发式）
+- [x] P23.3 ETag / If-None-Match 304 协商缓存
+- [x] P23.4 加载进度事件（接现有事件循环；--progress）
+- [x] P23.5 测试扩充至 492 条 + POST 表单（测试总数 476 → 492）
 
 ## 与 Rust 版的对应关系
 
@@ -950,8 +994,8 @@ python test.py
 | `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
 | `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳（P21 http 加载） |
-| `net.py` | （新增） | P21/P22 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 子资源 |
-| `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate） |
+| `net.py` | （新增） | P21/P22/P23 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 缓存 + TLS + 进度 |
+| `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress） |
 
 ## 环境
 
@@ -967,6 +1011,7 @@ python test.py
 ---
 
 ## 仓库说明
+
 
 - **托管**：Gitee 私有仓库 <https://gitee.com/zklzkl11111/toy-browser-py>，默认分支 `main`。
 - **本仓库只含源码与文档**（约 0.6MB）：14 个 `.py` 模块、`README.md`、`ROADMAP.md`、

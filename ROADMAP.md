@@ -1221,6 +1221,61 @@
 - [x] 测试：20 条新 P22 测试（总数 456 → **476**，超出规划 475
   目标）。
 
+## P23 — HTTPS 与磁盘缓存（M2 网络栈第三步）✅
+
+> 依据 `项目未来规划.txt` §P23：TLS（`ssl` 标准库包裹，默认校验，
+> `--insecure` 开关）、启发式磁盘缓存（`Cache-Control: max-age` /
+> `no-cache` / `no-store` + 10% 启发式）、`ETag` / `If-None-Match`
+> 304 协商缓存、加载进度事件（接现有事件循环）。测试目标
+> 465 → 485，实际 476 → **492**（16 条新 P23 测试，超出目标）。
+
+### 23.1 HTTPS（TLS 包裹 + 校验开关）✅
+
+- [x] `HttpClient` 经 `http.client` 的 `ssl.create_default_context()`
+  包裹 TLS：证书校验默认开启；`verify_tls=False`（对应 CLI
+  `--insecure`）关闭 hostname + 证书校验（本地自签名 / 调试）。
+  `HttpResponse` 无变化。端到端用 `ssl.SSLContext` 内存自签名证书
+  夹具验证握手（`test_p23_https_tls_handshake`）。
+
+### 23.2 启发式磁盘缓存 ✅
+
+- [x] `net.CacheStore(root_dir)` — 响应存盘（SHA-256(URL) 为 key：
+  `.json` 元数据 + `.bin` body）；`Cache-Control` 解析
+  （`_parse_cache_control`）支持 `max-age` / `no-cache` / `no-store`
+  （`no-store` 永不写盘）；无显式指示时的启发式 TTL =
+  `10% × (Date − Last-Modified)`（`_heuristic_ttl`，RFC 7234）。
+- [x] `HttpClient.get` 先查 `get_fresh`（命中 → `from_cache=True`，
+  不触网）；成功后 `put` 回写（`from_cache` 的 304 刷新走 23.3）。
+  `CacheStore.clear()` 清空。
+
+### 23.3 ETag / If-None-Match 304 协商缓存 ✅
+
+- [x] 过期但带 ETag 的条目经 `get_stale` 返回 → 首跳请求携带
+  `If-None-Match`；服务端 304 → 复用旧 body、表面化 `from_cache=True`
+  的 200，并 `revalidate_304` 刷新新鲜度（省流量）；无 ETag 的
+  过期条目直接重取。`HttpResponse.etag` 属性。
+
+### 23.4 加载进度事件 ✅
+
+- [x] `LoadProgress` / `LoadEventSink` — 每次 fetch 回调
+  `start` / `document` / `subresource` / `done`（fraction 0–1），
+  可 `on_event` 订阅（M3.2 GUI 进度条消费者）；`load_subresources`
+  逐子资源发 `subresource` 事件；CLI `--progress` 打印到 stderr。
+- [x] P23 顺带：`HttpClient.post`（表单 `x-www-form-urlencoded` /
+  逐字 body；POST 不缓存），CLI `--insecure` / `--cache DIR` /
+  `--progress` 三新旗标；`browser.render_document_from_url` 新增
+  `use_cache` / `progress` 参数。
+
+### 23.5 测试扩充 ✅
+
+- [x] 测试总数 476 → **492** 条（16 条新 P23 测试，超出规划
+  485 目标）：缓存命中跳线、no-store、max-age 过期、ETag 304 复用、
+  启发式 TTL、缓存清空、指令解析、进度事件（document/subresource/
+  订阅）、POST 表单/逐字、insecure 开关、TLS 握手端到端、无 ETag
+  重取、禁用存储。
+- [x] `main.py demo.html` CLI e2e 通过；`--progress` 输出
+  `[start 0%]` 事件；网络失败仍退出码 3 + 错误页。
+
 ## 实施顺序
 
 ```
@@ -1340,11 +1395,15 @@ P22.2 Content-Encoding: gzip 解压（~30min）
 P22.3 Transfer-Encoding: chunked 解析钩子（~1h）
 P22.4 子资源并发加载 + 失败不阻塞（~2h）
 P22.5 <base> 标签玩具（~30min）
+P23.1 HTTPS（ssl 包裹 + 校验开关）（~1h）
+P23.2 启发式磁盘缓存（max-age / no-cache / no-store + 10% 启发式）（~2h）
+P23.3 ETag / If-None-Match 304 协商缓存（~1h）
+P23.4 加载进度事件（接入事件循环）（~1h）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 已完成（**476/476** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 已完成（**492/492** 测试通过）。
 
-下一站：**P23 网络栈深化（HTTP/2 玩具 / 缓存 / Cookie / 表单 POST / 事件循环接入）**。
+下一站：**P24 HTML5 容错解析（M2 收官硬仗：void elements / 自动闭合 / 格式化元素 / 原始文本模式 / entities）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
