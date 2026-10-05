@@ -1399,6 +1399,69 @@
   80px、font-size 继承 32px、author 源层 > UA 源层、全管线渲染回归。
 - [x] 既有 514 条测试全绿无回归；`main.py demo.html` CLI e2e 通过。
 
+## P26 — 块级布局修正（M3 第二步）✅
+
+> 依据 `项目未来规划.txt` §P26（阶段组 C：布局正确性 → M3）：修复块级
+> 布局引擎的五个核心缺陷 —— margin 折叠 / BFC 浮动包含 / 百分比高度
+> 解析链 / min-max 宽度约束 / width:auto 分配。测试 528 → **542**
+> （14 条新 P26 测试）。
+
+### 26.1 CSS Margin 折叠（CSS2.1 §9.5）✅
+
+- [x] `_fold_margins`：父 box 与首个 block 子 box 的 top margin 折叠为
+  max（而非求和）；空 block 的 top+bottom margin 折叠为单一值。
+- [x] `_next_sibling_gap`：相邻 block 兄弟的 gap = max(prev.mb, next.mt)，
+  非 sum（旧实现误用 outer_height 导致 30px 而非 20px）。
+- [x] 内容栈推进改用 border-box 高度（不含 margin），collapsed gap 由
+  `_next_sibling_gap` 单独计入 —— 消除 double-count。
+- [x] 测试：`p26_margin_collapse_siblings`（gap 20px）/
+  `p26_margin_collapse_parent_child`（折叠 15px）/
+  `p26_margin_collapse_empty_block`（gap 30px）。
+
+### 26.2 BFC 浮动包含（CSS2.1 §9.4.1）✅
+
+- [x] `overflow_hidden` box 建立 BFC：浮动子 box 高度纳入父 box 高度
+  （`float_max_h`），修复"浮动逃逸"bug。
+- [x] BFC 自身 rect 不受浮动偏移影响（`bfc_content_x0` 保存原始内容边）。
+- [x] 测试：`p26_bfc_cleares_floats`（高度包含浮动）/
+  `p26_float_inside_bfc_no_overlap`（浮动 x ≥ BFC 左边）。
+
+### 26.3 百分比高度解析链（CSS2.1 §10.6.5）✅
+
+- [x] `StyledNode.parent_height_px`：含父 box 的已解析内容高度；
+  `height: 25%` 在 600px 父级下 → 150px（旧实现误用 font-size 基准 → 4px）。
+- [x] `resolve_length` 对 `%` 单位改为 `value * ref / 100`（旧实现
+  `value * ref` 漏除 100）。
+- [x] `build_box` 传播 `parent_height_px` 给子 box；`layout()` 传入
+  viewport height。
+- [x] 测试：`p26_pct_height_chain`（25% of 600 = 150px）/
+  `p26_height_auto_grows`（无显式高度时自适应内容）。
+
+### 26.4 CSS min/max 宽度/高度约束（CSS2.1 §10.4）✅
+
+- [x] `LayoutBox` 新增 `min_width / max_width / min_height / max_height`
+  字段（`build_box` 从 CSS 属性读取）。
+- [x] `layout_block` 早期 clamp：width 计算后应用
+  `max(min_width, min(max_width, computed))`；finalize 阶段再 clamp 一次
+  兜底。
+- [x] 测试：`p26_min_width_clamps`（min-width 150 强制拓宽 100→150）/
+  `p26_max_width_clamps`（max-width 50 收窄 300→50）/
+  `p26_min_height_clamps`（min-height 50 加高 10→50）/
+  `p26_max_height_clamps`（max-height 20 收窄 40→20）。
+
+### 26.5 width:auto 分配（CSS2.1 §10.3）✅
+
+- [x] 无显式宽度的 block 子 box 宽度 = 父内容宽 - margin-l - margin-r
+  - padding；旧实现使用 viewport 宽度导致子 box 溢出父容器。
+- [x] 浮动子 box 同样受父内容宽约束（`child_containing_w`）。
+- [x] 测试：`p26_width_auto_fills`（auto 宽度 = 父 200px）/
+  `p26_width_auto_with_margins`（auto 宽度 = 200 - 10 - 20 = 170px）。
+
+### 26.6 测试扩充 ✅
+
+- [x] 测试总数 528 → **542** 条（14 条新 P26 测试）。
+- [x] 既有 528 条测试全绿无回归；`main.py` CLI e2e 渲染通过。
+
 ## 实施顺序
 
 ```
@@ -1532,11 +1595,18 @@ P25.2 继承关键字 inherit/initial/unset（~1.5h）
 P25.3 shorthand 展开为 longhand（~1h）
 P25.4 em/% 计算值相对父级解析链（~1h）
 P25.5 测试扩充（随 P25 完成）
+
+P26.1 margin 折叠 CSS2.1 §9.5（~2h）
+P26.2 BFC 浮动包含 CSS2.1 §9.4.1（~2h）
+P26.3 百分比高度解析链 CSS2.1 §10.6.5（~1.5h）
+P26.4 min/max 宽度/高度约束 CSS2.1 §10.4（~1h）
+P26.5 width:auto 分配 CSS2.1 §10.3（~1h）
+P26.6 测试扩充（随 P26 完成）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 已完成（**528/528** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 已完成（**542/542** 测试通过）。
 
-下一站：**P26 块级布局修正（M3 第二步：margin 折叠 / BFC / 高度自适应 / min-max 约束 / 宽度 auto 分配）**。
+下一站：**P27（待定 — 依据 ROADMAP 后续规划）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

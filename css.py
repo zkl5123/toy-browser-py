@@ -927,7 +927,10 @@ def resolve_length(value: Value, parent_font_px: float) -> float | None:
         if value.unit == "em":
             return value.value * parent_font_px
         if value.unit == "%":
-            return value.value * parent_font_px  # toy: % relative to font
+            # P26.3 — percentage lengths resolve against the caller-supplied
+            # reference size (parent content height for height, font size
+            # for everything else in the legacy path).
+            return value.value * parent_font_px / 100.0
         return value.value
     if isinstance(value, Keyword):
         try:
@@ -1095,11 +1098,16 @@ def expand_shorthands(decls: dict[str, Value]) -> dict[str, Value]:
 
 
 class StyledNode:
-    def __init__(self, dom_node: Node, parent_font_px: float = DEFAULT_FONT_PX):
+    def __init__(self, dom_node: Node, parent_font_px: float = DEFAULT_FONT_PX,
+                 parent_height_px: float | None = None):
         self.dom = dom_node
         self.parent_font_px = parent_font_px
+        # P26.3 — the containing block's resolved content height, used to
+        # resolve percentage *heights* (a child's height: 50% is 50% of
+        # the parent's content height, not of the font size).
+        self.parent_height_px = parent_height_px
         self.props: dict[str, Value] = {}
-        self.children: list[StyledNode] = []
+        self.children: list["StyledNode"] = []
 
     # Convenience accessors
     def prop_font_px(self) -> float:
@@ -1138,6 +1146,13 @@ class StyledNode:
         v = self.props.get("height")
         if v is None:
             return None
+        # P26.3 — percentage heights resolve against the containing block's
+        # content height when known (parent_height_px is not None);
+        # otherwise fall back to the parent font size (legacy behaviour).
+        ref = self.parent_height_px if self.parent_height_px is not None else self.parent_font_px
+        r = resolve_length(v, ref)
+        if r is not None:
+            return r
         return resolve_length(v, self.parent_font_px)
 
     def width_px(self) -> float | None:
