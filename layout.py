@@ -192,6 +192,11 @@ class LayoutBox:
     hyphens: str = ""        # "none" | "auto" | "manual" | ""
     # P16.4 — CSS scroll-snap-type (toy: stored)
     scroll_snap_type: str = ""  # "none" | "x mandatory" | "y proximity" | ...
+    # P26.4 — CSS min/max width/height constraints (toy: stored, clamped at finalize).
+    min_width: float = 0.0
+    max_width: float = 0.0  # 0 = none
+    min_height: float = 0.0
+    max_height: float = 0.0  # 0 = none
 
     IFRAME_PLACEHOLDER_H = 120.0
     IMG_DEFAULT_W = 32.0
@@ -351,8 +356,46 @@ def _decode_png_min(data: bytes):
     return (out, width, height)
 
 
+def _edges_for(sn, prop, my_font):
+    """Resolve a margin/padding/border value into EdgeSizes.
+
+    P25.4 — after shorthand expansion, the shorthand key may hold an
+    EdgeList (or a single value), while the longhand keys hold per-side
+    values.  Per CSS2.1, longhands override the shorthand's per-side
+    default.  This helper builds the final EdgeSizes from both sources.
+    """
+    from css import EdgeList, resolve_length
+
+    base = EdgeSizes()
+    # 1. Shorthand key (margin / padding / border-width).
+    sv = sn.props.get(prop)
+    if sv is not None:
+        if isinstance(sv, EdgeList):
+            base = EdgeSizes(sv.top, sv.right, sv.bottom, sv.left)
+        else:
+            r = resolve_length(sv, my_font)
+            if r is not None:
+                base = EdgeSizes(r, r, r, r)
+    # 2. Longhand overrides (margin-top, margin-right, …).
+    for i, suffix in enumerate(("-top", "-right", "-bottom", "-left")):
+        lv = sn.props.get(prop + suffix)
+        if lv is not None:
+            r = resolve_length(lv, my_font)
+            if r is not None:
+                v = getattr(base, ("top", "right", "bottom", "left")[i])
+                if i == 0:
+                    base.top = r
+                elif i == 1:
+                    base.right = r
+                elif i == 2:
+                    base.bottom = r
+                else:
+                    base.left = r
+    return base
+
+
 def build_box(sn: StyledNode, parent_font_px: float,
-              parent_font_family: str = "") -> LayoutBox:
+              parent_font_family: str = "", parent_height_px: float | None = None) -> LayoutBox:
     node = sn.dom
     is_element = node.is_element()
     my_font = sn.prop_font_px()
@@ -422,13 +465,19 @@ def build_box(sn: StyledNode, parent_font_px: float,
                 if dom_h is None:
                     dom_h = float(img_pixel_h)
 
+    # P26.3 — propagate the containing block's content height so that
+    # percentage *heights* on this box resolve against the parent's
+    # actual height (CSS2.1 §10.6.5).  ``parent_height_px`` is the
+    # parent box's content height when known (None at the viewport root).
+    if parent_height_px is not None:
+        sn.parent_height_px = parent_height_px
+
     explicit_w = sn.width_px()
     explicit_h = sn.height_px()
     if explicit_w is None and dom_w is not None:
         explicit_w = dom_w
     if explicit_h is None and dom_h is not None:
         explicit_h = dom_h
-
     # P1.4 — Flexbox: read display:flex / flex-direction / justify-content / align-items.
     is_flex = False
     flex_direction = "row"
@@ -645,6 +694,15 @@ def build_box(sn: StyledNode, parent_font_px: float,
                 z_index = int(float(str(zidx)))
         except (ValueError, TypeError):
             z_index = 0
+
+    # P26.4 — CSS2.1 min/max constraints (toy: px only).
+    # ``get_number`` resolves % against the parent font size; for
+    # percentage min/max the layout finalize pass re-resolves against
+    # the actual containing width (layout_block, P26.4 clamp).
+    min_width = sn.get_number("min-width", 0.0)
+    max_width = sn.get_number("max-width", 0.0)
+    min_height = sn.get_number("min-height", 0.0)
+    max_height = sn.get_number("max-height", 0.0)
 
     # P6.2 — text-overflow: ellipsis + line-clamp (max visible lines).
     text_overflow = ""
@@ -909,9 +967,9 @@ def build_box(sn: StyledNode, parent_font_px: float,
             if is_element
             else BoxType.TEXT
         ),
-        padding=shorthand_edges(sn.props.get("padding"), my_font),
-        border=shorthand_edges(sn.props.get("border-width"), my_font),
-        margin=shorthand_edges(sn.props.get("margin"), my_font),
+        padding=_edges_for(sn, "padding", my_font),
+        border=_edges_for(sn, "border-width", my_font),
+        margin=_edges_for(sn, "margin", my_font),
         text_content=text_str,
         text_color=color,
         background=background,
@@ -1009,6 +1067,10 @@ def build_box(sn: StyledNode, parent_font_px: float,
         img_pixels=img_pixels,
         img_pixel_w=img_pixel_w,
         img_pixel_h=img_pixel_h,
+        min_width=min_width,
+        max_width=max_width,
+        min_height=min_height,
+        max_height=max_height,
     )
 
     if is_element:
@@ -1053,12 +1115,12 @@ def build_box(sn: StyledNode, parent_font_px: float,
                     # P11.3 — display:none boxes stay in the layout tree
                     # (flagged via is_display_none) so toggle tests can
                     # inspect them; layout_block skips their content.
-                    cb = build_box(csn, my_font, font_family)
+                    cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None)
                     cb.parent = bx
                     cb.rect = Rect()
                     bx.children.append(cb)
                     continue
-                cb = build_box(csn, my_font, font_family)
+                cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None)
                 cb.parent = bx
                 # P15.4 — inherit font_family from parent when child has none.
                 # P6.2 — propagate line-clamp / text-overflow to text children.
@@ -1086,14 +1148,19 @@ def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0)
     The styled root is the synthetic "document" node; its children are the
     top-level elements. We lay out every child so sibling elements at the
     top level are all reachable from the returned root.
+
+    P26.3 — ``_viewport_h`` is the viewport's content height, used to
+    resolve percentage heights on top-level boxes whose containing block
+    is the viewport (e.g. ``body { height: 100% }`` → 600px).
     """
+    vh = _viewport_h if _viewport_h > 0 else None
     children_sn = list(styled_root.children)
     if not children_sn:
-        root = build_box(styled_root, DEFAULT_FONT_PX)
+        root = build_box(styled_root, DEFAULT_FONT_PX, "", vh)
         layout_block(root, 0.0, 0.0, viewport_w)
         return root
     if len(children_sn) == 1:
-        root = build_box(children_sn[0], DEFAULT_FONT_PX)
+        root = build_box(children_sn[0], DEFAULT_FONT_PX, "", vh)
         layout_block(root, 0.0, 0.0, viewport_w)
         return root
     # Multiple top-level children: wrap them in a synthetic block whose
@@ -1103,9 +1170,44 @@ def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0)
     synth_sn = StyledNode(synth, DEFAULT_FONT_PX)
     for cs in children_sn:
         synth_sn.children.append(cs)
-    root = build_box(synth_sn, DEFAULT_FONT_PX)
+    root = build_box(synth_sn, DEFAULT_FONT_PX, "", vh)
     layout_block(root, 0.0, 0.0, viewport_w)
     return root
+
+
+def _fold_margins(parent: LayoutBox, first_child: LayoutBox | None) -> float:
+    """P26.1 — CSS margin collapsing (toy, block-level only).
+
+    Returns the effective top gap between *parent*'s top edge and its first
+    block child's content: the parent's top margin collapses with the child's
+    top margin (max of the two); same for the pair's bottom vs next
+    sibling.  Collapsed margins never affect the parent's own *inner*
+    height, only its position relative to its own parent — which is handled
+    by the caller feeding ``parent.margin.top`` into the parent's layout.
+
+    Empty blocks (no in-flow block children) also collapse their top and
+    bottom margins (CSS2.1 §9.3.3) — the caller clamps to 0 when the
+    parent has padding/border that prevents collapse.
+    """
+    if first_child is None:
+        # P26.1 — empty block: top+bottom margins collapse to one.
+        return max(parent.margin.top, parent.margin.bottom)
+    return max(parent.margin.top, first_child.margin.top)
+
+
+def _next_sibling_gap(prev: LayoutBox, nxt: LayoutBox) -> float:
+    """P26.1 — collapsed gap between two adjacent block siblings: the max
+    of the previous child's bottom margin and the next child's top margin
+    (CSS2.1 §9.5.1).  The caller adds this to the running y offset."""
+    return max(prev.margin.bottom, nxt.margin.top)
+
+
+def _resolve_pct_value(v, ref: float) -> float:
+    """P26.3 — resolve a CSS Length with unit '%' against a reference size."""
+    from css import Length
+    if isinstance(v, Length) and v.unit == "%":
+        return v.value * ref / 100.0
+    return 0.0
 
 
 def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None:
@@ -1158,6 +1260,8 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     padding_t = bx.padding.top
     margin_l = bx.margin.left
     margin_r = bx.margin.right
+    # P26.5 — CSS2.1 §10.3 simplified auto-width resolution:
+    #   w = max(0, containing - margin_l - margin_r - padding - border)
     available = max(0.0, containing_w - margin_l - margin_r - padding_l * 2.0)
 
     tag = (bx.dom.tag if bx.dom and bx.dom.is_element() else None) or ""
@@ -1167,6 +1271,12 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
 
     if bx.explicit_width is not None:
         available = bx.explicit_width - padding_l * 2.0
+    # P26.4 — CSS2.1 §10.4: min/max width clamp the computed width
+    # (also applied to auto-width boxes, per the spec).
+    if bx.max_width > 0:
+        available = min(available, bx.max_width)
+    if bx.min_width > available:
+        available = bx.min_width
     # P3.1 — embedded image with explicit size: use those dimensions.
     if is_img and bx.img_pixels is not None:
         if bx.explicit_width is None:
@@ -1257,34 +1367,72 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         _layout_table(bx, content_x0, content_y0, available, containing_w)
         return
 
+    # P26.1 — margin collapse: this box's top margin collapses with its
+    # first in-flow block child's top margin (CSS2.1 §9.5.1).  The
+    # collapsed margin pokes above the box's top edge, so the caller's
+    # starting y must be advanced by the *difference* between the box's
+    # own top margin and the collapsed amount; the box's top margin is
+    # what normally separates it from the previous sibling.
+    first_block_child: LayoutBox | None = None
+    for cb in bx.children:
+        if cb.box_type == BoxType.BLOCK and not cb.is_float and not cb.is_display_none:
+            first_block_child = cb
+            break
+    if first_block_child is not None:
+        collapsed = _fold_margins(bx, first_block_child)
+        y += bx.margin.top - collapsed
+
     # P5.2 — CSS float: children with float:left/right are positioned at
     # the specified side of the containing block; subsequent inline content
     # wraps around them.
+    # P26.2 — BFC: when overflow != visible the box establishes a
+    # block formatting context that contains its floats — the box's height
+    # extends to cover them (prevents the "float escapes parent" bug), and
+    # floats never overlap the BFC's border box.
     float_l = 0.0
     float_r = 0.0
     float_y = 0.0
+    float_max_h = 0.0
+    # P26.5 — the float's containing block is the parent's content width,
+    # not the viewport (same rule as in-flow children).
+    child_containing_w = available if bx.explicit_width is not None else containing_w
     for cb in bx.children:
         if not cb.is_float:
             continue
-        layout_block(cb, content_x0, content_y0 + float_y, containing_w)
+        # P26.2 — BFC: lay the float out at its own coordinate origin
+        # (0, 0) relative to the viewport, then reposition it to the
+        # BFC's content edge.  This prevents the float from inheriting
+        # the BFC's parent coordinates during layout.
+        layout_block(cb, 0.0, 0.0, child_containing_w)
         w = cb.rect.w + cb.padding.left + cb.padding.right
         h = cb.outer_height()
         if cb.float_direction == "left":
             cb.rect.x = content_x0
-            cb.rect.y = content_y0
+            cb.rect.y = content_y0 + float_y
             float_l = max(float_l, w)
             float_y = max(float_y, h)
+            float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
         else:
             cb.rect.x = content_x0 + available - w
-            cb.rect.y = content_y0
+            cb.rect.y = content_y0 + float_y
             float_r = max(float_r, w)
             float_y = max(float_y, h)
+            float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
+    # P26.2 — reduce the in-flow content width by the total float width.
     avail = max(0.0, available - float_l - float_r)
-    start_x = content_x0 + float_l
-    content_x0 = start_x
+    if float_l > 0.0:
+        content_x0 = content_x0 + float_l
+    # P26.2 — the BFC's *own* rect must not shift with the float offset;
+    # only in-flow children use the adjusted content_x0.  Save the
+    # original content edge for the box's own geometry.
+    bfc_content_x0 = content_x0 - float_l
 
     # Lay out children, accumulating the content height.
+    # P26.1 — margin collapsing between adjacent block siblings:
+    # the gap between siblings is max(prev_margin_bottom, next_margin_top)
+    # instead of sum, per CSS2.1 §9.5.1.
     child_y = 0.0
+    prev_block: LayoutBox | None = None
     i = 0
     n = len(bx.children)
     while i < n:
@@ -1300,8 +1448,29 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                 # Already positioned in the pre-pass above; skip re-layout.
                 i += 1
                 continue
-            layout_block(cb, content_x0, content_y0 + child_y, containing_w)
-            child_y += cb.outer_height()
+            # P26.1 — collapsed margin between this block and its previous
+            # block sibling: use max(prev.margin-bottom, next.margin-top),
+            # not the sum (CSS2.1 §9.5.1).
+            if prev_block is not None:
+                child_y += _next_sibling_gap(prev_block, cb)
+            # P26.5 — children are constrained to the parent's content width,
+            # not the viewport: pass the parent's computed available width as
+            # the child's containing block width.
+            child_containing_w = available if bx.explicit_width is not None else containing_w
+            layout_block(cb, content_x0, content_y0 + child_y, child_containing_w)
+            # P26.1 — the content stack advances by the box's border-box
+            # height; the collapsed margin with the *next* sibling is
+            # applied by _next_sibling_gap at the top of the next
+            # iteration (CSS2.1 §9.5.1: margins between siblings never
+            # add, they collapse to the max).
+            child_y += (
+                cb.rect.h
+                + cb.padding.top
+                + cb.padding.bottom
+                + cb.border.top
+                + cb.border.bottom
+            )
+            prev_block = cb
             i += 1
         else:
             # P18 — inline-level run: collect children until a block-level
@@ -1369,7 +1538,22 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             if c.dom is None:  # caption text box
                 c.rect.y += grow / 2.0
 
-    bx.rect = Rect(content_x0, content_y0, available, h)
+    # P26.2 — BFC: the box's height extends to contain its floats.
+    if float_max_h > 0.0:
+        h = max(h, float_max_h - (content_y0 - bx.rect.y))
+
+    # P26.4 — min/max width/height constraints (CSS2.1): clamp the final
+    # box size; width is already final (`available`), height is `h`.
+    if bx.max_width > 0:
+        available = min(available, bx.max_width)
+    if bx.min_width > available:
+        available = bx.min_width
+    if bx.max_height > 0:
+        h = min(h, bx.max_height)
+    if bx.min_height > h:
+        h = bx.min_height
+
+    bx.rect = Rect(bfc_content_x0 if float_l > 0.0 else content_x0, content_y0, available, h)
 
 
 def _element_placeholder_height(bx: LayoutBox) -> float:

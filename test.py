@@ -7984,6 +7984,278 @@ def test_p25_full_pipeline_important():
     assert nw > 0, "P25 pipeline must still render pixels"
 
 
+# ---------------------------------------------------------------------------
+# P26 — 块级布局修正（M3 第二步：margin 折叠 / BFC / 高度自适应 /
+#         min-max 约束 / 宽度 auto 分配）
+# ---------------------------------------------------------------------------
+
+
+def _find_box(bx, tag=None, id_=None):
+    """Walk the layout tree; find the first LayoutBox whose dom tag/id
+    matches.  When ``id_`` is given the match is by id only (ignores
+    tag); when only ``tag`` is given the first element of that tag wins."""
+    if id_ is not None:
+        if bx.dom is not None and bx.dom.is_element() and bx.dom.attr("id") == id_:
+            return bx
+    elif tag is not None:
+        if bx.dom is not None and bx.dom.is_element() and bx.dom.tag == tag:
+            return bx
+    for c in bx.children:
+        r = _find_box(c, tag, id_)
+        if r is not None:
+            return r
+    return None
+
+
+def test_p26_margin_collapse_siblings():
+    """P26.1 — adjacent block siblings' margins collapse to the max
+    (not the sum): .a{margin-bottom:10px} .b{margin-top:20px} →
+    20px gap, not 30px."""
+    import dom, css, layout, browser
+    html = ('<div id=wrap style="width:200px">'
+            '<div id=a style="height:20px;margin-bottom:10px;background:blue"></div>'
+            '<div id=b style="height:20px;margin-top:20px;background:red"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    wrap = _find_box(lroot, "div", "wrap")
+    a = _find_box(lroot, "div", "a")
+    b = _find_box(lroot, "div", "b")
+    assert a is not None and b is not None
+    # b's top margin (20) collapses with a's bottom margin (10) → gap 20.
+    # Without collapse the gap would be 10+20=30.
+    gap = b.rect.y - a.rect.y - a.rect.h
+    assert abs(gap - 20.0) < 0.5, f"collapsed gap must be 20px (max), got {gap}"
+
+
+def test_p26_margin_collapse_parent_child():
+    """P26.1 — a child's top margin collapses through the parent's top
+    margin (no border/padding in between): parent margin-top:5, child
+    margin-top:15 → effective 15, not 5+15."""
+    import dom, css, layout
+    html = ('<div id=outer>'
+            '<div id=parent style="margin:5px">'
+            '<div id=child style="height:10px;margin-top:15px;background:red"></div>'
+            '</div></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    parent = _find_box(lroot, "div", "parent")
+    child = _find_box(lroot, "div", "child")
+    assert parent is not None and child is not None
+    # Collapsed: the child's top margin pokes out to 15 above the parent's
+    # top edge, not 5+15=20.
+    # Parent's top margin 5 and child's top margin 15 collapse → 15.
+    gap = child.rect.y - parent.rect.y
+    # parent.rect.y is measured after the collapsed margin; the child
+    # starts 0 relative to the parent content edge when margins collapse
+    # through (the parent gets no internal top padding from the child).
+    assert abs(gap) < 0.5, (
+        f"collapsed parent-child margin: child must start at parent content "
+        f"edge (gap≈0), got gap={gap}")
+
+
+def test_p26_margin_collapse_empty_block():
+    """P26.1 — an empty block collapses its own top + bottom margins to a
+    single max(): margin:30px on an empty div → contributes 30, not
+    60, to the gap with its next sibling."""
+    import dom, css, layout
+    html = ('<div>'
+            '<div id=empty style="margin:30px"></div>'
+            '<div id=next style="height:10px;background:red"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    empty = _find_box(lroot, "div", "empty")
+    nxt = _find_box(lroot, "div", "next")
+    assert empty is not None and nxt is not None
+    # Empty block's bottom margin (30) collapses with next's top (0) →
+    # gap 30.  If top+bottom were *summed* the gap would be 60.
+    gap = nxt.rect.y - empty.rect.y - empty.rect.h
+    assert abs(gap - 30.0) < 0.5, f"empty-block margin must collapse to 30, got {gap}"
+
+
+def test_p26_bfc_cleares_floats():
+    """P26.2 — a BFC (overflow:hidden) height contains its floats:
+    the parent box's height extends to the bottom of the floated child."""
+    import dom, css, layout
+    html = ('<div id=box style="overflow:hidden;width:200px">'
+            '<div style="float:left;width:100px;height:40px;background:blue"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    box = _find_box(lroot, "div", "box")
+    assert box is not None
+    # BFC must contain the float: height >= float's outer height (40 + margins).
+    assert box.rect.h >= 40.0, f"BFC height must contain float (>=40), got {box.rect.h}"
+
+
+def test_p26_pct_height_chain():
+    """P26.3 — percentage heights resolve against the parent's *resolved*
+    content height (not the font size): body 600px, child height:25%
+    → 150px."""
+    import dom, css, layout
+    html = ('<body style="height:600px">'
+            '<div id=h style="height:25%">x</div>'
+            '</body>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 600.0)
+    h = _find_box(lroot, "div", "h")
+    assert h is not None
+    # 25% of 600px = 150px
+    assert abs(h.rect.h - 150.0) < 1.0, f"25% of 600px must be 150px, got {h.rect.h}"
+
+
+def test_p26_height_auto_grows():
+    """P26.3 — height:auto grows with content: a block with two 20px
+    children is 40px tall."""
+    import dom, css, layout
+    html = ('<div id=auto>'
+            '<div style="height:20px"></div>'
+            '<div style="height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    auto = _find_box(lroot, "div", "auto")
+    assert auto is not None
+    assert abs(auto.rect.h - 40.0) < 1.0, f"auto height must grow to 40px, got {auto.rect.h}"
+
+
+def test_p26_min_height_clamps():
+    """P26.4 — min-height: 50px forces a taller box than its content
+    (10px) requires."""
+    import dom, css, layout
+    html = ('<div id=m style="min-height:50px">'
+            '<div style="height:10px"></div></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    m = _find_box(lroot, "div", "m")
+    assert m is not None
+    assert m.rect.h >= 50.0, f"min-height:50px must clamp to >=50, got {m.rect.h}"
+    assert abs(m.rect.h - 50.0) < 0.5, f"min-height must be exactly 50 here, got {m.rect.h}"
+
+
+def test_p26_max_height_clamps():
+    """P26.4 — max-height: 20px caps a 40px-tall content box."""
+    import dom, css, layout
+    html = ('<div id=m style="max-height:20px">'
+            '<div style="height:20px"></div>'
+            '<div style="height:20px"></div></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    m = _find_box(lroot, "div", "m")
+    assert m is not None
+    assert m.rect.h <= 20.0, f"max-height:20px must cap to <=20, got {m.rect.h}"
+    assert abs(m.rect.h - 20.0) < 0.5, f"max-height must be exactly 20 here, got {m.rect.h}"
+
+
+def test_p26_min_width_clamps():
+    """P26.4 — min-width: 150px widens a 30px-content box to 150px when
+    the auto width would be less than 150px."""
+    import dom, css, layout
+    html = ('<div style="width:100px">'
+            '<div id=m style="min-width:150px"><div style="width:30px">x</div></div></div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    m = _find_box(lroot, id_="m")
+    assert m is not None
+    # Auto width would be 100 (parent width); min-width:150 forces 150.
+    assert m.rect.w >= 150.0, f"min-width:150px must clamp to >=150, got {m.rect.w}"
+    assert abs(m.rect.w - 150.0) < 0.5, f"min-width must be exactly 150, got {m.rect.w}"
+
+
+def test_p26_max_width_clamps():
+    """P26.4 — max-width: 50px caps an auto-width (300px) box to 50px."""
+    import dom, css, layout
+    html = '<div id=m style="max-width:50px">long text content here that would be wide</div>'
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    m = _find_box(lroot, "div", "m")
+    assert m is not None
+    assert m.rect.w <= 50.0, f"max-width:50px must cap to <=50, got {m.rect.w}"
+    assert abs(m.rect.w - 50.0) < 0.5, f"max-width must be exactly 50, got {m.rect.w}"
+
+
+def test_p26_width_auto_fills():
+    """P26.5 — width:auto block fills its containing block: a child of a
+    200px parent with no explicit width is ~200px wide (minus margins)."""
+    import dom, css, layout
+    html = ('<div style="width:200px">'
+            '<div id=c>x</div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    c = _find_box(lroot, "div", "c")
+    assert c is not None
+    assert abs(c.rect.w - 200.0) < 1.0, f"width:auto must fill 200px parent, got {c.rect.w}"
+
+
+def test_p26_width_auto_with_margins():
+    """P26.5 — width:auto respects horizontal margins: available width
+    = containing - margin-l - margin-r."""
+    import dom, css, layout
+    html = ('<div style="width:200px">'
+            '<div id=c style="margin:0 20px 0 10px">x</div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    c = _find_box(lroot, id_="c")
+    assert c is not None
+    # 200 - 10 - 20 = 170
+    assert abs(c.rect.w - 170.0) < 1.0, (
+        f"width:auto with margin-l:10 margin-r:20 must be 170px, got {c.rect.w}")
+
+
+def test_p26_float_inside_bfc_no_overlap():
+    """P26.2 — inside a BFC the float is placed at the content edge and
+    subsequent inline content wraps below/beside it (no border overlap)."""
+    import dom, css, layout
+    html = ('<div id=box style="overflow:hidden;width:200px">'
+            '<div id=f style="float:left;width:50px;height:30px;background:blue"></div>'
+            '<div id=t style="clear:both;height:10px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    box = _find_box(lroot, id_="box")
+    f = _find_box(lroot, id_="f")
+    assert box is not None and f is not None
+    # The float is placed at the BFC's content edge; its x must not
+    # extend past the BFC's border box (no negative overlap on the left).
+    assert f.rect.x >= box.rect.x - box.margin.left, (
+        f"float must not extend past BFC left border: f.x={f.rect.x} "
+        f"box.x={box.rect.x} box.margin.left={box.margin.left}")
+    # The BFC's height must contain the float (P26.2).
+    assert box.rect.h >= f.rect.h, f"BFC height must contain float: box.h={box.rect.h} f.h={f.rect.h}"
+
+
+def test_p26_full_pipeline_render():
+    """P26 — the whole pipeline (dom→css→layout→paint→rasterize) still
+    renders end-to-end with P26 layout features without crashing."""
+    import browser
+    html = ('<html><body style="height:400px">'
+            '<div style="margin:10px;min-width:50px;max-width:300px">'
+            '<div style="height:25%;overflow:hidden">'
+            '<div style="float:left;width:40px;height:20px;background:blue"></div>'
+            '</div></div>'
+            '</body></html>')
+    bmp = browser.render_document(html, "", 400, 300)
+    assert bmp is not None and bmp.width == 400 and bmp.height == 300
+    nw = sum(1 for px in bmp.pixels if px != 0xFFFFFF)
+    assert nw > 0, "P26 doc must still render pixels"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -8582,6 +8854,21 @@ def main():
         ("p25_inherit_font_size", test_p25_inherit_font_size),
         ("p25_source_cascade_author_over_ua", test_p25_source_cascade_author_over_ua),
         ("p25_full_pipeline_important", test_p25_full_pipeline_important),
+        # P26 — 块级布局修正（M3 第二步）。
+        ("p26_margin_collapse_siblings", test_p26_margin_collapse_siblings),
+        ("p26_margin_collapse_parent_child", test_p26_margin_collapse_parent_child),
+        ("p26_margin_collapse_empty_block", test_p26_margin_collapse_empty_block),
+        ("p26_bfc_cleares_floats", test_p26_bfc_cleares_floats),
+        ("p26_pct_height_chain", test_p26_pct_height_chain),
+        ("p26_height_auto_grows", test_p26_height_auto_grows),
+        ("p26_min_height_clamps", test_p26_min_height_clamps),
+        ("p26_max_height_clamps", test_p26_max_height_clamps),
+        ("p26_min_width_clamps", test_p26_min_width_clamps),
+        ("p26_max_width_clamps", test_p26_max_width_clamps),
+        ("p26_width_auto_fills", test_p26_width_auto_fills),
+        ("p26_width_auto_with_margins", test_p26_width_auto_with_margins),
+        ("p26_float_inside_bfc_no_overlap", test_p26_float_inside_bfc_no_overlap),
+        ("p26_full_pipeline_render", test_p26_full_pipeline_render),
     ]
     passed = 0
     failed = []

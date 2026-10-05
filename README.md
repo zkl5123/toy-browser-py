@@ -23,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            528 条测试（python test.py）
+├── test.py            542 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P25 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P26 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -70,6 +70,17 @@ inline > author）；继承关键字 `inherit` / `initial` / `unset`
 （`margin` / `padding` / `border-width` 四向 longhand 并存）；
 em/% 计算值相对父级 computed font-size 解析链（40px 父级下
 `2em` = 80px，非旧实现 32px）。
+
+P26 — 块级布局修正（M3 第二步）：margin 折叠（CSS2.1 §9.5，
+`_fold_margins` + `_next_sibling_gap`，相邻 block 兄弟 gap = max 非
+sum，空 block margin 折叠）；BFC 浮动包含（CSS2.1 §9.4.1，
+`overflow:hidden` box 高度延伸至包含浮动子 box，`bfc_content_x0`
+防 BFC 自身 rect 偏移）；百分比高度解析链（CSS2.1 §10.6.5，
+`parent_height_px` 传播，`height:25%` 在 600px 父级下 = 150px）；
+min/max 宽度/高度约束（CSS2.1 §10.4，`LayoutBox.min/max_width/height`
+字段 + 早期/finalize 双阶段 clamp）；width:auto 分配（CSS2.1 §10.3，
+无显式宽度的 block 子 box 宽度 = 父内容宽 - margin - padding，
+浮动子 box 同受父内容宽约束）。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -774,6 +785,32 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 - **测试**：14 条新 P25 测试（总数 514 → 528）；既有 514 条全绿
   无回归。
 
+### 块级布局修正（P26）
+
+- **P26.1 CSS Margin 折叠（CSS2.1 §9.5）**：
+  `_fold_margins` 父 box 与首个 block 子 box 的 top margin 折叠为
+  max（非 sum）；`_next_sibling_gap` 相邻 block 兄弟 gap =
+  max(prev.mb, next.mt)；空 block top+bottom margin 折叠为单一值；
+  内容栈推进改用 border-box 高度（不含 margin），消除 double-count。
+- **P26.2 BFC 浮动包含（CSS2.1 §9.4.1）**：
+  `overflow:hidden` box 建立 BFC，`float_max_h` 使父 box 高度延伸至
+  包含浮动子 box；`bfc_content_x0` 保存原始内容边，BFC 自身 rect
+  不受浮动偏移影响。
+- **P26.3 百分比高度解析链（CSS2.1 §10.6.5）**：
+  `StyledNode.parent_height_px` 传播父 box 已解析内容高度；
+  `height:25%` 在 600px 父级下 = 150px（旧实现误用 font-size
+  基准 → 4px）；`resolve_length` 对 `%` 单位改为
+  `value * ref / 100`。
+- **P26.4 CSS min/max 宽度/高度约束（CSS2.1 §10.4）**：
+  `LayoutBox.min_width / max_width / min_height / max_height`
+  字段；`layout_block` 早期 + finalize 双阶段 clamp。
+- **P26.5 width:auto 分配（CSS2.1 §10.3）**：
+  无显式宽度的 block 子 box 宽度 = 父内容宽 - margin - padding
+  （旧实现使用 viewport 宽度导致溢出）；浮动子 box 同受父内容宽
+  约束（`child_containing_w`）。
+- **测试**：14 条新 P26 测试（总数 528 → 542）；既有 528 条全绿
+  无回归；CLI e2e 渲染通过。
+
 ### 失效（P0.5）
 
 - `browser.changed_region(bmp_a, bmp_b)` 返回像素差异的包围盒 `(x, y, w, h)`，
@@ -850,7 +887,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**528 条测试**，覆盖：
+**542 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -932,6 +969,7 @@ python test.py
 | HTTPS 与磁盘缓存（P23） | `p23_cache_hit_skips_wire`、`p23_cache_no_store_not_cached`、`p23_cache_max_age_expiry`、`p23_cache_etag_304_reuse`、`p23_cache_heuristic_ttl`、`p23_cache_store_clear`、`p23_cache_parse_directives`、`p23_progress_events_emitted`、`p23_progress_subresource_phase`、`p23_progress_on_event_subscription`、`p23_post_form_encoded`、`p23_post_verbatim_str`、`p23_insecure_flag_accepted`、`p23_https_tls_handshake`、`p23_cache_etag_absent_refetches`、`p23_cache_disabled_store` |
 | HTML5 容错解析（P24） | `p24_entities_named`、`p24_entities_numeric_dec`、`p24_entities_numeric_hex`、`p24_entities_zero_and_surrogate`、`p24_entities_unknown_name_literal`、`p24_rawtext_script_literal`、`p24_rawtext_style_literal`、`p24_void_input_no_stack`、`p24_void_self_closing_br`、`p24_implicit_p_sibling`、`p24_block_closes_p`、`p24_adoption_b_i`、`p24_stray_close_ignored`、`p24_comment_doctype_dropped`、`p24_case_insensitive_tag`、`p24_foster_tr_in_div`、`p24_unclosed_lt_text`、`p24_utf16_bom`、`p24_utf8_bom`、`p24_dom_shim_reexport`、`p24_dom_parse_bytes`、`p24_full_pipeline_render` |
 | CSS 层叠与计算值（P25） | `p25_specificity_4tuple`、`p25_specificity_id_beats_class`、`p25_specificity_class_beats_type`、`p25_important_beats_normal`、`p25_important_author_wins_over_normal_inline`、`p25_inherit_keyword`、`p25_initial_keyword`、`p25_unset_keyword`、`p25_shorthand_margin_expands`、`p25_shorthand_padding_expands`、`p25_em_computed_chain`、`p25_inherit_font_size`、`p25_source_cascade_author_over_ua`、`p25_full_pipeline_important` |
+| 块级布局修正（P26） | `p26_margin_collapse_siblings`、`p26_margin_collapse_parent_child`、`p26_margin_collapse_empty_block`、`p26_bfc_cleares_floats`、`p26_float_inside_bfc_no_overlap`、`p26_pct_height_chain`、`p26_height_auto_grows`、`p26_min_width_clamps`、`p26_max_width_clamps`、`p26_min_height_clamps`、`p26_max_height_clamps`、`p26_width_auto_fills`、`p26_width_auto_with_margins`、`p26_full_pipeline_render` |
 
 ## 改进路线图
 
@@ -1070,6 +1108,12 @@ python test.py
 - [x] P25.3 shorthand 展开为 longhand（margin / padding / border-width）
 - [x] P25.4 em/% 计算值相对父级 computed font 解析链
 - [x] P25.5 测试扩充至 528 条（测试总数 514 → 528）
+- [x] P26.1 CSS Margin 折叠（CSS2.1 §9.5，_fold_margins + _next_sibling_gap）
+- [x] P26.2 BFC 浮动包含（CSS2.1 §9.4.1，overflow:hidden box 高度延伸至包含浮动）
+- [x] P26.3 百分比高度解析链（CSS2.1 §10.6.5，parent_height_px 传播）
+- [x] P26.4 min/max 宽度/高度约束（CSS2.1 §10.4，双阶段 clamp）
+- [x] P26.5 width:auto 分配（CSS2.1 §10.3，父内容宽约束）
+- [x] P26.6 测试扩充至 542 条（测试总数 528 → 542）
 
 ## 与 Rust 版的对应关系
 
@@ -1077,8 +1121,8 @@ python test.py
 |---|---|---|
 | `dom.py` | `dom.rs` | P24 兼容 shim（转发 html_pkg；Node 与 html_pkg.node.Node 同一类对象） |
 | `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
-| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链） |
-| `layout.py` | `layout.rs` | 盒模型 + 命中测试 |
+| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链；P26.3：parent_height_px 百分比高度解析链） |
+| `layout.py` | `layout.rs` | 盒模型 + 命中测试（P26：margin 折叠 / BFC 浮动包含 / min-max 约束 / width:auto 分配） |
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
 | `paint_engine.py` | `paint.rs`（显示列表部分） | 显示列表 + 光栅化 |
 | `text.py` + `font.py` | `text.rs` + `font.rs` | 8×8 位图字体 |
