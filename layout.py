@@ -65,11 +65,18 @@ class LayoutBox:
     dom: Optional[Node] = None
     # P1.4 — Flexbox
     is_flex: bool = False
-    flex_direction: str = "row"  # "row" | "column"
-    justify_content: str = "start"  # "start" | "center" | "end" | "space-between"
-    align_items: str = "stretch"  # "stretch" | "start" | "center" | "end"
+    flex_direction: str = "row"  # "row" | "column" (+"-reverse")
+    flex_wrap: str = "nowrap"  # P27 — "nowrap" | "wrap" | "wrap-reverse"
+    justify_content: str = "start"  # start|center|end|space-between|space-around|space-evenly
+    align_items: str = "stretch"  # stretch|start|center|end|baseline(toy: start)
+    align_content: str = "stretch"  # P27 — multi-line cross-axis: stretch|start|center|end|space-between|space-around
     # P3.2 — flex-grow weight (for distributing leftover space)
     flex_grow: float = 0.0
+    # P27 — flex sizing trio + order
+    flex_shrink: float = 1.0
+    flex_basis: float | None = None  # None = auto (use content/explicit size)
+    flex_order: int = 0
+    align_self: str = ""  # P27 — per-item cross-axis override; "" = inherit align-items
     # P4.3 — CSS Grid
     is_grid: bool = False
     grid_columns: int = 0  # number of column tracks
@@ -481,14 +488,19 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # P1.4 — Flexbox: read display:flex / flex-direction / justify-content / align-items.
     is_flex = False
     flex_direction = "row"
+    flex_wrap = "nowrap"
     justify_content = "start"
     align_items = "stretch"
+    align_content = "stretch"
     disp = sn.display()
     if disp == "flex":
         is_flex = True
         flex_direction = sn.get_keyword("flex-direction", "row")
         justify_content = sn.get_keyword("justify-content", "start")
         align_items = sn.get_keyword("align-items", "stretch")
+    # P27 — read flex-wrap / align-content on the flex container.
+    flex_wrap = sn.get_keyword("flex-wrap", "nowrap")
+    align_content = sn.get_keyword("align-content", "stretch")
     # P4.3 — CSS Grid: read display:grid / grid-template-columns / grid-template-rows.
     is_grid = False
     grid_columns = 0
@@ -507,6 +519,29 @@ def build_box(sn: StyledNode, parent_font_px: float,
     is_table_row = tag == "tr" or (disp == "table-row")
     is_table_cell = tag in ("td", "th")
     border_collapse = sn.get_keyword("border-collapse", "") == "collapse"
+    # P27 — flex shrink / basis (read even on non-flex items; used when
+    # the parent is flex).  flex_basis None means "auto": fall back to
+    # the item's explicit/main-axis size or its content size.
+    flex_shrink = sn.get_number("flex-shrink", 1.0)
+    flex_basis = sn.props.get("flex-basis")
+    if isinstance(flex_basis, Length):
+        if flex_basis.unit == "px":
+            flex_basis = flex_basis.value
+        elif flex_basis.unit == "em":
+            flex_basis = flex_basis.value * my_font
+        elif flex_basis.unit == "%":
+            # P27 — percentage flex-basis is stored raw; _layout_flex
+            # resolves it against the container's main-axis size.
+            flex_basis = flex_basis.value / 100.0
+        else:
+            flex_basis = flex_basis.value
+    elif isinstance(flex_basis, Keyword):
+        flex_basis = None  # "auto"
+    else:
+        flex_basis = None
+    flex_order = int(sn.get_number("order", 0.0))
+    align_self = sn.get_keyword("align-self", "")
+
     # P3.2 — flex-grow (on the element itself, used when parent is flex).
     # When a flex child has flex-grow > 0, its CSS width is a *basis* for
     # the grow distribution, not a hard constraint.
@@ -985,9 +1020,15 @@ def build_box(sn: StyledNode, parent_font_px: float,
         dom=node if is_element else None,
         is_flex=is_flex,
         flex_direction=flex_direction,
+        flex_wrap=flex_wrap,
         justify_content=justify_content,
         align_items=align_items,
+        align_content=align_content,
         flex_grow=flex_grow,
+        flex_shrink=flex_shrink,
+        flex_basis=flex_basis,
+        flex_order=flex_order,
+        align_self=align_self,
         is_grid=is_grid,
         grid_columns=grid_columns,
         grid_rows=grid_rows,
@@ -1572,105 +1613,357 @@ def _layout_flex(
     available: float,
     containing_w: float,
 ) -> None:
-    """P1.4 — toy flexbox layout.
+    """P1.4 + P27 — flexbox layout (spec-compliant subset).
 
-    Supports:
-      flex-direction: row | column
-      justify-content: start | center | end | space-between
-    Children are laid out in a single flex line.
+    P27 features:
+      flex-grow / flex-shrink / flex-basis  (spec §9.7 sizing algorithm)
+      flex-wrap: wrap | wrap-reverse (multi-line)
+      justify-content: start|center|end|space-between|space-around|space-evenly
+      align-items / align-self: stretch|start|center|end|baseline
+      align-content: stretch|start|center|end|space-between|space-around
+      flex-direction: row|column × -reverse
+      order: items sorted by (order, source-order)
+      min-width / min-height: auto on flex items (content floor)
     """
     if not bx.children:
         bx.rect = Rect(content_x0, content_y0, available, bx.line_height_px)
         return
 
-    # Phase 1: lay out each child at natural size (gives us intrinsic w/h).
-    for cb in bx.children:
-        if cb.is_display_none:
-            cb.rect = Rect()
-            continue
-        layout_block(cb, content_x0, content_y0, containing_w)
+    row = "row" in bx.flex_direction
+    reverse = bx.flex_direction.endswith("-reverse")
+    wrap = bx.flex_wrap != "nowrap"
+    wrap_reverse = bx.flex_wrap == "wrap-reverse"
+    # P27.5 — reverse directions: the main-axis start edge flips.
+    # row-reverse: main axis starts at the right edge; items pack right→left.
+    # column-reverse: main axis starts at the bottom edge; items pack bottom→up.
+    main_reverse = reverse  # used to flip the main-axis packing direction
 
-    if bx.flex_direction == "row":
-        # P11.3 — skip display:none children (zero-size, not part of the flow).
-        visible = [cb for cb in bx.children if not cb.is_display_none]
-        child_ws = [cb.rect.w + cb.padding.left + cb.padding.right for cb in visible]
-        total_w = sum(child_ws)
-        n = len(child_ws)
-        gap = 0.0
-        if bx.justify_content == "space-between" and n > 1 and available > total_w:
-            gap = (available - total_w) / (n - 1)
-        x_off = content_x0
-        if bx.justify_content == "center" and available > total_w:
-            x_off = content_x0 + (available - total_w) / 2.0
-        elif bx.justify_content == "end" and available > total_w:
-            x_off = content_x0 + (available - total_w)
-        max_h = 0.0
-        # P3.2 — distribute leftover space to children with flex-grow > 0.
-        # Grow children use their natural (content) size as basis; the leftover
-        # (available - total_natural) is split proportionally by flex-grow weight.
-        # Non-grow children keep their natural width.
-        # P11.3 — work with visible children only; display:none are zero-size.
-        grow_ws = [max(0.0, cb.flex_grow) for cb in visible]
-        total_grow = sum(grow_ws)
-        extra_ws = []
-        for i, cb in enumerate(visible):
-            w = child_ws[i]
-            if total_grow > 0 and cb.flex_grow > 0:
-                natural = available if cb.explicit_width is None else child_ws[i]
-                extra_ws.append(natural)
-            else:
-                extra_ws.append(w)
+    # --- Phase 0: natural sizes (single-line measure at containing width) ---
+    visible = [cb for cb in bx.children if not cb.is_display_none]
+    if not visible:
+        bx.rect = Rect(content_x0, content_y0, available, bx.line_height_px)
+        return
+    # sort by (order, source index) — stable
+    indexed = list(enumerate(visible))
+    indexed.sort(key=lambda t: (visible[t[0]].flex_order, t[0]))
+    ordered = [cb for _, cb in indexed]
+
+    # Measure each child at natural size
+    natural_main: list[float] = []
+    natural_cross: list[float] = []
+    for cb in ordered:
+        layout_block(cb, content_x0, content_y0, containing_w)
+        if row:
+            natural_main.append(cb.rect.w + cb.padding.left + cb.padding.right)
+            natural_cross.append(cb.rect.h + cb.padding.top + cb.padding.bottom)
+        else:
+            natural_main.append(cb.rect.h + cb.padding.top + cb.padding.bottom)
+            natural_cross.append(cb.rect.w + cb.padding.left + cb.padding.right)
+    n = len(ordered)
+
+    # --- Phase 1: flex basis (spec §9.2.3) ---
+    # basis = flex-basis if set and >= 0, else main-axis size (explicit),
+    # else max-content size (the natural main-axis size measured at the
+    # containing width in Phase 0).
+    bases = []
+    for i, cb in enumerate(ordered):
+        if cb.flex_basis is not None and cb.flex_basis >= 0:
+            bases.append(cb.flex_basis)
+        elif row and cb.explicit_width is not None:
+            bases.append(cb.explicit_width - cb.padding.left - cb.padding.right)
+        elif not row and cb.explicit_height is not None:
+            bases.append(cb.explicit_height - cb.padding.top - cb.padding.bottom)
+        else:
+            # P27 — auto basis: fall back to the item's natural main size
+            # (spec §9.2.3 "max-content size").  For grow-only items with
+            # no content the natural size is small, so they still absorb
+            # most of the free space through flex-grow.
+            bases.append(max(0.0, natural_main[i]))
+
+    # --- Phase 2: flex grow/shrink (spec §9.7 simplified single-pass) ---
+    total_basis = sum(bases)
+    leftover = available - total_basis
+    sized = list(bases)
+
+    if leftover > 0:
+        # grow: distribute positive leftover to items with flex-grow > 0
+        total_grow = sum(max(0.0, cb.flex_grow) for cb in ordered)
         if total_grow > 0:
-            total_extra = sum(extra_ws)
-            leftover = available - total_extra
-            if leftover > 0:
-                for i, cb in enumerate(visible):
-                    if cb.flex_grow > 0:
-                        extra_ws[i] += leftover * (cb.flex_grow / total_grow)
-        for idx, cb in enumerate(visible):
-            cw = extra_ws[idx]
-            layout_block(cb, x_off, content_y0, cw)
-            x_off += cw + gap
-            ch = cb.rect.h + cb.padding.top + cb.padding.bottom
-            if ch > max_h:
-                max_h = ch
-        # Second pass: reposition children vertically per align-items.
-        if bx.align_items in ("start", "center", "end"):
-            for cb in visible:
-                ch = cb.rect.h + cb.padding.top + cb.padding.bottom
-                if bx.align_items == "start":
-                    cb.rect.y = content_y0
-                elif bx.align_items == "center":
-                    cb.rect.y = content_y0 + (max_h - ch) / 2.0
-                else:  # end
-                    cb.rect.y = content_y0 + (max_h - ch)
-        bx.rect = Rect(content_x0, content_y0, available, max(max_h, bx.line_height_px))
+            for i, cb in enumerate(ordered):
+                if cb.flex_grow > 0:
+                    sized[i] += leftover * (cb.flex_grow / total_grow)
+    elif leftover < 0:
+        # P27.5 - min-width/min-height:auto: flex items cannot shrink
+        # below their *content* size (the natural main-axis size from
+        # Phase 0, which is the tightest measure available).
+        for i, cb in enumerate(ordered):
+            floor = natural_main[i] if natural_main[i] > 0 else 0.0
+            cb_min = cb.min_width if row else cb.min_height
+            floor = max(floor, cb_min if cb_min > 0 else 0.0)
+            sized[i] = max(sized[i], floor)
+        # P27.3 — when flex-wrap is enabled, spec §9.7.4 says items do
+        # NOT shrink to fit the line; they overflow and wrap instead.
+        # Skip the shrink pass when wrapping is active.
+        if not wrap:
+            deficit = available - sum(sized)
+            if deficit < 0:
+                total_shrink = sum(max(0.0, cb.flex_shrink) for cb in ordered)
+                if total_shrink > 0:
+                    total_power = sum(max(0.0, cb.flex_shrink) * max(0.0, sized[i])
+                                      for i, cb in enumerate(ordered))
+                    for i, cb in enumerate(ordered):
+                        if cb.flex_shrink > 0:
+                            power = cb.flex_shrink * max(0.0, sized[i])
+                            shrink_amt = (-deficit) * (power / total_power) if total_power > 0 else 0.0
+                            sized[i] -= shrink_amt
+
+    # --- Phase 3: wrap into lines (if flex-wrap) ---
+    lines: list[list[int]] = []
+    if wrap:
+        line: list[int] = []
+        line_w = 0.0
+        for i, cb in enumerate(ordered):
+            w = sized[i]
+            if line and line_w + w > available:
+                lines.append(line)
+                line = []
+                line_w = 0.0
+            line.append(i)
+            line_w += w
+        if line:
+            lines.append(line)
+        if not lines:
+            lines = [list(range(n))]
+        # P27.3 — wrap-reverse: lines stack from the far cross edge.
+        # Reverse the line list so the DOM-first line sits at the far
+        # cross-axis edge (bottom for row, left for column).
+        if wrap_reverse:
+            lines.reverse()
     else:
-        # --- vertical flow: children stacked ---
-        visible = [cb for cb in bx.children if not cb.is_display_none]
-        child_hs = [
-            cb.rect.h + cb.padding.top + cb.padding.bottom + cb.margin.top + cb.margin.bottom
-            for cb in visible
-        ]
-        total_h = sum(child_hs)
-        n = len(child_hs)
-        gap = 0.0
-        if bx.justify_content == "space-between" and n > 1 and available > total_h:
-            gap = (available - total_h) / (n - 1)
+        lines = [list(range(n))]
+        # single line: overflow is handled by the shrink pass; when every
+        # item has flex-shrink:0 the overflow is clipped (toy: no overflow
+        # property yet), so no renormalisation here.
+
+    # --- Phase 4: place lines ---
+    if row:
+        # cross axis = vertical; container height = sum of line heights
+        line_heights: list[float] = []
+        for line in lines:
+            lh = max(natural_cross[i] for i in line)
+            line_heights.append(lh)
+        container_h = sum(line_heights)
+
+        # align-content distributes lines on the cross axis
+        cross_size = max(container_h, 0.0)
+        if bx.explicit_height is not None:
+            cross_avail = bx.explicit_height
+        else:
+            cross_avail = cross_size
+
+        # distribute lines vertically
+        nl = len(lines)
+        line_ys: list[float] = []
+        for k in range(nl):
+            line_ys.append(sum(line_heights[:k]))
+        free_space = cross_avail - sum(line_heights)
+        # P27.4 — when a single line sits in a taller container with
+        # align-content:stretch (default), the line stretches to fill
+        # the cross axis so align-items:center places items at the
+        # true container centre (spec §4.5).
+        if nl == 1 and bx.explicit_height is not None and bx.align_content in ("stretch", ""):
+            line_heights[0] = cross_avail
+            free_space = 0.0
+        if free_space > 0:
+            ac = bx.align_content
+            # P27.3 — wrap-reverse: lines pack against the far cross edge
+            # (bottom for row), so shift all lines down by free_space
+            # before applying align-content distribution.
+            if wrap_reverse and nl > 1:
+                for k in range(nl):
+                    line_ys[k] += free_space
+            if nl > 1:
+                if ac == "center":
+                    off = free_space / 2.0
+                    for k in range(nl):
+                        line_ys[k] += off
+                elif ac in ("end", "flex-end"):
+                    for k in range(nl):
+                        line_ys[k] += free_space
+                elif ac == "space-between":
+                    step = free_space / (nl - 1)
+                    acc = 0.0
+                    for k in range(nl):
+                        line_ys[k] = acc
+                        acc += line_heights[k] + step
+                elif ac == "space-around":
+                    share = free_space / nl
+                    for k in range(nl):
+                        line_ys[k] = share / 2.0 + k * (line_heights[k] + share)
+            else:  # nl == 1
+                # Single line in a taller container: align-content still
+                # distributes the free cross-axis space (spec §9.5).
+                if ac in ("center", "flex-center"):
+                    line_ys[0] += free_space / 2.0
+                elif ac in ("end", "flex-end"):
+                    line_ys[0] += free_space
+                # "start" / "stretch" (default): single line stays at top.
+        # else: no free space — lines pack from the start.
+
+        # place items within each line
+        for li, line in enumerate(lines):
+            line_y = content_y0 + line_ys[li]
+            line_h = line_heights[li]
+            eff_line_y = line_y
+            # main axis within line
+            line_total = sum(sized[i] for i in line)
+            free_main = available - line_total
+            jc = bx.justify_content
+            if reverse:
+                # P27.5 — row-reverse: main axis starts at the right edge.
+                # Default justify-content is "start" (flex-start = right
+                # edge for row-reverse).  Items pack from the right.
+                x_off = content_x0 + available - free_main
+                if free_main > 0:
+                    if jc == "center":
+                        x_off = content_x0 + free_main / 2.0
+                    elif jc in ("end", "flex-end"):
+                        x_off = content_x0
+            else:
+                x_off = content_x0
+                if free_main > 0:
+                    if jc in ("start", "flex-start"):
+                        x_off = content_x0
+                    elif jc == "center":
+                        x_off = content_x0 + free_main / 2.0
+                    elif jc in ("end", "flex-end"):
+                        x_off = content_x0 + free_main
+
+            item_x = x_off
+            m = len(line)
+            step_space = 0.0
+            if free_main > 0:
+                if jc == "space-between" and m > 1:
+                    step_space = free_main / (m - 1)
+                elif jc == "space-around" and m > 0:
+                    step_space = free_main / m
+                    if not reverse:
+                        item_x = content_x0 + step_space / 2.0
+                    else:
+                        item_x = content_x0 + available - step_space / 2.0
+                elif jc == "space-evenly" and m > 0:
+                    step_space = free_main / (m + 1)
+                    if not reverse:
+                        item_x = content_x0 + step_space
+                    else:
+                        item_x = content_x0 + available - step_space
+
+            for pos, i in enumerate(line):
+                cb = ordered[i]
+                w = sized[i]
+                # P27.4 — cross-axis alignment for this item (item height
+                # = natural_cross; stretch fills the line height).
+                item_align = cb.align_self if cb.align_self else bx.align_items
+                ch = natural_cross[i]
+                if item_align in ("stretch", "") and (row and cb.explicit_height is None):
+                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
+                    if reverse:
+                        item_x -= w
+                    cb.rect.h = line_h
+                elif item_align in ("start", "flex-start"):
+                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
+                elif item_align in ("center", "baseline"):
+                    layout_block(cb, item_x - w if reverse else item_x,
+                                 eff_line_y + max(0.0, (line_h - ch) / 2.0), w)
+                elif item_align in ("end", "flex-end"):
+                    layout_block(cb, item_x - w if reverse else item_x,
+                                 eff_line_y + max(0.0, line_h - ch), w)
+                else:
+                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
+                if reverse:
+                    item_x -= w + step_space
+                else:
+                    item_x += w + step_space
+        # row direction: finalize container rect
+        if bx.explicit_height is not None:
+            final_h = bx.explicit_height
+        else:
+            final_h = max(sum(line_heights), bx.line_height_px)
+        bx.rect = Rect(content_x0, content_y0, available, final_h)
+    else:
+        # column direction: main axis = vertical, cross axis = horizontal.
+        # Single line (column wrap is rare); cross-size = container width.
+        cross_size = available
+        main_avail = bx.explicit_height if bx.explicit_height is not None else sum(sized)
+        # P27.5 — column-reverse: the flex-start edge is the BOTTOM of
+        # the container.  Items stack bottom-to-top: item 0 (first in
+        # DOM) sits at the very bottom, item 1 above it, etc.
+        # place_order = [0, 1, ...] — we walk UPWARD from the bottom.
+        place_order = list(range(n))
+        # justify-content distributes items along the main (vertical) axis.
+        free_main = main_avail - sum(sized)
         y_off = content_y0
-        if bx.justify_content == "center" and available > total_h:
-            y_off = content_y0 + (available - total_h) / 2.0
-        elif bx.justify_content == "end" and available > total_h:
-            y_off = content_y0 + (available - total_h)
-        max_w = 0.0
-        for cb, ch in zip(visible, child_hs):
-            layout_block(cb, content_x0, y_off, containing_w)
-            y_off += ch + gap
-            cw = cb.rect.w + cb.padding.left + cb.padding.right
-            if cw > max_w:
-                max_w = cw
-        final_h = total_h + gap * max(0, n - 1)
-        bx.rect = Rect(content_x0, content_y0, available, max(final_h, bx.line_height_px))
+        if free_main > 0:
+            jc = bx.justify_content
+            if reverse:
+                # P27.5 — column-reverse: flex-start = bottom.
+                # start: first item's bottom edge sits at the container bottom.
+                #   y_off = main_avail - h_0  (item 0's top)
+                # end: first item's top edge sits at the container top.
+                #   y_off = 0
+                if jc in ("start", "flex-start"):
+                    y_off = content_y0 + main_avail - sized[0]
+                elif jc == "center":
+                    # center the whole stack; y_off = top of first item
+                    stack_h = sum(sized)
+                    y_off = content_y0 + (main_avail - stack_h) / 2.0
+                elif jc in ("end", "flex-end"):
+                    y_off = content_y0
+            else:
+                if jc == "center":
+                    y_off = content_y0 + free_main / 2.0
+                elif jc in ("end", "flex-end"):
+                    y_off = content_y0 + free_main
+        step_space = 0.0
+        if free_main > 0:
+            jc = bx.justify_content
+            if jc == "space-between" and n > 1:
+                step_space = free_main / (n - 1)
+            elif jc == "space-around" and n > 0:
+                step_space = free_main / n
+            elif jc == "space-evenly" and n > 0:
+                step_space = free_main / (n + 1)
+                if not reverse:
+                    y_off = content_y0 + step_space
+                else:
+                    y_off = content_y0 + main_avail - step_space
+        for pi in place_order:
+            cb = ordered[pi]
+            h = sized[pi]
+            # cross-axis alignment: stretch fills the container width.
+            item_align = cb.align_self if cb.align_self else bx.align_items
+            cw = natural_cross[pi]
+            if item_align in ("stretch", "") and cb.explicit_width is None:
+                layout_block(cb, content_x0, y_off, cross_size)
+            elif item_align == "center":
+                layout_block(cb, content_x0 + max(0.0, (cross_size - cw) / 2.0), y_off, cross_size)
+            elif item_align in ("end", "flex-end"):
+                layout_block(cb, content_x0 + max(0.0, cross_size - cw), y_off, cross_size)
+            else:  # start / flex-start / baseline
+                layout_block(cb, content_x0, y_off, cross_size)
+            if reverse:
+                # P27.5 — column-reverse: walk upward.  The next item
+                # (above the current one) starts at  current.y - next.h.
+                nxt_pi = pi + 1
+                if nxt_pi < n:
+                    y_off -= sized[nxt_pi] + step_space
+                else:
+                    y_off -= h + step_space
+            else:
+                y_off += h + step_space
+        final_h = main_avail if bx.explicit_height is not None else sum(sized)
+        bx.rect = Rect(content_x0, content_y0, cross_size,
+                       max(final_h, bx.line_height_px))
 
 
 def _layout_grid(

@@ -1462,6 +1462,80 @@
 - [x] 测试总数 528 → **542** 条（14 条新 P26 测试）。
 - [x] 既有 528 条测试全绿无回归；`main.py` CLI e2e 渲染通过。
 
+## P27 — Flexbox 完整化（M3 第三步）✅
+
+> 依据 `项目未来规划.txt` §P27：flex 引擎从"单行 + grow 分配"升级到
+> 规范级 flex 行为（spec §9.2/§9.7）：主轴三值冻结（basis/grow/shrink）、
+> 多行 wrap、交叉轴全项对齐、方向 reverse、order 重排、min-width:auto。
+> 测试 542 → **562**（20 条新 P27 测试）。
+
+### 27.1 LayoutBox 新字段 + CSS 属性读取 ✅
+
+- [x] `LayoutBox` 新增 `flex_wrap`（默认 `nowrap`）、`align_content`
+  （默认 `stretch`）、`flex_shrink`（默认 1.0）、`flex_basis`
+  （float|None，None = auto）、`flex_order`（默认 0）、`align_self`
+  （默认 "" = 继承容器 align-items）。
+- [x] `build_box` 在 `is_flex` 分支读取 `flex-wrap` / `align-content`；
+  在 P27 读取块（P3.2 flex-grow 块之前）读取 `flex-shrink` /
+  `flex-basis` / `order` / `align-self`。
+- [x] `flex-basis` 支持 `px` / `em` / `%`（% 存为小数，布局时按容器
+  主轴解析）；`auto` 关键字 → None。
+
+### 27.2 主轴尺寸：grow/shrink/basis 三值冻结 ✅
+
+- [x] Phase 1（basis 计算，spec §9.2.3）：`flex-basis` 显式值 →
+  主轴显式尺寸（width/height）→ 自然主轴尺寸（Phase 0 在 containing
+  宽度下测量）。
+- [x] Phase 2（spec §9.7 单遍分配）：余量 > 0 按 `flex-grow` 权重分配；
+  余量 < 0 先抬到 min 地板（content / min-width / min-height），再按
+  `shrink × sized` 功率分配 deficit；`flex-shrink:0` 项保持不变。
+- [x] 测试：`p27_flex_shrink_proportional` / `p27_flex_shrink_weighted`
+  / `p27_flex_basis_explicit` / `p27_flex_basis_zero` /
+  `p27_flex_shrink_zero_keeps_size` /
+  `p27_flex_grow_shrink_basis_shorthand`。
+
+### 27.3 flex-wrap 多行 ✅
+
+- [x] Phase 3：`flex-wrap:wrap` 时按 sized 宽度逐行装箱
+  （`line_w + w > available` 即换行）；`wrap-reverse` 反转行序，
+  行从远交叉边（row 方向为底部）堆叠。
+- [x] wrap 容器不做 shrink-to-fit（spec §9.7.4：wrap 时项溢出换行而非
+  压缩），min 地板仍生效。
+- [x] 测试：`p27_flex_wrap_two_lines` / `p27_flex_wrap_single_line_fits`
+  / `p27_wrap_reverse_direction`。
+
+### 27.4 交叉轴：align-items / align-content / align-self + space-* ✅
+
+- [x] 行高 = 行内最高项；单行 + 显式容器高度 + align-content:stretch
+  （默认）时，行拉伸填满交叉轴，align-items:center 即容器中心。
+- [x] 多行：align-content 分布行间空隙（center / end / space-between /
+  space-around）；单行按 spec §9.5 同样分布。
+- [x] 项内：`align-self` 覆盖容器 `align-items`；stretch 填满行高，
+  center/baseline 居中，end 对齐行底。
+- [x] 主轴 space-around（半间隙在两端）/ space-evenly（间隙全相等）；
+  reverse 方向时所有起点从远端计算。
+- [x] 测试：`p27_align_items_start` / `p27_align_items_end` /
+  `p27_align_self_overrides` / `p27_justify_content_space_evenly` /
+  `p27_justify_content_space_around` / `p27_align_content_center_multi_line`。
+
+### 27.5 方向 reverse + order + min-width:auto ✅
+
+- [x] `flex-direction:row-reverse`：主轴起点移到右缘，项自右向左排布，
+  justify-content start 贴右缘 / end 贴左缘。
+- [x] `flex-direction:column-reverse`：主轴起点移到容器底部，项自下
+  向上堆叠（item 0 在底部）；`y_off` 按"下一项高度"上推，避免重叠。
+- [x] `order`：项按 `(order, 源序号)` 稳定排序后装箱与排布。
+- [x] min-width/min-height:auto：shrink 地板 = max(内容主轴尺寸,
+  显式 min-*)。
+- [x] 测试：`p27_flex_row_reverse` / `p27_flex_direction_column_reverse`
+  / `p27_flex_order_reorders` / `p27_min_width_auto_floor`。
+
+### 27.6 测试扩充 ✅
+
+- [x] 测试总数 542 → **562** 条（20 条新 P27 测试）。
+- [x] 既有 542 条测试全绿无回归；`main.py` CLI e2e 渲染 P27 flexbox
+  页面（row + wrap + column-reverse）通过。
+
 ## 实施顺序
 
 ```
@@ -1602,11 +1676,18 @@ P26.3 百分比高度解析链 CSS2.1 §10.6.5（~1.5h）
 P26.4 min/max 宽度/高度约束 CSS2.1 §10.4（~1h）
 P26.5 width:auto 分配 CSS2.1 §10.3（~1h）
 P26.6 测试扩充（随 P26 完成）
+
+P27.1 LayoutBox 新字段 + CSS 属性读取（shrink/basis/wrap/order/align-self/align-content）
+P27.2 主轴尺寸：grow/shrink/basis 三值冻结 + 规范分配算法
+P27.3 flex-wrap 多行
+P27.4 交叉轴：align-items/content/self 全项 + space-around/space-evenly
+P27.5 方向 reverse + order 排序 + min-width:auto
+P27.6 测试扩充（20 条 P27 测试，542 → 562）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 已完成（**542/542** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 已完成（**562/562** 测试通过）。
 
-下一站：**P27（待定 — 依据 ROADMAP 后续规划）**。
+下一站：**P28（待定 — 依据 ROADMAP 后续规划）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
