@@ -23,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            542 条测试（python test.py）
+├── test.py            562 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P26 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P27 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -81,6 +81,18 @@ min/max 宽度/高度约束（CSS2.1 §10.4，`LayoutBox.min/max_width/height`
 字段 + 早期/finalize 双阶段 clamp）；width:auto 分配（CSS2.1 §10.3，
 无显式宽度的 block 子 box 宽度 = 父内容宽 - margin - padding，
 浮动子 box 同受父内容宽约束）。
+
+P27 — Flexbox 完整化（M3 第三步）：主轴三值冻结
+（`flex-grow` / `flex-shrink` / `flex-basis`，spec §9.2/§9.7：basis
+= flex-basis → 显式主轴尺寸 → 自然主轴尺寸；余量按 grow 权重分配，
+deficit 先抬到 min 地板再按 shrink × sized 功率分配）；`flex-wrap`
+多行装箱（wrap 容器不做 shrink-to-fit，溢出项换行；`wrap-reverse`
+行序反转、自远交叉边堆叠）；交叉轴全项对齐（`align-items` /
+`align-content` / `align-self`，单行 + 显式高度 + stretch 时行拉伸
+填满交叉轴；`space-around` 半间隙在两端 / `space-evenly` 全等间隙）；
+方向 reverse（`row-reverse` 自右向左、`column-reverse` 自下向上，
+justify-content start/end 贴远端）；`order` 稳定排序重排；
+min-width/min-height:auto 内容地板。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -887,7 +899,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**542 条测试**，覆盖：
+**562 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -970,6 +982,7 @@ python test.py
 | HTML5 容错解析（P24） | `p24_entities_named`、`p24_entities_numeric_dec`、`p24_entities_numeric_hex`、`p24_entities_zero_and_surrogate`、`p24_entities_unknown_name_literal`、`p24_rawtext_script_literal`、`p24_rawtext_style_literal`、`p24_void_input_no_stack`、`p24_void_self_closing_br`、`p24_implicit_p_sibling`、`p24_block_closes_p`、`p24_adoption_b_i`、`p24_stray_close_ignored`、`p24_comment_doctype_dropped`、`p24_case_insensitive_tag`、`p24_foster_tr_in_div`、`p24_unclosed_lt_text`、`p24_utf16_bom`、`p24_utf8_bom`、`p24_dom_shim_reexport`、`p24_dom_parse_bytes`、`p24_full_pipeline_render` |
 | CSS 层叠与计算值（P25） | `p25_specificity_4tuple`、`p25_specificity_id_beats_class`、`p25_specificity_class_beats_type`、`p25_important_beats_normal`、`p25_important_author_wins_over_normal_inline`、`p25_inherit_keyword`、`p25_initial_keyword`、`p25_unset_keyword`、`p25_shorthand_margin_expands`、`p25_shorthand_padding_expands`、`p25_em_computed_chain`、`p25_inherit_font_size`、`p25_source_cascade_author_over_ua`、`p25_full_pipeline_important` |
 | 块级布局修正（P26） | `p26_margin_collapse_siblings`、`p26_margin_collapse_parent_child`、`p26_margin_collapse_empty_block`、`p26_bfc_cleares_floats`、`p26_float_inside_bfc_no_overlap`、`p26_pct_height_chain`、`p26_height_auto_grows`、`p26_min_width_clamps`、`p26_max_width_clamps`、`p26_min_height_clamps`、`p26_max_height_clamps`、`p26_width_auto_fills`、`p26_width_auto_with_margins`、`p26_full_pipeline_render` |
+| Flexbox 完整化（P27） | `p27_flex_shrink_proportional`、`p27_flex_shrink_weighted`、`p27_flex_basis_explicit`、`p27_flex_wrap_two_lines`、`p27_flex_wrap_single_line_fits`、`p27_align_items_start`、`p27_align_items_end`、`p27_align_self_overrides`、`p27_justify_content_space_evenly`、`p27_justify_content_space_around`、`p27_flex_direction_column_reverse`、`p27_flex_order_reorders`、`p27_min_width_auto_floor`、`p27_flex_basis_zero`、`p27_flex_shrink_zero_keeps_size`、`p27_align_content_center_multi_line`、`p27_flex_row_reverse`、`p27_flex_grow_shrink_basis_shorthand`、`p27_wrap_reverse_direction`、`p27_flex_full_pipeline_render` |
 
 ## 改进路线图
 
@@ -1114,6 +1127,12 @@ python test.py
 - [x] P26.4 min/max 宽度/高度约束（CSS2.1 §10.4，双阶段 clamp）
 - [x] P26.5 width:auto 分配（CSS2.1 §10.3，父内容宽约束）
 - [x] P26.6 测试扩充至 542 条（测试总数 528 → 542）
+- [x] P27.1 LayoutBox 新字段 + CSS 属性读取（flex-shrink / flex-basis / flex-wrap / order / align-self / align-content）
+- [x] P27.2 主轴三值冻结（flex-basis → 显式尺寸 → 自然尺寸；grow 分配余量 / shrink × sized 分配 deficit）
+- [x] P27.3 flex-wrap 多行装箱（wrap-reverse 行序反转，wrap 容器不做 shrink-to-fit）
+- [x] P27.4 交叉轴对齐全项（align-items / align-content / align-self + space-around / space-evenly）
+- [x] P27.5 方向 reverse + order 稳定排序 + min-width/min-height:auto 内容地板
+- [x] P27.6 测试扩充至 562 条（测试总数 542 → 562）
 
 ## 与 Rust 版的对应关系
 

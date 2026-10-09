@@ -8256,6 +8256,362 @@ def test_p26_full_pipeline_render():
     assert nw > 0, "P26 doc must still render pixels"
 
 
+def test_p27_flex_shrink_proportional():
+    """P27.2 — flex-shrink distributes overflow deficit proportionally.
+    3 items basis 100 each in 200px container: deficit 100 split evenly."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:200px">'
+            '<div id=a style="flex-basis:100px;width:auto"></div>'
+            '<div id=b style="flex-basis:100px;width:auto"></div>'
+            '<div id=c style="flex-basis:100px;width:auto"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    f = _find_box(lroot, id_="f")
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    c = _find_box(lroot, id_="c")
+    # deficit = 100, 3 items with equal shrink=1 and basis=100 → each shrinks 100/3 ≈ 33.3
+    expected = 100 - 100/3
+    assert abs(a.rect.w - expected) < 2.0, f"shrink item a should be ~{expected:.1f}, got {a.rect.w}"
+    assert abs(b.rect.w - expected) < 2.0, f"shrink item b should be ~{expected:.1f}, got {b.rect.w}"
+    assert abs(c.rect.w - expected) < 2.0, f"shrink item c should be ~{expected:.1f}, got {c.rect.w}"
+
+
+def test_p27_flex_shrink_weighted():
+    """P27.2 — flex-shrink:0 prevents an item from shrinking."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:200px">'
+            '<div id=a style="flex-basis:150px;flex-shrink:0;width:auto"></div>'
+            '<div id=b style="flex-basis:150px;flex-shrink:1;width:auto"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # a stays 150, b absorbs all deficit: 150 - 100 = 50
+    assert a.rect.w >= 140.0, f"shrink:0 item must stay ~150, got {a.rect.w}"
+    assert b.rect.w < 100.0, f"shrink:1 item must absorb deficit, got {b.rect.w}"
+
+
+def test_p27_flex_basis_explicit():
+    """P27.2 — flex-basis:50px overrides width for the basis calculation."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px">'
+            '<div id=a style="flex-basis:50px;flex-grow:1;width:auto"></div>'
+            '<div id=b style="flex-grow:1"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # a basis=50, b basis≈0 (auto content). leftover=300-50=250 split evenly: a=50+125=175, b=0+125=125
+    assert a.rect.w > 100.0, f"flex-basis+grow item a should be wider, got {a.rect.w}"
+    assert a.rect.w + b.rect.w <= 300.0 + 5.0, f"total must not exceed 300, got {a.rect.w + b.rect.w}"
+
+
+def test_p27_flex_wrap_two_lines():
+    """P27.3 — flex-wrap:wrap puts items on 2 lines when they don't fit."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-wrap:wrap;width:100px;height:100px">'
+            '<div id=a style="width:60px;height:20px"></div>'
+            '<div id=b style="width:60px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # 60+60 > 100, so b wraps to line 2
+    assert a.rect.y < b.rect.y, f"a must be above b (different lines): a.y={a.rect.y} b.y={b.rect.y}"
+
+
+def test_p27_flex_wrap_single_line_fits():
+    """P27.3 — flex-wrap:wrap with items that fit stays on one line."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-wrap:wrap;width:200px">'
+            '<div id=a style="width:50px;height:20px"></div>'
+            '<div id=b style="width:50px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    assert a.rect.y == b.rect.y, f"both on one line: a.y={a.rect.y} b.y={b.rect.y}"
+    assert abs(a.rect.x + 50 - b.rect.x) < 5.0, f"b starts after a: a.x+w={a.rect.x+50} b.x={b.rect.x}"
+
+
+def test_p27_align_items_start():
+    """P27.4 — align-items:start aligns all items to the top of the line."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:start">'
+            '<div id=a style="width:30px;height:20px"></div>'
+            '<div id=b style="width:30px;height:60px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    f = _find_box(lroot, id_="f")
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    assert a.rect.y == b.rect.y, f"start: both at top: a.y={a.rect.y} b.y={b.rect.y}"
+
+
+def test_p27_align_items_end():
+    """P27.4 — align-items:end aligns all items to the bottom of the line."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:end">'
+            '<div id=a style="width:30px;height:20px"></div>'
+            '<div id=b style="width:30px;height:60px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # both bottom-aligned: y + h should be equal
+    assert abs((a.rect.y + a.rect.h) - (b.rect.y + b.rect.h)) < 2.0, \
+        f"end: bottoms equal: a_bottom={a.rect.y+a.rect.h} b_bottom={b.rect.y+b.rect.h}"
+
+
+def test_p27_align_self_overrides():
+    """P27.4 — align-self:center overrides container's align-items:start."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:start">'
+            '<div id=a style="width:30px;height:20px"></div>'
+            '<div id=b style="width:30px;height:40px;align-self:center"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # a is at top, b is centered
+    assert a.rect.y < b.rect.y, f"a (top) above b (center): a.y={a.rect.y} b.y={b.rect.y}"
+
+
+def test_p27_justify_content_space_evenly():
+    """P27.4 — justify-content:space-evenly distributes equal space around all items."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px;justify-content:space-evenly">'
+            '<div id=a style="width:50px;height:20px"></div>'
+            '<div id=b style="width:50px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # 3 gaps of equal size: gap = (300-100)/3 ≈ 66.7
+    gap = a.rect.x - _find_box(lroot, id_="f").rect.x
+    assert gap > 10.0, f"space-evenly: first gap must be >10, got {gap}"
+    mid_gap = b.rect.x - (a.rect.x + a.rect.w)
+    assert abs(gap - mid_gap) < 5.0, f"space-evenly: gaps equal: outer={gap} mid={mid_gap}"
+
+
+def test_p27_justify_content_space_around():
+    """P27.4 — justify-content:space-around: half gap at edges, full between."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px;justify-content:space-around">'
+            '<div id=a style="width:50px;height:20px"></div>'
+            '<div id=b style="width:50px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    f = _find_box(lroot, id_="f")
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # each item gets free/2 on each side: free=200, half=100/2=50
+    edge_gap = a.rect.x - f.rect.x
+    assert edge_gap > 20.0, f"space-around: edge gap >20, got {edge_gap}"
+    mid = b.rect.x - (a.rect.x + a.rect.w)
+    assert mid > edge_gap, f"space-around: mid gap > edge gap: mid={mid} edge={edge_gap}"
+
+
+def test_p27_flex_direction_column_reverse():
+    """P27.5 — flex-direction:column-reverse reverses the main-axis
+    stacking order: the first DOM item ends up at the bottom of the
+    main axis (for reverse-direction flexboxes the flex start edge is
+    the bottom, so the start-packed stack reads bottom-to-top)."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-direction:column-reverse;width:100px;height:200px">'
+            '<div id=a style="height:30px"></div>'
+            '<div id=b style="height:50px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # reverse main axis: a (first in DOM) sits at the flex-start edge
+    # (bottom) and b stacks above it: b's bottom touches a's top.
+    assert a.rect.y > b.rect.y, \
+        f"column-reverse: a packed from bottom, above b: a.y={a.rect.y} b.y={b.rect.y}"
+    assert abs(b.rect.y + b.rect.h - a.rect.y) < 2.0, \
+        f"items must be adjacent in the reversed stack: b_bottom={b.rect.y+b.rect.h} a.y={a.rect.y}"
+
+
+def test_p27_flex_order_reorders():
+    """P27.5 — order property changes visual order without changing DOM."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px">'
+            '<div id=a style="order:2;width:50px"></div>'
+            '<div id=b style="order:1;width:50px"></div>'
+            '<div id=c style="order:0;width:50px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    c = _find_box(lroot, id_="c")
+    # visual order: c(0), b(1), a(2)
+    assert c.rect.x < b.rect.x, f"order: c(0) before b(1): c.x={c.rect.x} b.x={b.rect.x}"
+    assert b.rect.x < a.rect.x, f"order: b(1) before a(2): b.x={b.rect.x} a.x={a.rect.x}"
+
+
+def test_p27_min_width_auto_floor():
+    """P27.5 — min-width prevents a flex item from shrinking below its content."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:100px">'
+            '<div id=a style="width:200px;flex-shrink:1;min-width:80px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    # container is 100px, a wants to shrink but min-width:80 is the floor
+    assert a.rect.w >= 75.0, f"min-width:80 floor: got {a.rect.w}"
+
+
+def test_p27_flex_basis_zero():
+    """P27.2 — flex-basis:0 makes items grow from zero basis."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px">'
+            '<div id=a style="flex-basis:0px;flex-grow:1">x</div>'
+            '<div id=b style="flex-basis:0px;flex-grow:1"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # both basis 0, grow 1:1 → equal 150px split
+    assert abs(a.rect.w - b.rect.w) < 5.0, f"equal grow+basis:0: a={a.rect.w} b={b.rect.w}"
+    assert a.rect.w > 100.0, f"each item should be >100 (150 expected), got {a.rect.w}"
+
+
+def test_p27_flex_shrink_zero_keeps_size():
+    """P27.2 — flex-shrink:0 items keep their basis even when overflowing."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:150px">'
+            '<div id=a style="flex-basis:100px;flex-shrink:0"></div>'
+            '<div id=b style="flex-basis:100px;flex-shrink:0"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # both keep 100px, overflow 50px
+    assert a.rect.w >= 95.0, f"shrink:0 item a must keep ~100, got {a.rect.w}"
+    assert b.rect.w >= 95.0, f"shrink:0 item b must keep ~100, got {b.rect.w}"
+
+
+def test_p27_align_content_center_multi_line():
+    """P27.4 — align-content:center centres multiple wrapped lines."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-wrap:wrap;width:100px;height:200px;align-content:center">'
+            '<div id=a style="width:60px;height:30px"></div>'
+            '<div id=b style="width:60px;height:30px"></div>'
+            '<div id=c style="width:60px;height:30px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    c = _find_box(lroot, id_="c")
+    # 3 items × 60px > 100px → 3 lines; centered in 200px container
+    assert a.rect.y > 10.0, f"lines must be pushed down from top: a.y={a.rect.y}"
+    assert c.rect.y + c.rect.h < 200.0, f"last line must not overflow bottom: c_bottom={c.rect.y+c.rect.h}"
+
+
+def test_p27_flex_row_reverse():
+    """P27.5 — flex-direction:row-reverse lays items right-to-left."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-direction:row-reverse;width:300px">'
+            '<div id=a style="width:50px;height:20px"></div>'
+            '<div id=b style="width:50px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # reverse: a (first) goes rightmost
+    assert a.rect.x > b.rect.x, f"row-reverse: a right of b: a.x={a.rect.x} b.x={b.rect.x}"
+
+
+def test_p27_flex_grow_shrink_basis_shorthand():
+    """P27.2 — flex shorthand '1 1 auto' sets grow/shrink/basis."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;width:300px">'
+            '<div id=a style="flex-basis:100px;flex-grow:2;flex-shrink:1"></div>'
+            '<div id=b style="flex-basis:100px;flex-grow:1;flex-shrink:1"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # leftover=100, grow 2:1 → a gets +66.7, b gets +33.3
+    assert a.rect.w > b.rect.w, f"grow 2 > grow 1: a={a.rect.w} b={b.rect.w}"
+    assert abs(a.rect.w - 166.7) < 10.0, f"a ≈ 166.7, got {a.rect.w}"
+
+
+def test_p27_wrap_reverse_direction():
+    """P27.3 — flex-wrap:wrap-reverse stacks lines from the far cross
+    edge: with an explicit container height, line 0 sits lower than
+    later lines (a is below b when a wraps before b)."""
+    import dom, css, layout
+    html = ('<div id=f style="display:flex;flex-wrap:wrap-reverse;width:100px;height:200px">'
+            '<div id=a style="width:60px;height:20px"></div>'
+            '<div id=b style="width:60px;height:20px"></div>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 300.0)
+    a = _find_box(lroot, id_="a")
+    b = _find_box(lroot, id_="b")
+    # wrap-reverse: lines stack from the bottom.  Line 0 (a) is at the
+    # bottom; line 1 (b) is above it.  The container height is 200px.
+    assert a.rect.y > b.rect.y, \
+        f"wrap-reverse: a (line 0) below b (line 1): a.y={a.rect.y} b.y={b.rect.y}"
+    assert a.rect.y + a.rect.h <= 200.0, \
+        f"a must not overflow the container bottom: a_bottom={a.rect.y+a.rect.h}"
+
+
+def test_p27_flex_full_pipeline_render():
+    """P27 — the whole pipeline still renders with P27 flex features."""
+    import browser
+    html = ('<html><body style="height:300px">'
+            '<div style="display:flex;flex-wrap:wrap;width:300px;height:200px;justify-content:center;align-items:center">'
+            '<div style="width:80px;height:40px;flex-basis:80px;flex-grow:1;background:blue"></div>'
+            '<div style="width:80px;height:40px;flex-basis:80px;flex-grow:1;background:red"></div>'
+            '<div style="width:80px;height:40px;flex-basis:80px;flex-grow:1;background:green"></div>'
+            '</div>'
+            '</body></html>')
+    bmp = browser.render_document(html, "", 300, 200)
+    assert bmp is not None and bmp.width == 300 and bmp.height == 200
+    nw = sum(1 for px in bmp.pixels if px != 0xFFFFFF)
+    assert nw > 0, "P27 flex doc must still render pixels"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -8869,6 +9225,27 @@ def main():
         ("p26_width_auto_with_margins", test_p26_width_auto_with_margins),
         ("p26_float_inside_bfc_no_overlap", test_p26_float_inside_bfc_no_overlap),
         ("p26_full_pipeline_render", test_p26_full_pipeline_render),
+        # P27 — Flexbox 完整化（M3 第三步）。
+        ("p27_flex_shrink_proportional", test_p27_flex_shrink_proportional),
+        ("p27_flex_shrink_weighted", test_p27_flex_shrink_weighted),
+        ("p27_flex_basis_explicit", test_p27_flex_basis_explicit),
+        ("p27_flex_wrap_two_lines", test_p27_flex_wrap_two_lines),
+        ("p27_flex_wrap_single_line_fits", test_p27_flex_wrap_single_line_fits),
+        ("p27_align_items_start", test_p27_align_items_start),
+        ("p27_align_items_end", test_p27_align_items_end),
+        ("p27_align_self_overrides", test_p27_align_self_overrides),
+        ("p27_justify_content_space_evenly", test_p27_justify_content_space_evenly),
+        ("p27_justify_content_space_around", test_p27_justify_content_space_around),
+        ("p27_flex_direction_column_reverse", test_p27_flex_direction_column_reverse),
+        ("p27_flex_order_reorders", test_p27_flex_order_reorders),
+        ("p27_min_width_auto_floor", test_p27_min_width_auto_floor),
+        ("p27_flex_basis_zero", test_p27_flex_basis_zero),
+        ("p27_flex_shrink_zero_keeps_size", test_p27_flex_shrink_zero_keeps_size),
+        ("p27_align_content_center_multi_line", test_p27_align_content_center_multi_line),
+        ("p27_flex_row_reverse", test_p27_flex_row_reverse),
+        ("p27_flex_grow_shrink_basis_shorthand", test_p27_flex_grow_shrink_basis_shorthand),
+        ("p27_wrap_reverse_direction", test_p27_wrap_reverse_direction),
+        ("p27_flex_full_pipeline_render", test_p27_flex_full_pipeline_render),
     ]
     passed = 0
     failed = []
