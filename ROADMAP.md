@@ -1536,7 +1536,72 @@
 - [x] 既有 542 条测试全绿无回归；`main.py` CLI e2e 渲染 P27 flexbox
   页面（row + wrap + column-reverse）通过。
 
-## P28 — 表单与交互真实化（M3 第四步）✅
+## P29 — JS 引擎补全（M3 第五步）✅
+
+> 依据 `项目未来规划.txt` §P29：正则字面量 + 最小正则引擎（桥接
+> Python `re`，JS 语义接口）、`for...of` + 迭代器协议（`Symbol.iterator`
+> 玩具 + 生成器 `function*`/`yield`）、`Date`/`Math`/`JSON` 补全、
+> `String`/`Array` 残尾方法清理。
+> 测试 583 → **603**（20 条新 P29 测试）。
+
+### 29.1 正则引擎（`re` 桥接）✅
+
+- [x] `lex`：`/pattern/flags` 字面量（表达式上下文感知，避免
+  除法歧义；`\` 转义 + `[...]` 字符类正确匹配终止 `/`）。
+- [x] AST `RegexpLit(pattern, flags)`；解释器产出与
+  `new RegExp(...)` 相同 shape 的 dict（`__regexp__`、`test`/`exec`/
+  `match`/`replace`/`split` 闭包 + `source`/`lastIndex` 键）。
+- [x] `Host._regexp_ctor`：`i`/`m`/`s` 标志映射；`exec` 返回
+  `[0, group1, …]`（含捕获组）；`match` 带 `g` → 全部命中，
+  不带 → 首个 + 捕获组；`replace` 支持 `$&`/`` $` ``/`$'` 替换
+  引用 + 函数替换 + `g` 标志；`split` 支持 limit；非法 pattern →
+  no-match 哨兵（不崩溃）；`u`/`y` 忽略。
+- [x] `String.prototype.match` 正则感知（正则 dict → 其 match
+  闭包）；`String.prototype.replace` / `replaceAll` 正则感知；
+  字符串方法 `at` / `codePointAt` 补全。
+- [x] 测试：`p29_regexp_literal_test` / `p29_regexp_literal_flags` /
+  `p29_regexp_exec_groups` / `p29_string_match_regexp` /
+  `p29_string_replace_regexp` / `p29_new_regexp_ctor`。
+
+### 29.2 迭代器协议 + 生成器 ✅
+
+- [x] `for (let/const/var x of expr)`（`ForOf` 节点）：数组、
+  字符串（逐字符）、dict（键序）、`ToyGenObject`（驱动 `.next()`
+  至 done）、`@@iterator` 自定义协议、Python `__iter__` 回退。
+- [x] `function* name() {...}` / `function*() {...}`（`GenFuncDecl`
+  / `GenFunExpr`）+ `YieldExpr`（语句级 `yield` / `yield expr`）。
+- [x] `ToyGenObject`（`{done, value}` 协议，`.next()` / `.return()`
+  闭包）与 `ToyIterator`（包装 Python iterable）；
+  `Symbol.iterator` → `"@@iterator"` 键（JS 语义玩具映射）。
+- [x] 生成器驱动器递归遍历 `while` / `if` / `for` / `for...of`
+  嵌套体中的 `yield`（`_make_gen_func` 内部 `_drive_stmt` /
+  `_drive_block`，`_Return` → 生成器返回值）。
+- [x] Map / Set 增加 `__iter__`（Map → `[k,v]` 对；Set → 值序）+
+  `keys()`/`values()`/`entries()` 返回 `ToyIterator`，`for...of`
+  直接可用；函数内 `arguments` 定义为实参列表（`for...of arguments`
+  恢复 P16.1 语义）。
+- [x] 测试：`p29_for_of_array` / `p29_for_of_string_chars` /
+  `p29_for_of_generator` / `p29_generator_next_done` /
+  `p29_generator_expression_form` / `p29_generator_yield_in_loop` /
+  `p29_for_of_map_iterable` / `p29_symbol_iterator_protocol`。
+
+### 29.3 Date / Math / JSON 补全 ✅
+
+- [x] `Date`：无参 → `Date.now()` 毫秒；数值参数 = 毫秒（JS 语义）；
+  `getTime()` 返回毫秒；`Date.parse`（ISO-8601 子集 + 纯数字串）/
+  `Date.UTC(year, month?, …)`（0-based 月）新增。
+- [x] `Math`：`log`/`log2`/`log10`/`log1p`/`exp`/`expm1`/`sin`/`cos`/
+  `tan`/`asin`/`acos`/`atan`/`atan2`/`sinh`/`cosh`/`tanh`/`cbrt`/
+  `hypot`/`trunc` + 常量 `LN2`/`LN10`/`LOG2E`/`LOG10E`/`SQRT2`/
+  `SQRT1_2`。
+- [x] `JSON`：嵌套 dict/list 的 `stringify`/`parse` 往返验证。
+- [x] `Array` 残尾：`fill`/`findLast`/`findLastIndex`/`toReversed`/
+  `toSorted`/`entries`/`keys`/`values`。
+- [x] 测试：`p29_math_trig_log` / `p29_math_constants` /
+  `p29_json_stringify_nested` / `p29_json_parse_stringify_roundtrip` /
+  `p29_array_tail_methods` / `p29_string_tail_methods`。
+
+### P28 — 表单与交互真实化（M3 第四步）✅
 
 > 依据 `项目未来规划.txt` §P28：表单控件从"占位框"升级为**可交互、
 > 有状态、可提交**的真实控件 —— select / checkbox / radio / file 状态
@@ -1762,11 +1827,16 @@ P28.1 控件状态与渲染（select/checkbox/radio/file 默认盒 + checked/sel
 P28.2 表单序列化与提交（collect_form_fields + urlencoded + GET/POST + form_submit）
 P28.3 focus / tab 顺序 / required+pattern 玩具校验 + JS .value 分派
 P28.4 测试扩充（21 条 P28 测试，562 → 583）
+
+P29.1 正则引擎（re 桥接：RegexpLit + RegExp dict + String.match/replace 正则感知）
+P29.2 迭代器协议 + 生成器（for...of + Symbol.iterator 玩具 + function*/yield + Map/Set 可迭代）
+P29.3 Date/Math/JSON 补全（Date.parse/UTC + 三角/对数/常量 + 嵌套往返 + Array/String 残尾）
+P29.4 测试扩充（20 条 P29 测试，583 → 603）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 已完成（**583/583** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 已完成（**603/603** 测试通过）。
 
-下一站：**P29（待定 — 依据 ROADMAP 后续规划）**。
+下一站：**P30（DOM API 补全 — M3 收官）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
