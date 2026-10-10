@@ -23,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            583 条测试（python test.py）
+├── test.py            603 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P28 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P29 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -913,7 +913,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**583 条测试**，覆盖：
+**603 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -998,6 +998,7 @@ python test.py
 | 块级布局修正（P26） | `p26_margin_collapse_siblings`、`p26_margin_collapse_parent_child`、`p26_margin_collapse_empty_block`、`p26_bfc_cleares_floats`、`p26_float_inside_bfc_no_overlap`、`p26_pct_height_chain`、`p26_height_auto_grows`、`p26_min_width_clamps`、`p26_max_width_clamps`、`p26_min_height_clamps`、`p26_max_height_clamps`、`p26_width_auto_fills`、`p26_width_auto_with_margins`、`p26_full_pipeline_render` |
 | Flexbox 完整化（P27） | `p27_flex_shrink_proportional`、`p27_flex_shrink_weighted`、`p27_flex_basis_explicit`、`p27_flex_wrap_two_lines`、`p27_flex_wrap_single_line_fits`、`p27_align_items_start`、`p27_align_items_end`、`p27_align_self_overrides`、`p27_justify_content_space_evenly`、`p27_justify_content_space_around`、`p27_flex_direction_column_reverse`、`p27_flex_order_reorders`、`p27_min_width_auto_floor`、`p27_flex_basis_zero`、`p27_flex_shrink_zero_keeps_size`、`p27_align_content_center_multi_line`、`p27_flex_row_reverse`、`p27_flex_grow_shrink_basis_shorthand`、`p27_wrap_reverse_direction`、`p27_flex_full_pipeline_render` |
 | 表单与交互（P28） | `p28_input_checkbox_render`、`p28_input_radio_render`、`p28_select_option_render`、`p28_file_input_render`、`p28_textarea_default_size`、`p28_form_get_query_string`、`p28_form_post_body`、`p28_form_select_multiple`、`p28_form_radio_group`、`p28_form_action_url_resolution`、`p28_required_validation`、`p28_required_checkbox`、`p28_submit_blocked_by_validation`、`p28_tab_order_natural`、`p28_tab_order_explicit`、`p28_focus_marks_box`、`p28_checkbox_toggle_render_diff`、`p28_full_pipeline_form_render`、`p28_js_element_value_prop`、`p28_form_hidden_field`、`p28_required_select` |
+| JS 引擎补全（P29） | `p29_regexp_literal_test`、`p29_regexp_literal_flags`、`p29_regexp_exec_groups`、`p29_string_match_regexp`、`p29_string_replace_regexp`、`p29_new_regexp_ctor`、`p29_for_of_array`、`p29_for_of_string_chars`、`p29_for_of_generator`、`p29_generator_next_done`、`p29_generator_expression_form`、`p29_generator_yield_in_loop`、`p29_for_of_map_iterable`、`p29_symbol_iterator_protocol`、`p29_math_trig_log`、`p29_math_constants`、`p29_json_stringify_nested`、`p29_json_parse_stringify_roundtrip`、`p29_array_tail_methods`、`p29_string_tail_methods` |
 
 ## 改进路线图
 
@@ -1152,6 +1153,10 @@ python test.py
 - [x] P28.2 表单序列化与提交（collect_form_fields + serialize_form_fields + form_action_url + form_get_url / form_post_body / form_submit）
 - [x] P28.3 focus / tab 顺序 / 校验（tab_order + focus_element + validate_form required/pattern；JS .value 按标签分派）
 - [x] P28.4 测试扩充至 583 条（测试总数 562 → 583）
+- [x] P29.1 正则引擎（`/pattern/flags` 字面量 + `RegExp` dict 桥接 Python `re`；`String.match`/`replace`/`replaceAll` 正则感知；`$&`/`` $` ``/`$'` 替换引用）
+- [x] P29.2 迭代器协议 + 生成器（`for...of` + `Symbol.iterator` 玩具 `"@@iterator"` + `function*`/`yield` 递归驱动器 + Map/Set 可迭代 + 函数内 `arguments` 列表）
+- [x] P29.3 Date/Math/JSON 补全（`Date.parse`/`UTC` 毫秒语义 + 三角/对数/常量 + 嵌套往返 + `Array.fill`/`findLast`/`toReversed`/`toSorted` + `String.at`/`codePointAt`）
+- [x] P29.4 测试扩充至 603 条（测试总数 583 → 603）
 
 ## 与 Rust 版的对应关系
 
@@ -1166,7 +1171,7 @@ python test.py
 | `text.py` + `font.py` | `text.rs` + `font.rs` | 8×8 位图字体 |
 | `rasterize.py` | （新增） | P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体） |
 | `ttf_font.py` | （新增） | P17 TTF/OTF 解析器 + P20 字重/回退链 |
-| `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派） |
+| `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派；P29：正则字面量 + `for...of`/`function*`/`yield` 生成器 + 迭代器协议 + Map/Set 可迭代 + 三角/对数常量 + Array/String 残尾方法） |
 | `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
 | `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳（P21 http 加载） |

@@ -54,7 +54,7 @@ def _is_ident_char(c: str) -> bool:
     return c.isalnum() or c in "_$"
 
 
-def lex(src: str) -> list[Token]:
+def lex(src: str, _allow_regexp: bool = True) -> list[Token]:
     tokens: list[Token] = []
     i = 0
     n = len(src)
@@ -71,6 +71,47 @@ def lex(src: str) -> list[Token]:
             end = src.find("*/", i + 2)
             i = end + 2 if end >= 0 else n
             continue
+        # P29.1 — regex literal: ``/pattern/flags`` in expression position.
+        # Heuristic (JS-style context): a ``/`` starts a regex when the
+        # previous token is an operator / punctuation / start-of-line
+        # context, NOT an identifier / number / string / ``)`` / ``]``
+        # / ``}`` (those imply division or an object-close).
+        prev = tokens[-1] if tokens else None
+        is_expr_ctx = (
+            prev is None
+            or (
+                prev.kind == "op"
+                and prev.value not in ("++", "--", "...")
+            )
+        )
+        if c == "/" and _allow_regexp and is_expr_ctx:
+            # Find the closing slash (handle escaped chars + char classes).
+            j = i + 1
+            in_class = False
+            while j < n:
+                cj = src[j]
+                if cj == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if cj == "[":
+                    in_class = True
+                elif cj == "]":
+                    in_class = False
+                elif cj == "/" and not in_class:
+                    break
+                j += 1
+            if j < n:
+                pattern = src[i + 1:j]
+                j += 1  # consume closing slash
+                flags_start = j
+                while j < n and _is_ident_char(src[j]):
+                    j += 1
+                flags = src[flags_start:j]
+                tokens.append(Token("regexp", pattern, i))
+                tokens.append(Token("regexp_flags", flags, i))
+                i = j
+                continue
+            # Unterminated regex literal: treat as division (fallback).
         if c in ("'", '"'):
             quote = c
             i += 1
@@ -414,6 +455,124 @@ class ObjectSpread(JNode):
     ``ObjectSpread``, the interpreter merges the spread object's keys.
     """
     source: JNode                 # expression that evaluates to a dict
+
+
+# P29.1 — regex literal: ``/pattern/flags``.
+@dataclass
+class RegexpLit(JNode):
+    """Regex literal parsed from ``/pat/flags``.  Evaluated to a dict
+    with the same shape as ``new RegExp(...)`` (P4.2) so ``.test`` /
+    ``.exec`` / ``.replace`` / ``.split`` route through ``call_method``."""
+    pattern: str
+    flags: str = ""
+
+
+# P29.2 — ``for...of`` loop.
+@dataclass
+class ForOf(JNode):
+    """``for (const x of expr) body`` — iterate over a JS iterable.
+
+    ``target`` is a single binding name (toy: no destructuring in
+    for-of); the interpreter evaluates the iterable once and drives a
+    Python iterator (list / str / dict keys / Map / Set / generator).
+    """
+    target: str
+    iterable: JNode
+    body: JNode
+
+
+# P29.2 — generator function: ``function* name() { yield x }``.
+@dataclass
+class GenFuncDecl(JNode):
+    """Star-prefixed function declaration (generator).  The body may
+    contain ``yield expr`` statements; evaluation wraps the body in a
+    Python coroutine-like object the interpreter drives lazily."""
+    name: str
+    params: list
+    body: JNode
+    star: bool = True
+
+
+# P29.2 — generator function expression: ``function* () { yield x }``.
+@dataclass
+class GenFunExpr(JNode):
+    params: list
+    body: JNode
+    star: bool = True
+
+
+# P29.2 — ``yield expr`` inside a generator body.
+@dataclass
+class YieldExpr(JNode):
+    """``yield [expr]`` — pause the generator and resume with the value
+    passed via ``.next()`` (toy: yield* not supported)."""
+    value: JNode | None = None
+
+
+# ---------------------------------------------------------------------------
+# P29.2 — iterator protocol + generators
+# ---------------------------------------------------------------------------
+
+class _JSStop:
+    """Internal sentinel: a JS iterator is exhausted."""
+    pass
+
+
+class ToyIterator:
+    """P29.2 — a JS ``{ done, value }`` iterator object.
+
+    A Python dict with keys ``__iterator__`` / ``next`` — ``.next()``
+    routes through ``call_method`` and returns ``{done: false, value: x}``
+    or ``{done: true}``.  Consuming happens in order; after exhaustion
+    every subsequent call returns ``{done: true}``.
+    """
+
+    def __init__(self, seq):
+        self._it = iter(seq)
+        self._done = False
+        self._value = None
+        self.__class__.__name__ = "ToyIterator"
+
+    def next(self):
+        if self._done:
+            return {"__iterator__": True, "done": True}
+        try:
+            self._value = next(self._it)
+        except StopIteration:
+            self._done = True
+            return {"__iterator__": True, "done": True}
+        return {"__iterator__": True, "done": False, "value": self._value}
+
+    def __iter__(self):
+        return iter([self._value])
+
+
+class ToyGenObject:
+    """P29.2 — a JS generator object (the result of calling ``function*``).
+
+    Wraps a Python generator; ``.next(v)`` returns ``{done, value}``;
+    the object is itself iterable (``for...of`` works directly).
+    """
+
+    def __init__(self, pygen):
+        self._gen = pygen
+        self._done = False
+
+    def next(self, send_value=None):
+        if self._done:
+            return {"done": True}
+        try:
+            v = self._gen.send(send_value) if send_value is not None else next(self._gen)
+        except StopIteration as e:
+            self._done = True
+            out = {"done": True}
+            if e.value is not None:
+                out["value"] = e.value
+            return out
+        return {"done": False, "value": v}
+
+    def __iter__(self):
+        return iter([self._gen])
 
 
 class ToyClass:
@@ -865,6 +1024,13 @@ class Parser:
             return self.parse_array_lit()
         if t.value == "{":
             return self.parse_object_lit()
+        # P29.1 — regex literal: ``/pat/flags`` (lexer emits two tokens).
+        if t.kind == "regexp":
+            self.next()  # consume the regexp token
+            flags = ""
+            if self.peek().kind == "regexp_flags":
+                flags = self.next().value
+            return RegexpLit(t.value, flags)
         # P4.2 — `new Ctor(args)`: parse `new` + identifier as a Call node.
         # The `new` keyword is consumed; the Call is evaluated normally, and
         # if the callee is a constructor function (callable in globals), it
@@ -963,7 +1129,9 @@ class Parser:
         self.next()  # consume `)`
         return cand
 
-    def parse_func_expr(self) -> FunExpr:
+    def parse_func_expr(self) -> FunExpr | GenFunExpr:
+        # P29.2 — generator function expression: ``function* () { yield x }``.
+        star = self.match("*")
         self.expect("(")
         params = []
         if self.peek().value != ")":
@@ -975,6 +1143,8 @@ class Parser:
                 break
         self.expect(")")
         body = self.parse_block()
+        if star:
+            return GenFunExpr(params, body, True)
         return FunExpr(params, body)
 
     def parse_array_lit(self) -> ArrayLit:
@@ -1061,6 +1231,11 @@ class Parser:
                 break
             if not until_eof and t.value == "}":
                 break
+            # P29.2 — ``yield [expr]`` statement (valid only inside a
+            # generator body; the parser accepts it at statement level).
+            if t.kind == "id" and t.value == "yield":
+                stmts.append(self.parse_yield_stmt())
+                continue
             stmts.append(self.parse_statement())
         return Block(stmts)
 
@@ -1131,8 +1306,10 @@ class Parser:
             return expr
         return ExprStmt(expr)
 
-    def parse_func_decl(self) -> FuncDecl:
+    def parse_func_decl(self) -> FuncDecl | GenFuncDecl:
         self.expect("function")
+        # P29.2 — generator function: ``function* name() { ... }``.
+        star = self.match("*")
         name_tok = self._expect_id()
         self.expect("(")
         params = []
@@ -1145,7 +1322,18 @@ class Parser:
                 break
         self.expect(")")
         body = self.parse_block()
+        if star:
+            return GenFuncDecl(name_tok.value, params, body, True)
         return FuncDecl(name_tok.value, params, body)
+
+    def parse_yield_stmt(self) -> YieldExpr:
+        """P29.2 — parse ``yield [expr]`` as a YieldExpr node."""
+        self.expect("yield")
+        value = None
+        if self.peek().value not in (";", "}", ""):
+            value = self.parse_expression(0)
+        self.match(";")
+        return YieldExpr(value)
 
     def parse_if(self) -> If:
         self.expect("if")
@@ -1166,10 +1354,28 @@ class Parser:
         body = self.parse_statement()
         return While(cond, body)
 
-    def parse_for(self) -> For:
+    def parse_for(self) -> For | ForOf:
         self.expect("for")
         self.expect("(")
+        # P29.2 — ``for...of``: ``for (let|const|var name of expr) body``.
+        # Detect the ``of`` keyword; rewind on non-for-of shapes.
         init = None
+        if self.peek().kind == "id" and self.peek().value in ("let", "const", "var"):
+            save_i = self.i
+            kw = self.next()  # consume let/const/var
+            name_tok = self.peek()
+            if name_tok.kind == "id":
+                save_i2 = self.i
+                self.next()  # consume the name
+                if self.peek().value == "of":
+                    self.next()  # consume "of"
+                    iterable = self.parse_expression(0)
+                    self.expect(")")
+                    body = self.parse_statement()
+                    return ForOf(name_tok.value, iterable, body)
+                # Not for-of: rewind and parse as classic for.
+                self.i = save_i
+        # Not a for-of: classic C-style ``for``.
         if self.peek().value != ";":
             init = self.parse_expression(0)
             self.match(";")
@@ -1308,6 +1514,26 @@ class _Return(Exception):
         self.value = value
 
 
+# P29.2 — yield sentinel: raised inside a generator body to pause it.
+class _Yield(Exception):
+    def __init__(self, value):
+        self.value = value
+
+
+# P29.2 — Symbol.iterator toy marker.  A value carrying this as its
+# "iterator" key routes ``for...of`` through the iterator protocol.
+class SymbolIteratorMarker:
+    """Toy stand-in for ``Symbol.iterator``; the string ``"@@iterator"``
+    is used as the dict key when JS code stores a custom iterator."""
+    KEY = "@@iterator"
+
+
+# P29.2 — yield sentinel: raised inside a generator body to pause it.
+class _Yield(Exception):
+    def __init__(self, value):
+        self.value = value
+
+
 class _Break(Exception):
     pass
 
@@ -1410,6 +1636,20 @@ class Interpreter:
             f = self._make_func(node.name, node.params, node.body)
             self.env.define(node.name, f)
             return f
+        # P29.2 — generator function declaration.
+        if isinstance(node, GenFuncDecl):
+            f = self._make_gen_func(node.name, node.params, node.body)
+            self.env.define(node.name, f)
+            return f
+        # P29.2 — generator function expression.
+        if isinstance(node, GenFunExpr):
+            return self._make_gen_func(None, node.params, node.body)
+        # P29.1 — regexp literal.
+        if isinstance(node, RegexpLit):
+            return self.eval_regexp_lit(node)
+        # P29.2 — for...of.
+        if isinstance(node, ForOf):
+            return self.eval_for_of(node)
         # P12.2 — class declaration: register a ToyClass under the global name.
         if isinstance(node, ClassDecl):
             parent = self.host._class_registry.get(node.parent_name) if node.parent_name else None
@@ -1582,7 +1822,18 @@ class Interpreter:
         if isinstance(node, Try):
             return self.eval_try(node)
         if isinstance(node, While):
-            return self.eval_while(node)
+            # P29.2 — inline while evaluation (no separate method).
+            try:
+                while self.truthy(self.eval(node.cond)):
+                    try:
+                        self.eval_block(node.body)
+                    except _Break:
+                        break
+                    except _Continue:
+                        continue
+            except _Return:
+                raise
+            return None
         if isinstance(node, For):
             return self.eval_for(node)
         if isinstance(node, Return):
@@ -1631,6 +1882,38 @@ class Interpreter:
         for s in block.stmts:
             last = self.eval(s)
         return last
+
+    # P29.2 — yield: raise _Yield so the generator wrapper can pause.
+    def eval_yield(self, node: YieldExpr) -> Any:
+        val = self.eval(node.value) if node.value is not None else None
+        raise _Yield(val)
+
+    # P29.1 — regexp literal: build the same dict as ``new RegExp(...)``.
+    def eval_regexp_lit(self, node: RegexpLit) -> Any:
+        return self.host._regexp_ctor()(node.pattern, node.flags)
+
+    # P29.2 — for...of: iterate a JS value; `break`/`continue`/`return`
+    # follow the same loop-local / function-escape rules as classic for.
+    def eval_for_of(self, node: ForOf) -> Any:
+        iterable = self.eval(node.iterable)
+        items = self._js_iterable(iterable)
+        old_env = self.env
+        self.env = Env({}, old_env)  # for-of binding scope
+        self.env.define(node.target, None)
+        try:
+            for item in items:
+                self.env.set(node.target, item)
+                try:
+                    self.eval(node.body)
+                except _Break:
+                    break
+                except _Continue:
+                    continue
+        except _Return:
+            self.env = old_env
+            raise
+        self.env = old_env
+        return None
 
     # P11.2 — try / catch / finally
     def eval_try(self, node: Try) -> Any:
@@ -1738,6 +2021,19 @@ class Interpreter:
         if obj is None:
             return None
         prop = node.prop
+        # P29.2 — generator objects / toy iterators: .next / .return
+        # accessed as a property then called; wrap in a closure so
+        # ``it.next()`` routes through call_method.
+        if isinstance(obj, ToyGenObject):
+            if prop == "next":
+                return (lambda *a: obj.next(a[0] if a else None))
+            if prop == "return":
+                return lambda *a: {"done": True}
+            return None
+        if isinstance(obj, ToyIterator):
+            if prop == "next":
+                return lambda *a: obj.next()
+            return None
         if isinstance(obj, DomElement):
             return self.host.eval_element_prop(obj, prop)
         if isinstance(obj, dict):
@@ -1849,6 +2145,124 @@ class Interpreter:
             raise
         return None
 
+    def _js_iterable(self, v) -> list:
+        """P29.2 — coerce a JS value into a Python iterable of elements.
+
+        Supports: list / str / dict (keys) / ToyGenObject (drives
+        ``.next()`` until ``done``) / custom ``@@iterator`` protocol /
+        any object with a Python ``__iter__``.
+        """
+        if v is None:
+            return []
+        if isinstance(v, ToyGenObject):
+            out = []
+            while True:
+                res = v.next(None)
+                if res.get("done"):
+                    break
+                out.append(res.get("value"))
+            return out
+        # P29.2 — custom iterator protocol: dict with "@@iterator" key
+        # (JS: iterable[Symbol.iterator]()).  The value stored there is a
+        # callable that returns a ToyGenObject / ToyIterator.
+        if isinstance(v, dict) and SymbolIteratorMarker.KEY in v:
+            it_fn = v.get(SymbolIteratorMarker.KEY)
+            if callable(it_fn):
+                obj = it_fn()
+                if isinstance(obj, ToyGenObject):
+                    out = []
+                    while True:
+                        res = obj.next(None)
+                        if res.get("done"):
+                            break
+                        out.append(res.get("value"))
+                    return out
+                if isinstance(obj, ToyIterator):
+                    out = []
+                    while True:
+                        res = obj.next()
+                        if res.get("done"):
+                            break
+                        out.append(res.get("value"))
+                    return out
+        if isinstance(v, str):
+            return list(v)
+        if isinstance(v, dict):
+            # For-of over a plain object: iterate keys.
+            return [k for k in v.keys() if not k.startswith("__")]
+        if isinstance(v, list):
+            return v
+        # Fall back to Python's __iter__.
+        try:
+            return list(iter(v))
+        except TypeError:
+            return []
+
+    def _make_gen_func(self, name, params, body):
+        """P29.2 — build a generator function value.
+
+        Calling the returned function returns a :class:`ToyGenObject`
+        wrapping a Python generator.  The body is driven recursively by
+        a local statement driver: ``YieldExpr`` statements (top-level or
+        nested inside while/if/for blocks) suspend the Python generator
+        via ``yield`` so that ``for...of`` over the ToyGenObject and
+        manual ``.next()`` calls observe every yielded value in
+        program order.  Other statements run through the interpreter.
+        """
+        interp = self
+
+        def _drive_stmt(s):
+            if isinstance(s, YieldExpr):
+                yield (interp.eval(s.value) if s.value is not None else None)
+            elif isinstance(s, While):
+                while interp.truthy(interp.eval(s.cond)):
+                    yield from _drive_block(s.body)
+            elif isinstance(s, For):
+                if s.init is not None:
+                    interp.eval(s.init)
+                while True:
+                    if s.cond is not None and not interp.truthy(interp.eval(s.cond)):
+                        break
+                    yield from _drive_block(s.body)
+                    if s.step is not None:
+                        interp.eval(s.step)
+            elif isinstance(s, ForOf):
+                items = interp._js_iterable(interp.eval(s.iterable))
+                for item in items:
+                    interp.env.set(s.target, item)
+                    yield from _drive_block(s.body)
+            elif isinstance(s, If):
+                if interp.truthy(interp.eval(s.cond)):
+                    yield from _drive_block(s.then)
+                elif s.else_ is not None:
+                    yield from _drive_block(s.else_)
+            else:
+                interp.eval(s)
+
+        def _drive_block(blk_node):
+            if isinstance(blk_node, Block):
+                for s in blk_node.stmts:
+                    yield from _drive_stmt(s)
+            else:
+                yield from _drive_stmt(blk_node)
+
+        def gen_driver(*args):
+            def py_gen():
+                env = Env(interp.host.globals, None)
+                for i, p in enumerate(params):
+                    env.define(p, args[i] if i < len(args) else None)
+                interp_old = interp.env
+                interp.env = env
+                try:
+                    yield from _drive_block(body)
+                except _Return as r:
+                    return r.value
+                finally:
+                    interp.env = interp_old
+            return ToyGenObject(py_gen())
+
+        return gen_driver
+
     def _make_func(self, name, params, body):
         func_env = Env({}, self.env)
         closure = Interpreter(self.host)
@@ -1858,6 +2272,9 @@ class Interpreter:
             inner = Env({}, func_env)
             for p, a in zip(params, args):
                 inner.scope[p] = a
+            # P29.2 — `arguments`: the actual call-arg list (JS: iterable
+            # indexed object).  Needed so `for (let v of arguments)` works.
+            inner.define("arguments", list(args))
             saved = closure.env
             closure.env = inner
             try:
@@ -1889,6 +2306,8 @@ class Interpreter:
             inner = Env({}, func_env)
             for p, a in zip(params, args):
                 inner.scope[p] = a
+            # P29.2 — arrow `arguments`: same as _make_func.
+            inner.define("arguments", list(args))
             saved = closure.env
             closure.env = inner
             try:
@@ -1981,6 +2400,10 @@ class Host:
             "Array": self._array_obj(),
             # P10.4 — Error built-in
             "Error": self._error_ctor(),
+            # P29.2 — Symbol.iterator (toy): for...of checks
+            # ``iterable["@@iterator"]()`` before falling back to
+            # built-in iteration.
+            "Symbol": {"iterator": SymbolIteratorMarker.KEY},
         }
         self._timers: list = []
         self._raf_callbacks: list = []  # P1.2
@@ -2037,6 +2460,7 @@ class Host:
     # P3.3 — built-in objects
     def _math_obj(self) -> dict:
         import math as _m
+        import random as _rnd
 
         return {
             "abs": lambda x: abs(x),
@@ -2049,6 +2473,33 @@ class Host:
             "pow": lambda a, b: _m.pow(a, b),
             "PI": _m.pi,
             "E": _m.e,
+            # P29.3 — Math full suite.
+            "log": lambda x: _m.log(x) if x > 0 else float("-inf") if x == 0 else float("nan"),
+            "log2": lambda x: _m.log2(x) if x > 0 else float("-inf") if x == 0 else float("nan"),
+            "log10": lambda x: _m.log10(x) if x > 0 else float("-inf") if x == 0 else float("nan"),
+            "log1p": lambda x: _m.log1p(x),
+            "exp": lambda x: _m.exp(x),
+            "expm1": lambda x: _m.expm1(x),
+            "sin": lambda x: _m.sin(x),
+            "cos": lambda x: _m.cos(x),
+            "tan": lambda x: _m.tan(x),
+            "asin": lambda x: _m.asin(x) if -1 <= x <= 1 else float("nan"),
+            "acos": lambda x: _m.acos(x) if -1 <= x <= 1 else float("nan"),
+            "atan": lambda x: _m.atan(x),
+            "atan2": lambda y, x: _m.atan2(y, x),
+            "sinh": lambda x: _m.sinh(x),
+            "cosh": lambda x: _m.cosh(x),
+            "tanh": lambda x: _m.tanh(x),
+            "cbrt": lambda x: _m.cbrt(x),
+            "hypot": lambda *xs: _m.hypot(*xs),
+            "trunc": lambda x: int(x) if _m.isfinite(x) else x,
+            "random": _rnd.random,
+            "LN2": _m.log(2),
+            "LN10": _m.log(10),
+            "LOG2E": 1 / _m.log(2),
+            "LOG10E": 1 / _m.log(10),
+            "SQRT2": _m.sqrt(2),
+            "SQRT1_2": _m.sqrt(0.5),
         }
 
     def _json_obj(self) -> dict:
@@ -2155,6 +2606,38 @@ class Host:
     # P4.2 — more built-in objects
     def _date_obj(self) -> dict:
         import datetime as _dt
+        import time as _time
+        import re as _re
+
+        _re_iso = _re.compile(
+            r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)"
+        )
+
+        def parse_fn(text):
+            """P29.3 — Date.parse toy: ISO-8601 subset or numeric millis.
+            Returns ms-since-epoch or None (JS: NaN) on failure."""
+            try:
+                text = str(text).strip()
+                if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+                    return float(text)
+                m = _re_iso.search(text)
+                if not m:
+                    return None
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                hh, mi, ss = int(m.group(4)), int(m.group(5)), int(m.group(6))
+                dtv = _dt.datetime(y, mo, d, hh, mi, ss)
+                return dtv.timestamp() * 1000.0
+            except (ValueError, TypeError):
+                return None
+
+        def utc_fn(year, month=0, day=1, h=0, m=0, s=0, ms=0):
+            """P29.3 — Date.UTC(year, month?, day?, …) → ms since epoch
+            (month is 0-based, matching JS)."""
+            try:
+                dtv = _dt.datetime(year, month + 1, day, h, m, s)
+                return dtv.timestamp() * 1000.0 + ms
+            except (ValueError, TypeError):
+                return None
 
         class _ToyDate:
             __slots__ = ("_ts", "_dt")
@@ -2162,13 +2645,17 @@ class Host:
             def __init__(self, ts=None):
                 if ts is None:
                     self._dt = _dt.datetime.now()
-                    self._ts = self._dt.timestamp()
+                    self._ts = self._dt.timestamp() * 1000.0  # ms since epoch
                 else:
+                    # JS semantics: a numeric arg is milliseconds since epoch.
                     self._ts = float(ts)
-                    self._dt = _dt.datetime.fromtimestamp(self._ts)
+                    self._dt = _dt.datetime.fromtimestamp(self._ts / 1000.0)
 
             def getTime(self):
-                return self._ts * 1000.0
+                # JS semantics: getTime() returns milliseconds since epoch.
+                # If the constructor was called with a numeric argument,
+                # treat it as milliseconds (JS), not seconds.
+                return self._ts
 
             def getFullYear(self):
                 return self._dt.year
@@ -2201,7 +2688,10 @@ class Host:
             """P4.2 — constructor: `new Date()` → a _ToyDate instance."""
             return _ToyDate(ts)
 
-        date_ctor.now = lambda: _ToyDate()
+        date_ctor.now = lambda: _ToyDate().getTime()
+        # P29.3 — Date.parse / Date.UTC (toy: parse ISO-8601 subset + ms).
+        date_ctor.parse = staticmethod(parse_fn)
+        date_ctor.UTC = staticmethod(utc_fn)
         return date_ctor
 
     def _object_obj(self) -> dict:
@@ -2350,18 +2840,23 @@ class Host:
                 return len(self._d)
 
             def keys(self):
-                return list(self._d.keys())
+                # P29.2 — return a ToyIterator so `for...of map.keys()` works.
+                return ToyIterator(list(self._d.keys()))
 
             def values(self):
-                return list(self._d.values())
+                return ToyIterator(list(self._d.values()))
 
             def entries(self):
-                return [[k, v] for k, v in self._d.items()]
+                return ToyIterator([[k, v] for k, v in self._d.items()])
 
             def forEach(self, fn):
                 if callable(fn):
                     for k, v in self._d.items():
                         fn(v, k)
+
+            def __iter__(self):
+                # P29.2 — Map is iterable over [k, v] pairs (JS semantics).
+                return iter([[k, v] for k, v in self._d.items()])
 
         return ToyMap
 
@@ -2393,12 +2888,17 @@ class Host:
                 return len(self._s)
 
             def values(self):
-                return list(self._s)
+                # P29.2 — ToyIterator so `for...of s.values()` works.
+                return ToyIterator(sorted(self._s, key=repr))
 
             def forEach(self, fn):
                 if callable(fn):
                     for v in self._s:
                         fn(v)
+
+            def __iter__(self):
+                # P29.2 — Set iterates its values in insertion order.
+                return iter(sorted(self._s, key=repr))
 
         return ToySet
 
@@ -2413,13 +2913,27 @@ class Host:
                 flags_py |= _re.MULTILINE
             if "s" in flags:
                 flags_py |= _re.DOTALL
-            compiled = _re.compile(pattern, flags_py)
+            if "u" in flags or "y" in flags:
+                pass  # toy: ignore
+            try:
+                compiled = _re.compile(pattern, flags_py)
+            except _re.error:
+                # P29.1 — invalid pattern: return a no-match sentinel.
+                return {
+                    "__regexp__": True,
+                    "pattern": pattern,
+                    "flags": flags,
+                    "test": lambda s: False,
+                    "exec": lambda s: None,
+                    "replace": lambda s, r: s,
+                    "split": lambda s: [s],
+                }
 
             def test(s: str) -> bool:
-                return bool(compiled.search(s))
+                return bool(compiled.search(s or ""))
 
             def exec_fn(s: str):
-                m = compiled.search(s)
+                m = compiled.search(s or "")
                 if not m:
                     return None
                 result = [m.group(0)]
@@ -2428,19 +2942,55 @@ class Host:
                 result.append([m.start(), m.end()])
                 return result
 
-            def replace_fn(s: str, repl: str):
-                return compiled.sub(repl, s)
+            def match_fn(s: str):
+                """P29.1 — String.prototype.match equivalent on a regex:
+                global flag → all matches, else first match with groups."""
+                s = s or ""
+                if "g" in flags:
+                    return [mm.group(0) for mm in compiled.finditer(s)]
+                m = compiled.search(s)
+                if not m:
+                    return None
+                result = [m.group(0)]
+                for i in range(1, m.re.groups + 1):
+                    result.append(m.group(i))
+                return result
 
-            def split_fn(s: str):
-                return [p for p in compiled.split(s)]
+            def replace_fn(s: str, repl):
+                # P29.1 — support function replacement + $& / $' / $` refs.
+                if callable(repl):
+                    def _repl_fn(m):
+                        out = repl(m.group(0), m.start())
+                        return str(out) if out is not None else str(out)
+                    return compiled.sub(_repl_fn, s or "")
+                if isinstance(repl, str) and any(tok in repl for tok in ("$&", "$`", "$'")):
+                    def _ref_repl(m):
+                        out = repl
+                        out = out.replace("$&", m.group(0))
+                        out = out.replace("$`", s[:m.start()])
+                        out = out.replace("$'", s[m.end():])
+                        return out
+                    return compiled.sub(_ref_repl, s or "")
+                return compiled.sub(str(repl), s or "")
+
+            def split_fn(s: str, limit=0):
+                s = s or ""
+                parts = compiled.split(s)
+                if limit:
+                    parts = parts[: int(limit)]
+                return [p for p in parts]
 
             # P4.2 — a dict so that `r.test(...)` routes through call_method.
+            # P29.1 — extended: match / lastIndex / source.
             return {
                 "__regexp__": True,
                 "pattern": pattern,
                 "flags": flags,
+                "source": pattern,
+                "lastIndex": 0,
                 "test": test,
                 "exec": exec_fn,
+                "match": match_fn,
                 "replace": replace_fn,
                 "split": split_fn,
             }
@@ -2584,6 +3134,15 @@ class Host:
 
     def call_method(self, obj, method: str, args: list):
         if obj is None:
+            return None
+        if isinstance(obj, DomElement):
+            return self.eval_element_method(obj, method, args)
+        if isinstance(obj, (ToyGenObject, ToyIterator)):
+            # P29.2 — generator objects + toy iterators: route .next / .return.
+            if method == "next":
+                return obj.next(args[0] if args else None)
+            if method == "return":
+                return {"done": True}
             return None
         if isinstance(obj, dict):
             # P4.2 — regexp dict: route .test / .exec / .replace / .split
@@ -2821,6 +3380,51 @@ class Host:
                     out = flat
                 return out
             # P15.1 — flat(Infinity) support (already handled above via float("inf"))
+            # P29.3 — Array tail: fill / findLast / toReversed / entries.
+            if method == "fill":
+                # arr.fill(v, start?, end?) — in-place.
+                v = args[0] if args else None
+                start = int(args[1]) if len(args) > 1 else 0
+                end = int(args[2]) if len(args) > 2 else len(obj)
+                start = max(0, start)
+                end = min(len(obj), end) if end >= 0 else max(0, len(obj) + end)
+                for i in range(start, end):
+                    obj[i] = v
+                return obj
+            if method == "findLast":
+                if args and callable(args[0]):
+                    for i in range(len(obj) - 1, -1, -1):
+                        if args[0](obj[i], i):
+                            return obj[i]
+                return None
+            if method == "findLastIndex":
+                if args and callable(args[0]):
+                    for i in range(len(obj) - 1, -1, -1):
+                        if args[0](obj[i], i):
+                            return i
+                return -1
+            if method == "toReversed":
+                return list(reversed(obj))
+            if method == "toSorted":
+                fn = args[0] if args and callable(args[0]) else None
+                out = list(obj)
+                if fn is not None:
+                    try:
+                        out = sorted(out, key=fn)
+                    except TypeError:
+                        out = sorted(out, key=str)
+                else:
+                    try:
+                        out = sorted(out)
+                    except TypeError:
+                        out = sorted(out, key=str)
+                return out
+            if method == "entries":
+                return [[i, v] for i, v in enumerate(obj)]
+            if method == "keys":
+                return list(range(len(obj)))
+            if method == "values":
+                return list(obj)
             return None
         if isinstance(obj, str):
             if method == "includes":
@@ -2849,8 +3453,16 @@ class Host:
             if method == "trimEnd":
                 return obj.rstrip()
             if method == "replace":
+                # P29.1 — regex-aware replace: when the target is a regexp
+                # dict, route through the regexp's replace closure;
+                # otherwise plain string replace.
                 if len(args) >= 2:
-                    return obj.replace(str(args[0]), str(args[1]))
+                    target = args[0]
+                    if isinstance(target, dict) and target.get("__regexp__"):
+                        fn = target.get("replace")
+                        if callable(fn):
+                            return fn(obj, args[1])
+                    return obj.replace(str(target), str(args[1]))
                 return obj
             # P4.2 — string char methods
             if method == "charCodeAt":
@@ -2905,10 +3517,37 @@ class Host:
             # P10.2 — String.replaceAll
             if method == "replaceAll":
                 if len(args) >= 2:
-                    return obj.replace(str(args[0]), str(args[1]))
+                    target = args[0]
+                    if isinstance(target, dict) and target.get("__regexp__"):
+                        fn = target.get("replace")
+                        if callable(fn):
+                            return fn(obj, args[1])
+                    return obj.replace(str(target), str(args[1]))
                 return obj
+            # P29.1 — String.match(regex): global → all matches,
+            # else first match with capture groups.
+            if method == "match":
+                if args and args[0] and isinstance(args[0], dict) and args[0].get("__regexp__"):
+                    fn = args[0].get("match")
+                    if callable(fn):
+                        return fn(obj)
+                return None
+            # P29.3 — String tail: at / codePointAt / normalize.
+            if method == "at":
+                if args:
+                    idx = int(args[0])
+                    if idx < 0:
+                        idx += len(obj)
+                    if 0 <= idx < len(obj):
+                        return obj[idx]
+                return None
+            if method == "codePointAt":
+                if args:
+                    idx = int(args[0])
+                    if 0 <= idx < len(obj):
+                        return ord(obj[idx])
+                return None
             return None
-        return None
 
     def eval_element_prop(self, el: DomElement, prop: str):
         if prop == "id":

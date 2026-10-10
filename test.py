@@ -9052,6 +9052,225 @@ def test_p28_required_select():
     assert not any(x["field"] == "pick" for x in v2), f"selected passes: {v2}"
 
 
+# ---------------------------------------------------------------------------
+# P29 — JS 引擎补全
+# ---------------------------------------------------------------------------
+
+
+def _p29_js_logs(code: str) -> list:
+    """P29 — run a JS snippet in a minimal DOM and return log lines."""
+    import dom, js
+    logs: list = []
+    host = js.Host(dom.parse("<html><body></body></html>"), logs.append)
+    host.execute(code)
+    return logs
+
+
+def test_p29_regexp_literal_test():
+    """P29.1 — regex literal ``/pat/`` + ``.test()`` (bridge to ``re``)."""
+    logs = _p29_js_logs(
+        "let r = /ab+c/; console.log(r.test('xabbc')); console.log(r.test('abab'));"
+    )
+    assert any("true" in l for l in logs), f"test must log true: {logs}"
+    assert any("false" in l for l in logs), f"non-match must log false: {logs}"
+
+
+def test_p29_regexp_literal_flags():
+    """P29.1 — regex flags: ``/pat/i`` case-insensitive, ``/pat/g`` all."""
+    logs = _p29_js_logs(
+        "let r = /^H/i; console.log(r.test('hello'));"
+        "let g = /a/g; console.log('banana'.split(g).join('|'));"
+    )
+    assert any("true" in l for l in logs), f"/i flag must match: {logs}"
+
+
+def test_p29_regexp_exec_groups():
+    """P29.1 — ``.exec()`` returns match + capture groups."""
+    logs = _p29_js_logs(
+        "let r = /(\\d+)-(\\d+)/; let m = r.exec('v12-34'); "
+        "console.log(m[0]); console.log(m[1]); console.log(m[2]);"
+    )
+    assert any("12-34" in l for l in logs), f"full match: {logs}"
+    assert any("12" in l for l in logs), f"group 1: {logs}"
+    assert any("34" in l for l in logs), f"group 2: {logs}"
+
+
+def test_p29_string_match_regexp():
+    """P29.1 — ``String.match(regexp)``: global flag → all matches."""
+    logs = _p29_js_logs(
+        "let s = 'xx1yy2zz3'; console.log(s.match(/\\d/g).join(','));"
+    )
+    assert any("1,2,3" in l for l in logs), f"global match all: {logs}"
+
+
+def test_p29_string_replace_regexp():
+    """P29.1 — ``String.replace(regexp, repl)`` via re.sub bridge."""
+    logs = _p29_js_logs(
+        "console.log('a1b2c3'.replace(/\\d/g, 'X'));"
+    )
+    assert any("aXbXcX" in l for l in logs), f"regex replace: {logs}"
+
+
+def test_p29_new_regexp_ctor():
+    """P29.1 — ``new RegExp(pattern, flags)`` still works (P4.2 path)."""
+    logs = _p29_js_logs(
+        "let r = new RegExp('a+', 'i'); console.log(r.test('BA'));"
+    )
+    assert any("true" in l for l in logs), f"new RegExp i flag: {logs}"
+
+
+def test_p29_for_of_array():
+    """P29.2 — ``for...of`` over an array accumulates values."""
+    logs = _p29_js_logs(
+        "let xs = [1,2,3]; let s = 0; for (const x of xs) { s = s + x; } "
+        "console.log(s);"
+    )
+    assert any("6" in l for l in logs), f"for-of sum: {logs}"
+
+
+def test_p29_for_of_string_chars():
+    """P29.2 — ``for...of`` over a string iterates characters."""
+    logs = _p29_js_logs(
+        "let out = ''; for (const c of 'abc') { out = out + c + '-'; } "
+        "console.log(out);"
+    )
+    assert any("a-b-c-" in l for l in logs), f"for-of chars: {logs}"
+
+
+def test_p29_for_of_generator():
+    """P29.2 — ``for...of`` consumes a generator's yielded values."""
+    logs = _p29_js_logs(
+        "function* gen() { yield 1; yield 2; yield 3; } "
+        "let g = gen(); let out = []; for (const v of g) { out.push(v); } "
+        "console.log(out.join(','));"
+    )
+    assert any("1,2,3" in l for l in logs), f"gen for-of: {logs}"
+
+
+def test_p29_generator_next_done():
+    """P29.2 — ``.next()`` returns ``{done, value}``; last call done:true."""
+    logs = _p29_js_logs(
+        "function* g2() { yield 'a'; yield 'b'; } "
+        "let it = g2(); "
+        "console.log(it.next().value); "
+        "console.log(it.next().value); "
+        "console.log(it.next().done);"
+    )
+    assert any("a" in l for l in logs), f"first yield: {logs}"
+    assert any("b" in l for l in logs), f"second yield: {logs}"
+    assert any("true" in l for l in logs), f"done flag: {logs}"
+
+
+def test_p29_generator_expression_form():
+    """P29.2 — generator function expression ``function*() {...}``."""
+    logs = _p29_js_logs(
+        "let gen = function*() { yield 10; yield 20; }; "
+        "let g = gen(); let out = []; for (const v of g) { out.push(v); } "
+        "console.log(out.join(','));"
+    )
+    assert any("10,20" in l for l in logs), f"gen-expr for-of: {logs}"
+
+
+def test_p29_generator_yield_in_loop():
+    """P29.2 — a generator body can contain a while loop + yield."""
+    logs = _p29_js_logs(
+        "function* countdown(n) { while (n > 0) { yield n; n = n - 1; } } "
+        "let c = countdown(3); let out = []; for (const v of c) { out.push(v); } "
+        "console.log(out.join(' '));"
+    )
+    assert any("3 2 1" in l for l in logs), f"countdown: {logs}"
+
+
+def test_p29_for_of_map_iterable():
+    """P29.2 — ``for...of`` over a Map iterates ``[k, v]`` pairs."""
+    logs = _p29_js_logs(
+        "let m = new Map(); m.set('a', 1); m.set('b', 2); "
+        "let out = []; for (const e of m) { out.push(e[0] + ':' + e[1]); } "
+        "console.log(out.join(' '));"
+    )
+    assert any("a:1" in l for l in logs), f"map for-of: {logs}"
+    assert any("b:2" in l for l in logs), f"map for-of: {logs}"
+
+
+def test_p29_symbol_iterator_protocol():
+    """P29.2 — custom ``@@iterator`` (Symbol.iterator toy) drives for-of."""
+    logs = _p29_js_logs(
+        "let it = (function*() { yield 5; yield 6; })(); "
+        "let obj = {'@@iterator': function() { return it; }}; "
+        "let out = []; for (const v of obj) { out.push(v); } "
+        "console.log(out.join(','));"
+    )
+    assert any("5,6" in l for l in logs), f"@@iterator for-of: {logs}"
+
+
+def test_p29_math_trig_log():
+    """P29.3 — Math.sin/cos/log/atan2/cbrt/full constants."""
+    logs = _p29_js_logs(
+        "console.log(Math.sin(0)); "
+        "console.log(Math.log(1)); "
+        "console.log(Math.cbrt(8)); "
+        "console.log(Math.atan2(1, 0) > 0);"
+    )
+    assert any("0" in l for l in logs), f"sin(0)/log(1): {logs}"
+    assert any("2" in l for l in logs), f"cbrt(8): {logs}"
+    assert any("true" in l for l in logs), f"atan2: {logs}"
+
+
+def test_p29_math_constants():
+    """P29.3 — Math.LN2 / LN10 / SQRT2 constants are defined."""
+    logs = _p29_js_logs(
+        "console.log(Math.LN2 > 0.6 && Math.LN2 < 0.7); "
+        "console.log(Math.SQRT2 > 1.4 && Math.SQRT2 < 1.5);"
+    )
+    assert any("true" in l for l in logs), f"math constants: {logs}"
+
+
+def test_p29_json_stringify_nested():
+    """P29.3 — JSON.stringify round-trips nested dict + list structures."""
+    logs = _p29_js_logs(
+        "let o = {a: 1, b: [2, {c: 'x'}]}; "
+        "let s = JSON.stringify(o); console.log(s);"
+    )
+    assert any('"a":1' in l for l in logs), f"json stringify: {logs}"
+    assert any('"c":"x"' in l for l in logs), f"json nested: {logs}"
+
+
+def test_p29_json_parse_stringify_roundtrip():
+    """P29.3 — JSON.parse(stringify(x)) recovers the structure."""
+    logs = _p29_js_logs(
+        "let x = JSON.parse('\"hi\"'); console.log(x); "
+        "let y = JSON.parse('[1,2,3]'); console.log(y.join(','));"
+    )
+    assert any("hi" in l for l in logs), f"json parse str: {logs}"
+    assert any("1,2,3" in l for l in logs), f"json parse arr: {logs}"
+
+
+def test_p29_array_tail_methods():
+    """P29.3 — Array.fill / findLast / toReversed / toSorted / at."""
+    logs = _p29_js_logs(
+        "let a = [0,0,0]; a.fill(7, 1, 3); console.log(a.join(',')); "
+        "console.log([3,1,2].findLast(v => v > 1)); "
+        "console.log([1,2,3].toReversed().join(',')); "
+        "console.log([3,1,2].toSorted().join(','));"
+    )
+    assert any("0,7,7" in l for l in logs), f"fill: {logs}"
+    assert any("3" in l for l in logs), f"findLast: {logs}"
+    assert any("3,2,1" in l for l in logs), f"toReversed: {logs}"
+    assert any("1,2,3" in l for l in logs), f"toSorted: {logs}"
+
+
+def test_p29_string_tail_methods():
+    """P29.3 — String.at / codePointAt tail methods."""
+    logs = _p29_js_logs(
+        "console.log('abc'.at(1)); "
+        "console.log('abc'.at(-1)); "
+        "console.log('A'.codePointAt(0));"
+    )
+    assert any("b" in l for l in logs), f"at(1): {logs}"
+    assert any("c" in l for l in logs), f"at(-1): {logs}"
+    assert any("65" in l for l in logs), f"codePointAt: {logs}"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -9708,6 +9927,27 @@ def main():
         ("p28_js_element_value_prop", test_p28_js_element_value_prop),
         ("p28_form_hidden_field", test_p28_form_hidden_field),
         ("p28_required_select", test_p28_required_select),
+        # P29 — JS 引擎补全
+        ("p29_regexp_literal_test", test_p29_regexp_literal_test),
+        ("p29_regexp_literal_flags", test_p29_regexp_literal_flags),
+        ("p29_regexp_exec_groups", test_p29_regexp_exec_groups),
+        ("p29_string_match_regexp", test_p29_string_match_regexp),
+        ("p29_string_replace_regexp", test_p29_string_replace_regexp),
+        ("p29_new_regexp_ctor", test_p29_new_regexp_ctor),
+        ("p29_for_of_array", test_p29_for_of_array),
+        ("p29_for_of_string_chars", test_p29_for_of_string_chars),
+        ("p29_for_of_generator", test_p29_for_of_generator),
+        ("p29_generator_next_done", test_p29_generator_next_done),
+        ("p29_generator_expression_form", test_p29_generator_expression_form),
+        ("p29_generator_yield_in_loop", test_p29_generator_yield_in_loop),
+        ("p29_for_of_map_iterable", test_p29_for_of_map_iterable),
+        ("p29_symbol_iterator_protocol", test_p29_symbol_iterator_protocol),
+        ("p29_math_trig_log", test_p29_math_trig_log),
+        ("p29_math_constants", test_p29_math_constants),
+        ("p29_json_stringify_nested", test_p29_json_stringify_nested),
+        ("p29_json_parse_stringify_roundtrip", test_p29_json_parse_stringify_roundtrip),
+        ("p29_array_tail_methods", test_p29_array_tail_methods),
+        ("p29_string_tail_methods", test_p29_string_tail_methods),
     ]
     passed = 0
     failed = []
