@@ -739,6 +739,453 @@ def write_links(links: list[str], path: str) -> None:
             f.write(l + "\n")
 
 
+# --- P28 — form serialization + submission --------------------------------------
+
+
+def _form_field(node, name: str, value: str, kind: str) -> dict:
+    """P28 — one collected form field (kind: "text" / "checkbox" / "radio" / "select" / "file" / "textarea" / "hidden")."""
+    return {"name": name, "value": value, "kind": kind}
+
+
+def _walk_dom(node, visit):
+    """P28 — depth-first walk over the DOM subtree rooted at ``node``."""
+    visit(node)
+    for c in node.children:
+        if c.is_element():
+            _walk_dom(c, visit)
+
+
+def collect_form_fields(root_dom, form_id: str = "") -> list[dict]:
+    """P28.2 — collect all form fields in the document (or one <form>).
+
+    Returns a list of ``{"name": …, "value": …, "kind": …}`` in DOM order.
+    Only fields with a ``name`` attribute are serialisable; ``type="button"``
+    and ``type="submit"`` without a name are skipped.  Checkbox / radio
+    fields contribute only when ``checked`` is set.
+    """
+    fields: list[dict] = []
+
+    def visit(node):
+        if not node.is_element():
+            return
+        tag = (node.tag or "").lower()
+        if form_id and tag == "form" and node.attr("id") != form_id:
+            # skip the whole subtree when a different form is targeted
+            return
+        if form_id and tag != "form" and node.parent is not None:
+            # walk only inside the requested form (or the whole document).
+            pass
+        if tag in ("input", "textarea", "select", "button"):
+            name = node.attr("name") or ""
+            if not name:
+                return
+            kind_map = {
+                "input": "input", "textarea": "textarea",
+                "select": "select", "button": "button",
+            }
+            base_kind = kind_map.get(tag, "text")
+            itype = (node.attr("type") or "").lower()
+            if tag == "input":
+                if itype in ("button", "submit", "image", "reset") and itype != "submit":
+                    return
+                if itype in ("checkbox", "radio"):
+                    if node.attr("checked") is None:
+                        return
+                    fields.append(_form_field(node, name, node.attr("value") or "on", itype))
+                    return
+                if itype == "hidden" or itype == "text" or itype == "password" \
+                        or itype == "email" or itype == "number" or itype == "url" \
+                        or itype == "date" or itype == "time" or itype == "month" \
+                        or itype == "week" or itype == "color" or itype == "range" \
+                        or itype == "tel" or itype == "search":
+                    fields.append(_form_field(node, name, node.attr("value") or "", itype or "text"))
+                    return
+                if itype == "file":
+                    fields.append(_form_field(node, name, node.attr("value") or "", "file"))
+                    return
+                # unknown input type: treat as text.
+                fields.append(_form_field(node, name, node.attr("value") or "", "text"))
+            elif tag == "textarea":
+                text = "".join(c.text or "" for c in node.children if not c.is_element())
+                fields.append(_form_field(node, name, text, "textarea"))
+            elif tag == "select":
+                multi = node.attr("multiple") is not None
+                selected: list[str] = []
+                for opt in node.children:
+                    if opt.is_element() and (opt.tag or "").lower() == "option":
+                        if opt.attr("selected") is not None:
+                            selected.append(opt.attr("value") or (opt.text or ""))
+                if multi:
+                    for v in selected:
+                        fields.append(_form_field(node, name, v, "select"))
+                else:
+                    fields.append(_form_field(node, name, selected[0] if selected else "", "select"))
+            elif tag == "button":
+                fields.append(_form_field(node, name, node.attr("value") or "", "button"))
+
+    # If a form id is given, only collect fields inside that form.
+    if form_id:
+        _collect_in_form(root_dom, form_id, fields)
+        return fields
+    _walk_dom(root_dom, visit)
+    return fields
+
+
+def _walk_form_fields(form_node, fields: list[dict]) -> None:
+    """P28.2 — walk a <form> subtree and append serialisable fields."""
+    for node in _form_subtree(form_node):
+        if not node.is_element():
+            continue
+        tag = (node.tag or "").lower()
+        if tag == "input":
+            name = node.attr("name") or ""
+            if not name:
+                continue
+            itype = (node.attr("type") or "").lower()
+            if itype in ("button", "image", "reset"):
+                continue
+            if itype in ("checkbox", "radio"):
+                if node.attr("checked") is None:
+                    continue
+                fields.append(_form_field(node, name, node.attr("value") or "on", itype))
+            else:
+                fields.append(_form_field(node, name, node.attr("value") or "", itype or "text"))
+        elif tag == "textarea":
+            name = node.attr("name") or ""
+            if not name:
+                continue
+            text = "".join(c.text or "" for c in node.children if not c.is_element())
+            fields.append(_form_field(node, name, text, "textarea"))
+        elif tag == "select":
+            name = node.attr("name") or ""
+            if not name:
+                continue
+            multi = node.attr("multiple") is not None
+            selected = [
+                (o.attr("value") or (o.text or ""))
+                for o in node.children
+                if o.is_element() and (o.tag or "").lower() == "option" and o.attr("selected") is not None
+            ]
+            if multi:
+                for v in selected:
+                    fields.append(_form_field(node, name, v, "select"))
+            else:
+                fields.append(_form_field(node, name, selected[0] if selected else "", "select"))
+        elif tag == "button":
+            name = node.attr("name") or ""
+            if not name:
+                continue
+            fields.append(_form_field(node, name, node.attr("value") or "", "button"))
+
+
+def _form_subtree(form_node):
+    """P28.2 — yield every element in the form subtree (excluding the form itself)."""
+    stack = list(form_node.children)
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(reversed(n.children))
+
+
+def _collect_in_form(root_dom, form_id: str, fields: list[dict]) -> None:
+    """P28.2 — find the form with the given id and collect its fields."""
+    stack = [root_dom]
+    while stack:
+        n = stack.pop()
+        if not n.is_element():
+            continue
+        if (n.tag or "").lower() == "form" and n.attr("id") == form_id:
+            _walk_form_fields(n, fields)
+            return
+        stack.extend(n.children)
+
+
+def serialize_form_fields(fields: list[dict], mode: str = "GET") -> str:
+    """P28.2 — serialise form fields to an ``application/x-www-form-urlencoded``
+    query string (GET) or POST body (POST).  Multiple values for the same
+    name (e.g. ``<select multiple>``) are emitted as repeated ``k=v`` pairs.
+    """
+    import urllib.parse
+    parts: list[str] = []
+    for f in fields:
+        parts.append(urllib.parse.quote(f["name"], safe=""))
+        parts.append("=")
+        parts.append(urllib.parse.quote(str(f["value"]), safe=""))
+        parts.append("&")
+    qs = "".join(parts)
+    return qs[:-1] if qs else ""
+
+
+def form_action_url(root_dom, form_id: str = "", action: str = "") -> str:
+    """P28.2 — resolve a <form>'s action attribute against the document base.
+
+    Returns the target URL for GET/POST submission.  ``action`` is first
+    read from the form's DOM attribute (when ``form_id`` is given); the
+    ``action`` parameter is a fallback.  Root-relative (``/…``) actions
+    resolve against the document's base (``<base href>`` or the current
+    URL passed via the ``action`` parameter).
+    """
+    import urllib.parse
+    action_found = ""
+    if form_id:
+        stack = [root_dom]
+        while stack:
+            n = stack.pop()
+            if not n.is_element():
+                continue
+            if (n.tag or "").lower() == "form" and n.attr("id") == form_id:
+                action_found = n.attr("action") or ""
+                break
+            stack.extend(n.children)
+    target = action_found or action
+    # Find the document's base URL (``<base href>`` tag, else "").
+    base = ""
+    def _find_base(node):
+        for c in node.children:
+            if c.is_element() and (c.tag or "").lower() == "base":
+                b = c.attr("href") or ""
+                if b:
+                    return b
+                continue
+            r = _find_base(c)
+            if r:
+                return r
+        return ""
+    base = _find_base(root_dom)
+    if not target:
+        return base
+    if target.startswith("http://") or target.startswith("https://"):
+        return target
+    if target.startswith("//"):
+        scheme = (base or "http://").split("://")[0]
+        return scheme + "://" + target
+    if target.startswith("/"):
+        if base:
+            origin = base.split("://", 1)[1]
+            origin = "://" + origin.split("/", 1)[0]
+            return "http" + origin + target
+        return target
+    # Relative (no leading slash): resolve against the base's directory.
+    if base:
+        return urllib.parse.urljoin(base, target)
+    return target
+
+
+def form_get_url(root_dom, form_id: str = "", base_url: str = "") -> str:
+    """P28.2 — build the full GET submission URL: action + "?" + query string."""
+    fields = collect_form_fields(root_dom, form_id)
+    qs = serialize_form_fields(fields, mode="GET")
+    action = form_action_url(root_dom, form_id, base_url)
+    if not action:
+        return qs
+    if "?" in action:
+        return action + "&" + qs if qs else action
+    return action + ("?" + qs if qs else "")
+
+
+def form_post_body(root_dom, form_id: str = "", base_url: str = "") -> dict:
+    """P28.2 — build the POST body + headers for a form submission.
+
+    Returns ``{"url": …, "body": …, "content_type": …}``.
+    """
+    fields = collect_form_fields(root_dom, form_id)
+    body = serialize_form_fields(fields, mode="POST")
+    action = form_action_url(root_dom, form_id, base_url)
+    return {
+        "url": action,
+        "body": body,
+        "content_type": "application/x-www-form-urlencoded",
+    }
+
+
+def validate_form(root_dom, form_id: str = "") -> list[dict]:
+    """P28.3 — toy form validation: return a list of violations
+    ``{"field": name, "kind": "required" / "pattern", "message": …}``.
+
+    A field with the ``required`` attribute that is empty (text /
+    select / textarea) or unchecked (checkbox / radio) is a violation.
+    Pattern validation (``pattern`` attribute, regex, toy: substring
+    check only when the pattern has no metacharacters) is also checked.
+    """
+    import re
+    violations: list[dict] = []
+    stack = [root_dom]
+    if form_id:
+        # Find the target form first.
+        target = None
+        while stack:
+            n = stack.pop()
+            if not n.is_element():
+                continue
+            if (n.tag or "").lower() == "form" and n.attr("id") == form_id:
+                target = n
+                break
+            stack.extend(n.children)
+        if target is None:
+            return violations
+        stack = [target]
+    while stack:
+        n = stack.pop()
+        if not n.is_element():
+            continue
+        tag = (n.tag or "").lower()
+        if tag in ("input", "textarea", "select"):
+            name = n.attr("name") or ""
+            required = n.attr("required") is not None
+            itype = (n.attr("type") or "").lower()
+            value = n.attr("value") or ""
+            if tag == "textarea":
+                value = "".join(c.text or "" for c in n.children if not c.is_element())
+            if tag == "select":
+                value = ""
+                for opt in n.children:
+                    if opt.is_element() and (opt.tag or "").lower() == "option" and opt.attr("selected") is not None:
+                        value = opt.attr("value") or (opt.text or "")
+                        break
+            if required:
+                # P28.3 — checkbox / radio "emptiness" is the absence of
+                # the checked attribute, not an empty value.
+                if itype in ("checkbox", "radio"):
+                    empty = n.attr("checked") is None
+                else:
+                    empty = value == ""
+                if empty:
+                    violations.append({"field": name, "kind": "required",
+                                       "message": f"'{name}' is required"})
+            pat = n.attr("pattern") or ""
+            if pat and value:
+                try:
+                    if not re.fullmatch(pat, value):
+                        violations.append({"field": name, "kind": "pattern",
+                                           "message": f"'{name}' does not match '{pat}'"})
+                except re.error:
+                    pass
+        stack.extend(n.children)
+    return violations
+
+
+def tab_order(root_dom) -> list[str]:
+    """P28.3 — compute the Tab-key navigation order for focusable elements.
+
+    Returns a list of element ids in tab order.  Focusable elements are:
+    ``<a href>``, ``<button>``, ``<input>`` (except type="hidden"/"image"),
+    ``<select>``, ``<textarea>``, and any element with a ``tabindex``
+    attribute (>= 0).  Elements with ``tabindex >= 1`` sort before
+    natural-order elements; ``tabindex="0"`` keeps DOM order;
+    ``tabindex < 0`` (or absent) is last, in DOM order.
+    """
+    focusable: list[tuple[int, int, str, int]] = []  # (priority, dom_index, id, tabindex)
+    idx = 0
+    def walk(node):
+        nonlocal idx
+        if not node.is_element():
+            return
+        tag = (node.tag or "").lower()
+        eid = node.attr("id") or ""
+        itype = (node.attr("type") or "").lower()
+        tabindex_raw = node.attr("tabindex")
+        tabindex = 0
+        has_tabindex = tabindex_raw is not None
+        if has_tabindex:
+            try:
+                tabindex = int(tabindex_raw)
+            except ValueError:
+                tabindex = 0
+        is_focusable = (
+            tag == "a" and node.attr("href") is not None
+            or tag == "button"
+            or (tag == "input" and itype not in ("hidden", "image"))
+            or tag == "select"
+            or tag == "textarea"
+            or (tag == "form" and node.attr("tabindex") is not None)
+        )
+        if is_focusable or (has_tabindex and tabindex >= 0 and tag not in ("script", "style")):
+            if has_tabindex and tabindex > 0:
+                priority = 0
+            elif has_tabindex and tabindex == 0:
+                priority = 1
+            else:
+                priority = 1
+            if eid:
+                focusable.append((priority, idx, eid, tabindex))
+        idx += 1
+        for c in node.children:
+            walk(c)
+    walk(root_dom)
+    # Sort: priority asc, then DOM index asc.
+    focusable.sort(key=lambda t: (t[0], t[1]))
+    return [eid for _, _, eid, _ in focusable]
+
+
+def focus_element(root_dom, element_id: str, set_attr: bool = True) -> bool:
+    """P28.3 — set the DOM ``focus`` attribute on the target element.
+
+    Used to visually mark the focused element (the renderer reads
+    ``bx.control_focus`` from the DOM ``focus=""`` attribute).  Returns
+    True if the element was found and focused.
+    """
+    stack = [root_dom]
+    while stack:
+        n = stack.pop()
+        if not n.is_element():
+            continue
+        if n.attr("id") == element_id:
+            if set_attr:
+                n.set_attr("focus", "")
+            return True
+        stack.extend(n.children)
+    return False
+
+
+def form_submit(root_dom, form_id: str = "", method: str = "GET",
+                base_url: str = "", submit_host=None) -> dict:
+    """P28.2 — submit a form: validate, serialise, and (if a host is
+    provided) POST/GET the result via the P21 network layer.
+
+    Returns ``{"ok": bool, "url": …, "body": …, "violations": […]}``.
+    When ``submit_host`` is a ``net.HttpClient`` instance the method
+    dispatches a real HTTP request; otherwise the result is a dry-run
+    with ``url`` / ``body`` populated but no network I/O.
+    """
+    violations = validate_form(root_dom, form_id)
+    if violations:
+        return {"ok": False, "url": "", "body": "", "violations": violations}
+    if method.upper() == "POST":
+        result = form_post_body(root_dom, form_id, base_url)
+        url = result["url"]
+        body = result["body"]
+        content_type = result["content_type"]
+    else:
+        fields = collect_form_fields(root_dom, form_id)
+        qs = serialize_form_fields(fields, mode="GET")
+        url = form_action_url(root_dom, form_id, base_url)
+        if not url:
+            url = base_url
+        if qs and url:
+            sep = "&" if "?" in url else "?"
+            url = url + sep + qs
+        body = ""
+        content_type = ""
+    out = {"ok": True, "url": url, "body": body, "violations": []}
+    # P21 — dispatch via the network layer when a host is provided.
+    if submit_host is not None:
+        try:
+            if method.upper() == "POST":
+                resp = submit_host.post(url, body=body,
+                                         headers={"Content-Type": content_type})
+                out["status"] = getattr(resp, "status", 0)
+                out["response_body"] = getattr(resp, "body", "")
+            else:
+                resp = submit_host.get(url)
+                out["status"] = getattr(resp, "status", 0)
+                out["response_body"] = getattr(resp, "body", "")
+        except Exception as e:
+            out["ok"] = False
+            out["error"] = str(e)
+    return out
+
+
+
 # --- P2.3 — PPM → PNG (pure stdlib) -------------------------------------------
 
 

@@ -23,9 +23,9 @@ toy-browser-py/
 ├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
 ├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            562 条测试（python test.py）
+├── test.py            583 条测试（python test.py）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P27 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P28 + P31 全部完成）
 └── demo.html          示例文档
 ```
 
@@ -93,6 +93,20 @@ deficit 先抬到 min 地板再按 shrink × sized 功率分配）；`flex-wrap`
 方向 reverse（`row-reverse` 自右向左、`column-reverse` 自下向上，
 justify-content start/end 贴远端）；`order` 稳定排序重排；
 min-width/min-height:auto 内容地板。
+
+P28 — 表单与交互真实化（M3 第四步）：控件状态与渲染
+（`LayoutBox` 9 个 control_* 字段；checkbox/radio 16×16、
+file 220×24、select 120×24、button 80×28、textarea 按 cols/rows
+缺省盒；checked 控件中心实心方块、select 选中标签 + 下拉箭头、
+file 文件名、focus 蓝色 focus 环）；表单序列化与提交
+（`collect_form_fields` DOM 序收集、`serialize_form_fields`
+urlencoded 编码、`form_action_url` 解析 `<base href>`、
+`form_get_url` / `form_post_body`、`form_submit` 先校验后提交，
+可接 P21 `net.HttpClient` 发真实 GET/POST）；focus / tab 顺序 /
+校验（`tab_order` 正 tabindex 优先 + DOM 序、`focus_element` 设
+DOM `focus=""` 属性 → 渲染 focus 环、`validate_form` required +
+pattern 玩具校验）；JS 引擎 `.value` 按标签分派（select →
+选中项 value、textarea → 文本、input/button → value 属性）。
 
 JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
 
@@ -899,7 +913,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**562 条测试**，覆盖：
+**583 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -983,6 +997,7 @@ python test.py
 | CSS 层叠与计算值（P25） | `p25_specificity_4tuple`、`p25_specificity_id_beats_class`、`p25_specificity_class_beats_type`、`p25_important_beats_normal`、`p25_important_author_wins_over_normal_inline`、`p25_inherit_keyword`、`p25_initial_keyword`、`p25_unset_keyword`、`p25_shorthand_margin_expands`、`p25_shorthand_padding_expands`、`p25_em_computed_chain`、`p25_inherit_font_size`、`p25_source_cascade_author_over_ua`、`p25_full_pipeline_important` |
 | 块级布局修正（P26） | `p26_margin_collapse_siblings`、`p26_margin_collapse_parent_child`、`p26_margin_collapse_empty_block`、`p26_bfc_cleares_floats`、`p26_float_inside_bfc_no_overlap`、`p26_pct_height_chain`、`p26_height_auto_grows`、`p26_min_width_clamps`、`p26_max_width_clamps`、`p26_min_height_clamps`、`p26_max_height_clamps`、`p26_width_auto_fills`、`p26_width_auto_with_margins`、`p26_full_pipeline_render` |
 | Flexbox 完整化（P27） | `p27_flex_shrink_proportional`、`p27_flex_shrink_weighted`、`p27_flex_basis_explicit`、`p27_flex_wrap_two_lines`、`p27_flex_wrap_single_line_fits`、`p27_align_items_start`、`p27_align_items_end`、`p27_align_self_overrides`、`p27_justify_content_space_evenly`、`p27_justify_content_space_around`、`p27_flex_direction_column_reverse`、`p27_flex_order_reorders`、`p27_min_width_auto_floor`、`p27_flex_basis_zero`、`p27_flex_shrink_zero_keeps_size`、`p27_align_content_center_multi_line`、`p27_flex_row_reverse`、`p27_flex_grow_shrink_basis_shorthand`、`p27_wrap_reverse_direction`、`p27_flex_full_pipeline_render` |
+| 表单与交互（P28） | `p28_input_checkbox_render`、`p28_input_radio_render`、`p28_select_option_render`、`p28_file_input_render`、`p28_textarea_default_size`、`p28_form_get_query_string`、`p28_form_post_body`、`p28_form_select_multiple`、`p28_form_radio_group`、`p28_form_action_url_resolution`、`p28_required_validation`、`p28_required_checkbox`、`p28_submit_blocked_by_validation`、`p28_tab_order_natural`、`p28_tab_order_explicit`、`p28_focus_marks_box`、`p28_checkbox_toggle_render_diff`、`p28_full_pipeline_form_render`、`p28_js_element_value_prop`、`p28_form_hidden_field`、`p28_required_select` |
 
 ## 改进路线图
 
@@ -1133,6 +1148,10 @@ python test.py
 - [x] P27.4 交叉轴对齐全项（align-items / align-content / align-self + space-around / space-evenly）
 - [x] P27.5 方向 reverse + order 稳定排序 + min-width/min-height:auto 内容地板
 - [x] P27.6 测试扩充至 562 条（测试总数 542 → 562）
+- [x] P28.1 控件状态与渲染（LayoutBox 9 个 control_* 字段；checkbox/radio/file/select/textarea/button 默认盒 + checked/选中项/文件名/focus 环渲染）
+- [x] P28.2 表单序列化与提交（collect_form_fields + serialize_form_fields + form_action_url + form_get_url / form_post_body / form_submit）
+- [x] P28.3 focus / tab 顺序 / 校验（tab_order + focus_element + validate_form required/pattern；JS .value 按标签分派）
+- [x] P28.4 测试扩充至 583 条（测试总数 562 → 583）
 
 ## 与 Rust 版的对应关系
 
@@ -1141,7 +1160,7 @@ python test.py
 | `dom.py` | `dom.rs` | P24 兼容 shim（转发 html_pkg；Node 与 html_pkg.node.Node 同一类对象） |
 | `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
 | `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链；P26.3：parent_height_px 百分比高度解析链） |
-| `layout.py` | `layout.rs` | 盒模型 + 命中测试（P26：margin 折叠 / BFC 浮动包含 / min-max 约束 / width:auto 分配） |
+| `layout.py` | `layout.rs` | 盒模型 + 命中测试（P26：margin 折叠 / BFC 浮动包含 / min-max 约束 / width:auto 分配；P28：表单控件默认盒 + 状态字段） |
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
 | `paint_engine.py` | `paint.rs`（显示列表部分） | 显示列表 + 光栅化 |
 | `text.py` + `font.py` | `text.rs` + `font.rs` | 8×8 位图字体 |
