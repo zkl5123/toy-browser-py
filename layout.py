@@ -205,6 +205,19 @@ class LayoutBox:
     min_height: float = 0.0
     max_height: float = 0.0  # 0 = none
 
+    # P28 — Form controls: type/checked/selected/value/state fields.
+    # ``control_type`` is the DOM ``type`` attribute (lowered) for
+    # <input> / <button>; "" for other elements.
+    control_type: str = ""
+    control_checked: bool = False
+    control_value: str = ""
+    control_options: list = field(default_factory=list)  # <select> option values
+    control_option_index: int = 0
+    control_file_name: str = ""
+    control_focus: bool = False
+    control_tabindex: int = 0
+    control_required: bool = False
+
     IFRAME_PLACEHOLDER_H = 120.0
     IMG_DEFAULT_W = 32.0
     IMG_DEFAULT_H = 32.0
@@ -406,6 +419,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
     node = sn.dom
     is_element = node.is_element()
     my_font = sn.prop_font_px()
+    tag = (node.tag or "").lower()
 
     # P10.1 — child-position pseudo-classes: compute this node's 1-based
     # element-sibling index so :first-child / :last-child / :nth-child can
@@ -437,13 +451,21 @@ def build_box(sn: StyledNode, parent_font_px: float,
     border_color = sn.get_color("border-color", __import__("paint").Color(0, 0, 0))
     text_align = sn.text_align()
 
-    # <img> / <input>: pull width/height from DOM attributes when no CSS
-    # explicit size is set. These are the "intrinsic dimensions" in the
-    # toy model.
-    tag = (node.tag or "").lower()
+    # P28 — default border for form controls: even without a CSS
+    # border-width, checkbox/radio/select/text-input/file/textarea/button
+    # boxes carry a 1px border so the renderer can draw their outline.
+    is_form_tag = tag in ("input", "select", "textarea", "button")
+    _force_form_border = None
+    if is_form_tag and "border-width" not in sn.props:
+        _force_form_border = EdgeSizes(top=1.0, right=1.0, bottom=1.0, left=1.0)
+
+    # <input> / <textarea>: pull width/height from DOM attributes when
+    # no CSS explicit size is set.  These are the "intrinsic dimensions"
+    # in the toy model.  <textarea> additionally defaults to 4 rows ×
+    # 20 cols (HTML spec §4.10.6).
     dom_w: Optional[float] = None
     dom_h: Optional[float] = None
-    if tag in ("img", "input"):
+    if tag in ("img", "input", "textarea"):
         for attr, target in (("width", "w"), ("height", "h")):
             raw = node.attr(attr)
             if raw:
@@ -455,6 +477,20 @@ def build_box(sn: StyledNode, parent_font_px: float,
                     dom_w = val
                 else:
                     dom_h = val
+        # P28 — <textarea> HTML default: 4 rows × 20 cols.
+        if tag == "textarea":
+            cols_raw = node.attr("cols")
+            rows_raw = node.attr("rows")
+            if dom_w is None:
+                try:
+                    dom_w = int(cols_raw) * 8.0 if cols_raw else 160.0
+                except ValueError:
+                    dom_w = 160.0
+            if dom_h is None:
+                try:
+                    dom_h = int(rows_raw) * 16.0 if rows_raw else 4 * 16.0
+                except ValueError:
+                    dom_h = 4 * 16.0
 
     # P3.1 — embedded base64 image: decode data URI into pixel buffer.
     img_pixels: Optional[list] = None
@@ -739,6 +775,65 @@ def build_box(sn: StyledNode, parent_font_px: float,
     min_height = sn.get_number("min-height", 0.0)
     max_height = sn.get_number("max-height", 0.0)
 
+    # P28 — form control state fields (from DOM attributes).
+    # ``type`` on <input>/<button>; ``checked``/``selected``/``value``/
+    # ``name``/``required``/``tabindex``/``formaction`` read directly
+    # from the DOM node.  <select> stores its <option> value list +
+    # the index of the selected option.
+    control_type = ""
+    control_checked = False
+    control_value = ""
+    control_options: list = []
+    control_option_index = 0
+    control_file_name = ""
+    control_focus = node.attr("focus") is not None
+    control_tabindex = 0
+    control_required = False
+    if is_element:
+        for attr, target in (("type", "type"), ("value", "value"),
+                             ("checked", "checked"), ("name", "name"),
+                             ("tabindex", "tabindex"), ("required", "required"),
+                             ("formaction", "formaction")):
+            raw = node.attr(attr)
+            # Boolean attributes (checked/required) are present as "" —
+            # use `is not None` so the empty-string case still counts.
+            if target in ("checked", "required"):
+                if raw is None:
+                    continue
+                if target == "checked":
+                    control_checked = True
+                else:
+                    control_required = True
+                continue
+            if raw:
+                if target == "type":
+                    control_type = raw.lower()
+                elif target == "value":
+                    control_value = raw
+                elif target == "tabindex":
+                    try:
+                        control_tabindex = int(raw)
+                    except ValueError:
+                        control_tabindex = 0
+        if tag == "input" and control_type == "file":
+            # P28 — file input shows the local file name (toy: from
+            # a hypothetical "value" attr or default placeholder).
+            control_file_name = control_value or ""
+        if tag == "select":
+            # P28 — collect <option> values; the selected option is the
+            # first with the "selected" attribute, else index 0.
+            for opt in node.children:
+                if opt.is_element() and (opt.tag or "").lower() == "option":
+                    control_options.append(opt.attr("value") or (opt.text or ""))
+                    if opt.attr("selected") is not None:
+                        control_option_index = len(control_options) - 1
+            if control_value == "" and control_options:
+                control_value = control_options[control_option_index]
+        # P28 — checkbox / radio: <input type="checkbox"> without a
+        # value attribute defaults to "on" per the HTML spec.
+        if tag == "input" and control_type in ("checkbox", "radio") and control_value == "":
+            control_value = "on"
+
     # P6.2 — text-overflow: ellipsis + line-clamp (max visible lines).
     text_overflow = ""
     line_clamp = 0
@@ -1003,7 +1098,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
             else BoxType.TEXT
         ),
         padding=_edges_for(sn, "padding", my_font),
-        border=_edges_for(sn, "border-width", my_font),
+        border=_force_form_border if _force_form_border is not None else _edges_for(sn, "border-width", my_font),
         margin=_edges_for(sn, "margin", my_font),
         text_content=text_str,
         text_color=color,
@@ -1112,6 +1207,15 @@ def build_box(sn: StyledNode, parent_font_px: float,
         max_width=max_width,
         min_height=min_height,
         max_height=max_height,
+        control_type=control_type,
+        control_checked=control_checked,
+        control_value=control_value,
+        control_options=control_options,
+        control_option_index=control_option_index,
+        control_file_name=control_file_name,
+        control_focus=control_focus,
+        control_tabindex=control_tabindex,
+        control_required=control_required,
     )
 
     if is_element:
@@ -1309,6 +1413,7 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     is_iframe = tag == "iframe"
     is_img = tag == "img"
     is_input = tag == "input"
+    is_textarea = tag == "textarea"
 
     if bx.explicit_width is not None:
         available = bx.explicit_width - padding_l * 2.0
@@ -1332,11 +1437,44 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     # <img> with explicit_width but no explicit height: match width (square).
     if is_img and bx.explicit_width is not None and bx.explicit_height is None:
         bx.explicit_height = bx.explicit_width
-    # <input type="text"> gets a fixed placeholder box.
-    if is_input and bx.explicit_width is None:
+    # P28 — control-specific default sizing (runs BEFORE the generic
+    # <input> fallback so checkbox/radio/file get their own boxes).
+    if is_input and bx.control_type in ("checkbox", "radio"):
+        if bx.explicit_width is None:
+            available = 16.0
+        if bx.explicit_height is None:
+            bx.explicit_height = 16.0
+    elif is_input and bx.control_type == "file":
+        if bx.explicit_width is None:
+            available = 220.0
+        if bx.explicit_height is None:
+            bx.explicit_height = 24.0
+    elif is_input and bx.control_type in ("button", "submit", "reset", "image"):
+        if bx.explicit_width is None:
+            available = 80.0
+        if bx.explicit_height is None:
+            bx.explicit_height = 28.0
+    # P28 — <textarea> gets a fixed placeholder box (4 rows × 20 cols
+    # default, HTML §4.10.6).
+    if is_textarea and bx.explicit_width is None:
         available = 160.0
-    if is_input and bx.explicit_height is None:
-        bx.explicit_height = 20.0
+    if is_textarea and bx.explicit_height is None:
+        bx.explicit_height = 64.0
+    # P28 — <select> gets a fixed combobox box (width = max option
+    # width or 120px, height = 24px).
+    if tag == "select" and bx.explicit_width is None:
+        available = 120.0
+    if tag == "select" and bx.explicit_height is None:
+        bx.explicit_height = 24.0
+    # <input> (text/password/number/etc.) gets a fixed placeholder box —
+    # only for the default text-like types (checkbox/radio/file/button are
+    # handled above with their own sizes).
+    if is_input and bx.control_type not in ("checkbox", "radio", "file",
+                                             "button", "submit", "reset", "image"):
+        if bx.explicit_width is None:
+            available = 160.0
+        if bx.explicit_height is None:
+            bx.explicit_height = 20.0
     content_x0 = x + margin_l + padding_l
     content_y0 = y + padding_t
 
@@ -1578,6 +1716,12 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         for c in bx.children:
             if c.dom is None:  # caption text box
                 c.rect.y += grow / 2.0
+    # P28 — form controls with an explicit height (checkbox/radio/select/
+    # textarea/file/button): the placeholder height above must be respected
+    # even when the control has no in-flow children.  For empty controls the
+    # height was set from the control-specific default above.
+    if bx.explicit_height is None and (is_input or is_textarea or tag == "select" or tag == "button"):
+        h = _element_placeholder_height(bx)
 
     # P26.2 — BFC: the box's height extends to contain its floats.
     if float_max_h > 0.0:

@@ -1536,6 +1536,80 @@
 - [x] 既有 542 条测试全绿无回归；`main.py` CLI e2e 渲染 P27 flexbox
   页面（row + wrap + column-reverse）通过。
 
+## P28 — 表单与交互真实化（M3 第四步）✅
+
+> 依据 `项目未来规划.txt` §P28：表单控件从"占位框"升级为**可交互、
+> 有状态、可提交**的真实控件 —— select / checkbox / radio / file 状态
+> 渲染，表单 GET/POST 序列化，focus / tab 顺序 / required 校验。
+> 测试 562 → **583**（21 条新 P28 测试）。
+
+### 28.1 控件状态与渲染 ✅
+
+- [x] `LayoutBox` 新增 9 个控制字段：`control_type` / `control_checked`
+  / `control_value` / `control_options` / `control_option_index` /
+  `control_file_name` / `control_focus` / `control_tabindex` /
+  `control_required`；`build_box` 从 DOM 属性读取（checkbox/radio
+  缺省 value="on"，select 收集 option 列表 + selected 索引，
+  `focus=""` 属性 → `control_focus`）。
+- [x] `layout_block` 按控件类型给出默认盒尺寸（checkbox/radio 16×16、
+  file 220×24、select 120×24、button 80×28、textarea 按 cols/rows
+  或 160×64 缺省），**先于**通用 `<input>` 回退执行；表单控件无
+  CSS border-width 时强制 1px 边框（`_force_form_border`）。
+- [x] `paint_engine` 渲染控件状态：checked checkbox / radio 在中心
+  画 6×6 实心方块；`<select>` 显示选中项标签 + 下拉箭头条；
+  `<input type=file>` 显示文件名或 "No file selected"；
+  `control_focus` 控件画 2px 蓝色 focus 环。
+- [x] 测试：`p28_input_checkbox_render` / `p28_input_radio_render` /
+  `p28_select_option_render` / `p28_file_input_render` /
+  `p28_textarea_default_size` / `p28_checkbox_toggle_render_diff`。
+
+### 28.2 表单序列化与提交 ✅
+
+- [x] `browser.collect_form_fields(root, form_id)`：DOM 序收集
+  可序列化字段（text/hidden/checkbox(checked)/radio(checked)/
+  select(多值)/textarea/button），返回 `[{name, value, kind}]`。
+- [x] `browser.serialize_form_fields(fields)`：
+  `application/x-www-form-urlencoded` 编码（`urllib.parse.quote`，
+  同名多值重复输出）。
+- [x] `browser.form_action_url`：`<form action>` 解析（绝对 URL 直通、
+  `//` 协议相对、`/` 根相对对照 `<base href>`、相对路径
+  `urljoin`）。
+- [x] `browser.form_get_url` / `browser.form_post_body`：GET 拼
+  `action?query`、POST 返回 `{url, body, content_type}`。
+- [x] `browser.form_submit(root, form_id, method, base_url,
+  submit_host)`：先 `validate_form`（有违规 → `ok:False` + violations），
+  通过则序列化；传入 P21 `net.HttpClient` 时实际发 GET/POST，
+  否则 dry-run 只返回 url/body。
+- [x] 测试：`p28_form_get_query_string` / `p28_form_post_body` /
+  `p28_form_select_multiple` / `p28_form_radio_group` /
+  `p28_form_action_url_resolution` / `p28_form_hidden_field` /
+  `p28_submit_blocked_by_validation`。
+
+### 28.3 focus / tab 顺序 / 校验 ✅
+
+- [x] `browser.tab_order(root)`：可聚焦元素（`<a href>` / `<button>` /
+  `<input>` 除 hidden/image / `<select>` / `<textarea>` / 带
+  tabindex 的元素）按"正 tabindex 优先、其余 DOM 序"排布，
+  跳过 hidden input。
+- [x] `browser.focus_element(root, id)`：设置 DOM `focus=""` 属性，
+  下次 `build_box` 读出 `control_focus=True` → 渲染蓝色 focus 环。
+- [x] `browser.validate_form(root, form_id)`：`required` 属性玩具校验
+  （text/select/textarea 空值、checkbox/radio 未勾选、
+  `pattern` 正则不匹配 → violation 列表）。
+- [x] JS 引擎 `.value` 属性按标签分派（`<select>` → 选中项 value，
+  `<textarea>` → 文本内容，`<input>`/`<button>` → value 属性）。
+- [x] 测试：`p28_tab_order_natural` / `p28_tab_order_explicit` /
+  `p28_focus_marks_box` / `p28_required_validation` /
+  `p28_required_checkbox` / `p28_required_select` /
+  `p28_js_element_value_prop`。
+
+### 28.4 测试扩充 ✅
+
+- [x] 测试总数 562 → **583** 条（21 条新 P28 测试）。
+- [x] 既有 562 条测试全绿无回归；`main.py` CLI e2e 渲染 P28 表单页
+  （text + checkbox + radio + select + file + textarea + button）通过，
+  序列化/tab 序/focus 全链路验证。
+
 ## 实施顺序
 
 ```
@@ -1683,11 +1757,16 @@ P27.3 flex-wrap 多行
 P27.4 交叉轴：align-items/content/self 全项 + space-around/space-evenly
 P27.5 方向 reverse + order 排序 + min-width:auto
 P27.6 测试扩充（20 条 P27 测试，542 → 562）
+
+P28.1 控件状态与渲染（select/checkbox/radio/file 默认盒 + checked/selected/文件名渲染）
+P28.2 表单序列化与提交（collect_form_fields + urlencoded + GET/POST + form_submit）
+P28.3 focus / tab 顺序 / required+pattern 玩具校验 + JS .value 分派
+P28.4 测试扩充（21 条 P28 测试，562 → 583）
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 已完成（**562/562** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 已完成（**583/583** 测试通过）。
 
-下一站：**P28（待定 — 依据 ROADMAP 后续规划）**。
+下一站：**P29（待定 — 依据 ROADMAP 后续规划）**。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

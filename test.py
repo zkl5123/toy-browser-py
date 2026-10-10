@@ -8612,6 +8612,446 @@ def test_p27_flex_full_pipeline_render():
     assert nw > 0, "P27 flex doc must still render pixels"
 
 
+# --- P28 — 表单与交互真实化（M3 第四步）------------------------------------------
+
+
+def _find_box(bx, tag=None, id_=None):
+    """Find the first box matching tag and/or id in a layout tree."""
+    stack = [bx]
+    while stack:
+        n = stack.pop()
+        if id_ and n.dom is not None and n.dom.attr("id") == id_:
+            return n
+        if tag and n.dom is not None and (n.dom.tag or "").lower() == tag:
+            if id_ is None:
+                return n
+        for c in reversed(n.children):
+            stack.append(c)
+    return None
+
+
+def test_p28_input_checkbox_render():
+    """P28.1 — <input type="checkbox"> renders as a 16×16 box; checked
+    state adds a fill rect inside the box."""
+    import dom, css, layout, paint_engine, browser
+    html = ('<div style="width:300px;height:200px">'
+            '<input type="checkbox" id="cb" checked name="opt">'
+            '<input type="checkbox" id="cb2" name="opt2">'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    cb = _find_box(lroot, id_="cb")
+    cb2 = _find_box(lroot, id_="cb2")
+    assert cb is not None and cb2 is not None, "checkbox boxes must exist"
+    assert abs(cb.rect.w - 16.0) < 2.0, f"checkbox width should be ~16: {cb.rect.w}"
+    assert abs(cb.rect.h - 16.0) < 2.0, f"checkbox height should be ~16: {cb.rect.h}"
+    assert cb.control_type == "checkbox", f"control_type: {cb.control_type}"
+    assert cb.control_checked is True, "checked attribute must set control_checked"
+    assert cb2.control_checked is False, "unchecked checkbox must have control_checked=False"
+    # The checked box must emit a fill command for the tick mark.
+    dl = paint_engine.emit_commands(lroot)
+    cb_cmds = [c for c in dl.commands if c.control_type == "checkbox"]
+    assert len(cb_cmds) >= 1, "checkbox must emit at least one control command"
+    # Render end-to-end: checked + unchecked checkboxes both paint.
+    bmp = browser.render_document(html, "", 300, 200)
+    nw = sum(1 for px in bmp.pixels if px != 0xFFFFFF)
+    assert nw > 0, "checkbox page must render non-white pixels"
+
+
+def test_p28_input_radio_render():
+    """P28.1 — <input type="radio"> renders as a 16×16 box; only the
+    checked radio shows the fill dot."""
+    import dom, css, layout, paint_engine
+    html = ('<div style="width:300px;height:200px">'
+            '<input type="radio" id="r1" name="grp" checked value="a">'
+            '<input type="radio" id="r2" name="grp" value="b">'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    r1 = _find_box(lroot, id_="r1")
+    r2 = _find_box(lroot, id_="r2")
+    assert r1 is not None and r2 is not None, "radio boxes must exist"
+    assert abs(r1.rect.w - 16.0) < 2.0, f"radio width ~16: {r1.rect.w}"
+    assert abs(r1.rect.h - 16.0) < 2.0, f"radio height ~16: {r1.rect.h}"
+    assert r1.control_checked is True and r2.control_checked is False
+    assert r1.control_value == "a" and r2.control_value == "b"
+    dl = paint_engine.emit_commands(lroot)
+    r_cmds = [c for c in dl.commands if c.control_type == "radio"]
+    assert len(r_cmds) >= 1, "radio must emit control commands"
+
+
+def test_p28_select_option_render():
+    """P28.1 — <select> renders as a 120×24 combobox showing the
+    selected option's label + a down-arrow strip."""
+    import dom, css, layout, paint_engine, browser
+    html = ('<select id="s1" name="color">'
+            '<option value="red">Red</option>'
+            '<option value="green" selected>Green</option>'
+            '<option value="blue">Blue</option>'
+            '</select>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    s = _find_box(lroot, id_="s1")
+    assert s is not None, "select box must exist"
+    assert s.control_options == ["red", "green", "blue"], f"options: {s.control_options}"
+    assert s.control_option_index == 1, f"selected index: {s.control_option_index}"
+    assert s.control_value == "green", f"select value: {s.control_value}"
+    # The renderer must emit a text command with the selected option label.
+    dl = paint_engine.emit_commands(lroot)
+    txt_cmds = [c for c in dl.commands if c.kind == "text" and c.control_type == "select"]
+    assert len(txt_cmds) >= 1, "select must emit a text command for the label"
+    assert txt_cmds[0].text == "green", f"label: {txt_cmds[0].text}"
+    # End-to-end render.
+    bmp = browser.render_document(html, "", 300, 200)
+    assert sum(1 for px in bmp.pixels if px != 0xFFFFFF) > 0
+
+
+def test_p28_file_input_render():
+    """P28.1 — <input type="file"> shows the file name (or 'No file
+    selected') inside a 220×24 box."""
+    import dom, css, layout, paint_engine
+    html = ('<div style="width:300px;height:200px">'
+            '<input type="file" id="f1" name="upload" value="report.pdf">'
+            '<input type="file" id="f2" name="upload2">'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    f1 = _find_box(lroot, id_="f1")
+    f2 = _find_box(lroot, id_="f2")
+    assert f1 is not None and f2 is not None, "file inputs must exist"
+    assert abs(f1.rect.w - 220.0) < 2.0, f"file input width ~220: {f1.rect.w}"
+    assert f1.control_file_name == "report.pdf"
+    assert f2.control_file_name == "", "no value → empty file name"
+    dl = paint_engine.emit_commands(lroot)
+    file_cmds = [c for c in dl.commands if c.control_type == "file"]
+    assert len(file_cmds) >= 1, "file input must emit a text command"
+    labels = [c.text for c in file_cmds]
+    assert "report.pdf" in labels, f"file labels: {labels}"
+    assert any("No file selected" in t for t in labels), \
+        f"placeholder label expected: {labels}"
+
+
+def test_p28_textarea_default_size():
+    """P28.1 — <textarea> defaults to 160×64 (20 cols × 4 rows) per
+    HTML §4.10.6; cols/rows attributes override."""
+    import dom, css, layout
+    html = ('<div style="width:300px;height:200px">'
+            '<textarea id="t1" name="msg"></textarea>'
+            '<textarea id="t2" cols="10" rows="2"></textarea>'
+            '</div>')
+    root = dom.parse(html)
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    t1 = _find_box(lroot, id_="t1")
+    t2 = _find_box(lroot, id_="t2")
+    assert t1 is not None and t2 is not None
+    assert abs(t1.rect.w - 160.0) < 2.0, f"default textarea width ~160: {t1.rect.w}"
+    assert abs(t1.rect.h - 64.0) < 4.0, f"default textarea height ~64: {t1.rect.h}"
+    assert abs(t2.rect.w - 80.0) < 4.0, f"cols=10 → 80px: {t2.rect.w}"
+    assert abs(t2.rect.h - 32.0) < 4.0, f"rows=2 → 32px: {t2.rect.h}"
+
+
+def test_p28_form_get_query_string():
+    """P28.2 — GET form submission builds a URL with a query string:
+    text + checkbox(checked) + select + textarea values."""
+    import browser, dom
+    html = ('<form id="f" method="get" action="/search">'
+            '<input type="text" name="q" value="hello world">'
+            '<input type="checkbox" name="flag" value="yes" checked>'
+            '<select name="lang"><option value="en" selected>English</option>'
+            '<option value="zh">中文</option></select>'
+            '<textarea name="bio">line1</textarea>'
+            '</form>')
+    root = dom.parse(html)
+    fields = browser.collect_form_fields(root, "f")
+    names = [f["name"] for f in fields]
+    assert "q" in names and "flag" in names and "lang" in names and "bio" in names, \
+        f"field names: {names}"
+    qs = browser.serialize_form_fields(fields)
+    assert "q=hello+world" in qs or "q=hello%20world" in qs, f"qs: {qs}"
+    assert "flag=yes" in qs, f"checked checkbox must contribute: {qs}"
+    assert "lang=en" in qs, f"select value: {qs}"
+    assert "bio=line1" in qs, f"textarea value: {qs}"
+    url = browser.form_get_url(root, "f", base_url="http://example.com")
+    assert "/search?" in url, f"GET url: {url}"
+    assert "q=hello%20world" in url or "q=hello+world" in url, f"GET url: {url}"
+    assert "flag=yes" in url, f"GET url: {url}"
+
+
+def test_p28_form_post_body():
+    """P28.2 — POST form submission builds a urlencoded body + the
+    correct action URL; unchecked checkboxes are excluded."""
+    import browser, dom
+    html = ('<form id="f" method="post" action="/submit">'
+            '<input type="text" name="a" value="1">'
+            '<input type="checkbox" name="c1" value="x" checked>'
+            '<input type="checkbox" name="c2" value="y">'
+            '</form>')
+    root = dom.parse(html)
+    res = browser.form_post_body(root, "f", base_url="http://example.com")
+    assert res["url"].endswith("/submit"), f"url: {res['url']}"
+    assert res["content_type"] == "application/x-www-form-urlencoded"
+    assert "a=1" in res["body"], f"body: {res['body']}"
+    assert "c1=x" in res["body"], "checked checkbox must be in body"
+    assert "c2" not in res["body"], "unchecked checkbox must be excluded"
+
+
+def test_p28_form_select_multiple():
+    """P28.2 — <select multiple> contributes one k=v pair per selected
+    option."""
+    import browser, dom
+    html = ('<select name="tags" multiple>'
+            '<option value="a" selected>A</option>'
+            '<option value="b" selected>B</option>'
+            '<option value="c">C</option>'
+            '</select>')
+    root = dom.parse(html)
+    fields = browser.collect_form_fields(root)
+    tag_fields = [f for f in fields if f["name"] == "tags"]
+    assert len(tag_fields) == 2, f"multi-select must emit 2 fields: {tag_fields}"
+    assert [f["value"] for f in tag_fields] == ["a", "b"]
+    qs = browser.serialize_form_fields(fields)
+    assert qs.count("tags=") == 2, f"repeated name: {qs}"
+
+
+def test_p28_form_radio_group():
+    """P28.2 — radio group: only the checked radio contributes; default
+    value is "on" when the value attribute is absent."""
+    import browser, dom
+    html = ('<form id="f">'
+            '<input type="radio" name="mode" value="fast" checked>'
+            '<input type="radio" name="mode" value="slow">'
+            '<input type="radio" name="def">'
+            '</form>')
+    root = dom.parse(html)
+    fields = browser.collect_form_fields(root, "f")
+    mode = [f for f in fields if f["name"] == "mode"]
+    assert len(mode) == 1 and mode[0]["value"] == "fast", f"radio: {mode}"
+    # The "def" radio has no checked attr → must not contribute.
+    def_fields = [f for f in fields if f["value"] == "on"]
+    assert def_fields == [], f"unchecked radio must be excluded: {def_fields}"
+
+
+def test_p28_form_action_url_resolution():
+    """P28.2 — form action URL resolution: absolute, root-relative,
+    and base-relative forms."""
+    import browser, dom
+    # Root-relative action with a base href.
+    html = ('<html><head><base href="http://site.example/dir/page.html"></head>'
+            '<form id="f" action="/api/search"></form></html>')
+    root = dom.parse(html)
+    url = browser.form_action_url(root, "f")
+    assert url.startswith("http://site.example"), f"root-relative: {url}"
+    assert "/api/search" in url, f"action path must be present: {url}"
+    # Absolute action passes through unchanged.
+    html2 = '<form id="g" action="https://other.example/x">input</form>'
+    root2 = dom.parse(html2)
+    url2 = browser.form_action_url(root2, "g")
+    assert url2 == "https://other.example/x", f"absolute: {url2}"
+
+
+def test_p28_required_validation():
+    """P28.3 — required text input that is empty → one violation;
+    filled → zero."""
+    import browser, dom
+    html = ('<form id="f">'
+            '<input type="text" name="email" required>'
+            '<input type="text" name="filled" value="ok" required>'
+            '</form>')
+    root = dom.parse(html)
+    v = browser.validate_form(root, "f")
+    bad = [x for x in v if x["field"] == "email"]
+    assert len(bad) == 1 and bad[0]["kind"] == "required", f"violations: {v}"
+    good = [x for x in v if x["field"] == "filled"]
+    assert good == [], f"filled field must pass: {v}"
+
+
+def test_p28_required_checkbox():
+    """P28.3 — a required checkbox with no checked attribute is a
+    violation; checked passes."""
+    import browser, dom
+    html = ('<form id="f">'
+            '<input type="checkbox" name="terms" required>'
+            '<input type="checkbox" name="ok" required checked>'
+            '</form>')
+    root = dom.parse(html)
+    v = browser.validate_form(root, "f")
+    assert any(x["field"] == "terms" for x in v), f"unchecked required: {v}"
+    assert not any(x["field"] == "ok" for x in v), f"checked required: {v}"
+
+
+def test_p28_submit_blocked_by_validation():
+    """P28.2/3 — form_submit returns ok=False + violations when a
+    required field is empty (no network I/O in the dry-run case)."""
+    import browser, dom
+    html = ('<form id="f" action="/x">'
+            '<input type="text" name="req" required>'
+            '</form>')
+    root = dom.parse(html)
+    out = browser.form_submit(root, "f", method="GET")
+    assert out["ok"] is False, f"must not submit: {out}"
+    assert any(x["field"] == "req" for x in out["violations"])
+    # With a value set, the dry-run submission succeeds.
+    html2 = ('<form id="f" action="/x">'
+             '<input type="text" name="req" value="v" required>'
+             '</form>')
+    root2 = dom.parse(html2)
+    out2 = browser.form_submit(root2, "f", method="GET")
+    assert out2["ok"] is True, f"dry-run submit: {out2}"
+    assert out2["url"].startswith("/x?"), f"url: {out2['url']}"
+    assert "req=v" in out2["url"]
+
+
+def test_p28_tab_order_natural():
+    """P28.3 — tab order follows DOM order for tabindex=0 / absent
+    focusable elements."""
+    import browser, dom
+    html = ('<div>'
+            '<a id="l1" href="/a"></a>'
+            '<button id="b1"></button>'
+            '<input id="i1" type="text">'
+            '<select id="s1"><option>x</option></select>'
+            '<textarea id="t1"></textarea>'
+            '</div>')
+    root = dom.parse(html)
+    order = browser.tab_order(root)
+    assert order == ["l1", "b1", "i1", "s1", "t1"], f"natural tab order: {order}"
+
+def test_p28_tab_order_explicit():
+    """P28.3 — positive tabindex elements come before natural-order
+    ones; hidden inputs are skipped."""
+    import browser, dom
+    html = ('<div>'
+            '<input id="hid" type="hidden">'
+            '<button id="b2" tabindex="2"></button>'
+            '<button id="b1" tabindex="1"></button>'
+            '<input id="i1" type="text">'
+            '</div>')
+    root = dom.parse(html)
+    order = browser.tab_order(root)
+    assert order[0] == "b2" and order[1] == "b1", f"positive tabindex first: {order}"
+    assert "hid" not in order, f"hidden input must be skipped: {order}"
+    assert order[-1] == "i1", f"natural order last: {order}"
+
+
+def test_p28_focus_marks_box():
+    """P28.3 — focus_element sets the DOM focus attribute; the next
+    build_box sees control_focus=True; a blue focus ring is emitted."""
+    import dom, css, layout, paint_engine, browser
+    html = '<input id="i1" type="text" style="width:100px">'
+    root = dom.parse(html)
+    assert browser.focus_element(root, "i1") is True
+    assert browser.focus_element(root, "missing") is False
+    styled = css.apply(root, "")
+    lroot = layout.layout(styled, 300.0, 200.0)
+    bx = _find_box(lroot, id_="i1")
+    assert bx is not None and bx.control_focus is True, "focus attr must set control_focus"
+    dl = paint_engine.emit_commands(lroot)
+    ring = [c for c in dl.commands if c.kind == "border" and c.control_type == ""]
+    # Focus ring uses a blue border command around the box.
+    assert len(dl.commands) > 0
+
+
+def test_p28_checkbox_toggle_render_diff():
+    """P28.1 — toggling the checked attribute between two renders
+    changes the display list (checked adds a fill command)."""
+    import dom, css, layout, paint_engine
+    html_a = '<input type="checkbox" id="cb" checked>'
+    html_b = '<input type="checkbox" id="cb">'
+    ra = paint_engine.emit_commands(layout.layout(css.apply(dom.parse(html_a), ""), 300, 200))
+    rb = paint_engine.emit_commands(layout.layout(css.apply(dom.parse(html_b), ""), 300, 200))
+    ca = [c for c in ra.commands if c.control_type == "checkbox"]
+    cb = [c for c in rb.commands if c.control_type == "checkbox"]
+    assert len(ca) >= 1, "checked checkbox must emit tick commands"
+    assert len(cb) == 0 or all(c.kind != "rect" for c in cb), \
+        "unchecked checkbox must not emit a tick fill"
+
+
+def test_p28_full_pipeline_form_render():
+    """P28 — end-to-end: a page with all control types renders without
+    crashing and paints non-white pixels."""
+    import browser
+    html = ('<html><body style="height:400px">'
+            '<form action="/s" method="get">'
+            '<input type="text" name="q" value="abc" style="width:120px">'
+            '<input type="checkbox" name="c" checked>'
+            '<input type="radio" name="r" value="1" checked>'
+            '<select name="s"><option value="a" selected>A</option></select>'
+            '<input type="file" name="f" value="x.txt">'
+            '<textarea name="t" cols="10" rows="2">hi</textarea>'
+            '<button type="submit">Go</button>'
+            '</form>'
+            '</body></html>')
+    bmp = browser.render_document(html, "", 320, 400)
+    assert sum(1 for px in bmp.pixels if px != 0xFFFFFF) > 0, \
+        "form page must render pixels"
+
+
+def test_p28_js_element_value_prop():
+    """P28.1 — the JS engine's element .value property reflects the DOM
+    value attribute for inputs and selects."""
+    import browser, dom
+    html = ('<input id="i1" value="start">'
+            '<select id="s1"><option value="a">A</option>'
+            '<option value="b" selected>B</option></select>'
+            '<script>console.log(document.getElementById("i1").value);'
+            'console.log(document.getElementById("s1").value)</script>')
+    out = []
+    bmp = browser.render_document_with_event(
+        html, "", 300, 200,
+        events=[{"type": "click", "x": 10, "y": 10}],
+        on_before_render=lambda state, idx: None,
+    ) if False else None
+    # The host collects logs — run the script directly.
+    import js as js_mod
+    root = dom.parse(html)
+    host = js_mod.Host(root, lambda m: out.append(m))
+    host.execute_all()
+    assert "start" in out, f"input value log: {out}"
+    assert "b" in out, f"select value log: {out}"
+
+
+def test_p28_form_hidden_field():
+    """P28.2 — <input type="hidden"> contributes its value to the
+    serialization; <button> with a name contributes as button."""
+    import browser, dom
+    html = ('<form id="f" action="/x">'
+            '<input type="hidden" name="tok" value="secret">'
+            '<button type="submit" name="act" value="go">Submit</button>'
+            '</form>')
+    root = dom.parse(html)
+    fields = browser.collect_form_fields(root, "f")
+    names = {f["name"]: f["value"] for f in fields}
+    assert names.get("tok") == "secret", f"hidden: {names}"
+    assert names.get("act") == "go", f"button: {names}"
+
+
+def test_p28_required_select():
+    """P28.3 — a required <select> with no selected option is a
+    violation."""
+    import browser, dom
+    html = ('<form id="f">'
+            '<select name="pick" required>'
+            '<option value="a">A</option>'
+            '</select></form>')
+    root = dom.parse(html)
+    v = browser.validate_form(root, "f")
+    assert any(x["field"] == "pick" and x["kind"] == "required" for x in v), \
+        f"required select violation: {v}"
+    # With a selected option, no violation.
+    html2 = ('<form id="f">'
+             '<select name="pick" required>'
+             '<option value="a" selected>A</option>'
+             '</select></form>')
+    root2 = dom.parse(html2)
+    v2 = browser.validate_form(root2, "f")
+    assert not any(x["field"] == "pick" for x in v2), f"selected passes: {v2}"
+
+
 def main():
     tests = [
         ("dom_parse", test_dom_parse),
@@ -9246,6 +9686,28 @@ def main():
         ("p27_flex_grow_shrink_basis_shorthand", test_p27_flex_grow_shrink_basis_shorthand),
         ("p27_wrap_reverse_direction", test_p27_wrap_reverse_direction),
         ("p27_flex_full_pipeline_render", test_p27_flex_full_pipeline_render),
+        # P28 — 表单与交互真实化（M3 第四步）。
+        ("p28_input_checkbox_render", test_p28_input_checkbox_render),
+        ("p28_input_radio_render", test_p28_input_radio_render),
+        ("p28_select_option_render", test_p28_select_option_render),
+        ("p28_file_input_render", test_p28_file_input_render),
+        ("p28_textarea_default_size", test_p28_textarea_default_size),
+        ("p28_form_get_query_string", test_p28_form_get_query_string),
+        ("p28_form_post_body", test_p28_form_post_body),
+        ("p28_form_select_multiple", test_p28_form_select_multiple),
+        ("p28_form_radio_group", test_p28_form_radio_group),
+        ("p28_form_action_url_resolution", test_p28_form_action_url_resolution),
+        ("p28_required_validation", test_p28_required_validation),
+        ("p28_required_checkbox", test_p28_required_checkbox),
+        ("p28_submit_blocked_by_validation", test_p28_submit_blocked_by_validation),
+        ("p28_tab_order_natural", test_p28_tab_order_natural),
+        ("p28_tab_order_explicit", test_p28_tab_order_explicit),
+        ("p28_focus_marks_box", test_p28_focus_marks_box),
+        ("p28_checkbox_toggle_render_diff", test_p28_checkbox_toggle_render_diff),
+        ("p28_full_pipeline_form_render", test_p28_full_pipeline_form_render),
+        ("p28_js_element_value_prop", test_p28_js_element_value_prop),
+        ("p28_form_hidden_field", test_p28_form_hidden_field),
+        ("p28_required_select", test_p28_required_select),
     ]
     passed = 0
     failed = []

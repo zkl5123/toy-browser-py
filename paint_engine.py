@@ -22,6 +22,7 @@ class DisplayCommand:
     h: float = 0.0
     color: Color | None = None
     text: str = ""
+    text_color: Color | None = None
     font_px: float = 16.0
     align: str = "left"
     max_width: float = 0.0
@@ -75,6 +76,24 @@ class DisplayCommand:
     text_rendering: str = "auto"
     # P20.4 — CSS font-weight (>= 600 → bold variant / synthetic bold).
     font_weight: int = 400
+    # P28 — form control state fields (checkbox/radio/select/file).
+    control_type: str = ""
+    control_checked: bool = False
+    control_value: str = ""
+    control_options: list = field(default_factory=list)
+    control_option_index: int = 0
+    control_file_name: str = ""
+    control_focus: bool = False
+    control_required: bool = False
+    # P28 — form control state fields (checkbox/radio/select/file).
+    control_type: str = ""
+    control_checked: bool = False
+    control_value: str = ""
+    control_options: list = field(default_factory=list)
+    control_option_index: int = 0
+    control_file_name: str = ""
+    control_focus: bool = False
+    control_required: bool = False
 
 
 class DisplayList:
@@ -316,6 +335,95 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 )
             )
 
+    # P28 — form control visual state: checkbox/radio tick marks,
+    # select combobox arrow, file-input name label, focus ring for any
+    # focused control.
+    _is_control = bx.control_type != "" or tag in ("input", "select", "textarea", "button")
+    if bx.control_type in ("checkbox", "radio"):
+        cx = eff_x + r.w / 2.0
+        cy = eff_y + r.h / 2.0
+        if bx.control_type == "checkbox" and bx.control_checked:
+            # Check mark: a filled 6×6 square in the center.
+            dl.commands.append(
+                _tag(
+                    DisplayCommand(
+                        "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
+                        color=Color(30, 30, 30),
+                        control_type=bx.control_type,
+                    )
+                )
+            )
+        elif bx.control_type == "radio" and bx.control_checked:
+            # Radio dot: a filled 6×6 square (toy: no circles yet).
+            dl.commands.append(
+                _tag(
+                    DisplayCommand(
+                        "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
+                        color=Color(30, 30, 30),
+                        control_type=bx.control_type,
+                    )
+                )
+            )
+    elif bx.control_type == "select" or tag == "select":
+        # <select> combobox: draw a down-arrow glyph (toy: "v" text).
+        opt_label = bx.control_options[bx.control_option_index] if bx.control_options else ""
+        dl.commands.append(
+            _tag(
+                DisplayCommand(
+                    "text",
+                    eff_x + 4.0,
+                    eff_y + max(0.0, r.h / 2.0 - bx.font_px / 2.0),
+                    r.w - 16.0,
+                    r.h,
+                    text=opt_label,
+                    text_color=bx.text_color or Color(0, 0, 0),
+                    font_px=bx.font_px,
+                    control_type="select",
+                )
+            )
+        )
+        # Down arrow: a small filled triangle approximated as a 6×3 rect.
+        dl.commands.append(
+            _tag(
+                DisplayCommand(
+                    "rect",
+                    eff_x + r.w - 12.0,
+                    eff_y + r.h / 2.0 - 1.5,
+                    8.0, 3.0,
+                    color=Color(80, 80, 80),
+                    control_type="select",
+                )
+            )
+        )
+    elif bx.control_type == "file":
+        # <input type="file">: show the file name (or "No file selected").
+        file_label = bx.control_file_name or "No file selected"
+        dl.commands.append(
+            _tag(
+                DisplayCommand(
+                    "text",
+                    eff_x + 4.0,
+                    eff_y + max(0.0, r.h / 2.0 - bx.font_px / 2.0),
+                    r.w - 16.0,
+                    r.h,
+                    text=file_label,
+                    text_color=bx.text_color or Color(0, 0, 0),
+                    font_px=bx.font_px,
+                    control_type="file",
+                )
+            )
+        )
+    # P28.3 — focus ring for any focused form control.
+    if bx.control_focus and _is_control:
+        dl.commands.append(
+            _tag(
+                DisplayCommand(
+                    "border", eff_x - 1.0, eff_y - 1.0, r.w + 2.0, r.h + 2.0,
+                    color=Color(0, 100, 255),
+                    control_type=bx.control_type,
+                )
+            )
+        )
     # P10.3 — CSS outline: draw a ring OUTSIDE the border.
     # offset = (outline_width / 2); the outline is drawn as a hollow rect
     # around (eff_x - off, eff_y - off, r.w + 2*off, r.h + 2*off).
@@ -474,7 +582,9 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
         elif cmd.kind == "border":
             _draw_border(bmp, cmd)
         elif cmd.kind == "text":
-            color = cmd.color if cmd.color is not None else Color(0, 0, 0)
+            # P28 — text commands may carry their own text_color (used by
+            # form control labels); fall back to the box's fill color.
+            color = cmd.text_color if cmd.text_color is not None else (cmd.color if cmd.color is not None else Color(0, 0, 0))
             text_mod.draw_text(
                 bmp,
                 cmd.x,

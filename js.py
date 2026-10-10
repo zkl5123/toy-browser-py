@@ -1919,6 +1919,32 @@ class DomElement:
     def id(self) -> Optional[str]:
         return self.node.attr("id")
 
+    @property
+    def value(self) -> Optional[str]:
+        """P28.1 — the element's value: <input>/<textarea> value attribute
+        or text content; <select> selected option's value; None otherwise."""
+        node = self.node
+        tag = (node.tag or "").lower()
+        if tag == "textarea":
+            return "".join(c.text or "" for c in node.children if not c.is_element())
+        if tag == "select":
+            for opt in node.children:
+                if opt.is_element() and (opt.tag or "").lower() == "option" \
+                        and opt.attr("selected") is not None:
+                    return opt.attr("value") or (opt.text or "")
+            return None
+        if tag in ("input", "button"):
+            return node.attr("value") or None
+        return None
+
+    @property
+    def checked(self) -> Optional[bool]:
+        """P28.1 — checkbox/radio checked state (None for other controls)."""
+        tag = (self.node.tag or "").lower()
+        if tag == "input" and (self.node.attr("type") or "").lower() in ("checkbox", "radio"):
+            return self.node.attr("checked") is not None
+        return None
+
 
 class Host:
     """Binds the JS engine to a DOM tree + host functions + sandbox rules."""
@@ -2897,7 +2923,18 @@ class Host:
         if prop == "src":
             return el.node.attr("src")
         # P13.4 — input element value
+        # P28.1 — <select> value: the selected option's value; <input> /
+        # <textarea> / <button>: the value attribute (or text content).
         if prop == "value":
+            tag = (el.node.tag or "").lower()
+            if tag == "select":
+                for opt in el.node.children:
+                    if opt.is_element() and (opt.tag or "").lower() == "option" \
+                            and opt.attr("selected") is not None:
+                        return opt.attr("value") or (opt.text or "")
+                return None
+            if tag == "textarea":
+                return el.node.text_content()
             return el.node.attr("value")
         # P14.1 — scroll offsets (toy: read from the layout box if available)
         if prop in ("scrollTop", "scrollLeft"):
