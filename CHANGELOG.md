@@ -7,6 +7,61 @@ roadmap milestones).
 
 ---
 
+## P34.5 — CSS 候选规则身份缓存 + 单字符 advance 模块级缓存 + shorthand 短路
+
+*10k 节点压测文档全管线：P34.4 基线 ~29.4s。本轮主要目标是 css.apply
+阶段（~3s）与 text.advance 热路径。*
+
+### Added
+
+- **`css._candidate_rules_cache`**（`css._apply_subtree`）：按节点
+  身份 (tag, class, [id], hover, focus) 缓存候选规则匹配结果。
+  文档中绝大多数节点共享同一 (tag, class) 组合，匹配过程从"每
+  节点一次"降为"每身份一次"。
+  - `_identity_includes_id`：仅当规则集含 `#id` 选择器时把 id 纳入
+    缓存键——压测文档有 ~9600 个唯一 id，无 `#` 选择器时把 id 纳入
+    键会导致 100% miss，反而变慢。
+  - `_identity_ancestor_sensitive`：当规则集含后代/子选择器
+    （`div p` / `div > p`，`len(parts) > 1`）时绕过缓存，走传统
+    逐节点匹配——组合选择器依赖祖先链，节点身份缓存会产生错误
+    匹配（P34.5 开发中 `selector_descendant` / `selector_child`
+    测试曾因此失败，已修复）。
+  - `css.clear_caches()` 重置该缓存；`apply()` 在每次调用开头清除
+    跨文档泄漏；`layout.clear_caches()` 也调用 `css.clear_caches()`。
+- **`text._adv_char_cache`**（`text.advance_text` CJK 分支）：把
+  P34.3 的 per-call 局部 `_adv_cache` 提升到模块级，键为
+  (family, font_px_bucket, char)。`wrap()` 内部的 `_adv_of(ch)` 过去
+  每字符调一次 `advance_text(ch, ...)`（10k 节点布局 10401 次
+  单字符调用），现直接命中共享表，单次 dict 命中。上限 8192 条。
+- **`text.clear_advance_cache()`** 现在同时清除 `_adv_char_cache`。
+- **`css.expand_shorthands` 短路**（`_SHORTHAND_KEYS`）：无
+  margin/padding/border-width 简写键的节点（典型文档 90%+）直接
+  返回原 dict，省掉一次 dict 复制。
+- **`css._apply_subtree` inline 只读一次**：`node.attr("style")`
+  从每节点 2 次降为 1 次（10k 文档 43k+ 次 attr 查找 → 21k）。
+- **`layout.clear_caches` 调用 `css.clear_caches`**（P34.5 接线）：
+  两次独立文档渲染之间丢弃 CSS 候选缓存 + 文本缓存。
+- **`test_p34_r5.py`**：20 条 P34.5 回归测试（候选缓存命中/重置、
+  同身份同结果、shorthand 短路语义、`_adv_char_cache` 幂等性、
+  `layout.clear_caches` 联动、管线正确性 + 像素不变性、性能阈值）。
+
+### Changed
+
+- 10k 节点压测文档全管线：P34.4 ~29.4s → P34.5 ~28.2s（-4%；
+  css.apply 阶段 2.9s → ~0.5s，text.advance 单字符热路径消除
+  10401 次调用）。
+- 短文档（<1k 节点）管线：无变化（css.apply 本就是 <5ms 量级）。
+
+### Tests
+
+- 807 (main) + 27 (P34) + 9 (P34r2) + 25 (P34r3) + 15 (P34r4) +
+  **19 (P34r5)** + 4 (CSS-memo) = **906** total, all green.
+  特别验证 `selector_descendant` / `selector_child` 在祖先敏感
+  绕过下仍正确；`#id` 选择器在 `_identity_includes_id=True` 下
+  按节点 id 独立解析。
+
+---
+
 ## P34.4 — text.measure document-width cache + half-leading cache + _emit micro-opts
 
 *Pipeline totals on the 10k-node stress doc: ~29.5s (P34.3 baseline) →

@@ -308,7 +308,6 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
     """
     real = _real_metrics_for(font_family)
     if real is not None:
-        total = 0.0
         import font as _font_mod
         cjk = _font_mod.get_cjk_fallback()
         if cjk is not None:
@@ -318,16 +317,27 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
             # codepoints in CJK content), so the inner loop is a
             # single dict hit instead of a function call + method
             # lookup + import.
+            # P34.5 — the cache is module-level (``_adv_char_cache``)
+            # instead of a per-call local dict: the legacy local dict
+            # was discarded when advance_text() returned, so wrap()'s
+            # own _adv_of() helper had to call advance_text(ch, ...)
+            # one character at a time (10.4k calls in a 10k-node
+            # layout).  Faces are immutable once loaded, so a cached
+            # (family, font_px, char) → advance stays valid for the
+            # whole document render; clear_advance_cache() resets it.
+            cache_px = int(round(font_px * 2))
             cjk_adv = cjk.advance_width
             real_adv = real.advance_width
             resolve = _font_mod.resolve_metrics_for_char
-            _adv_cache: dict = {}
+            total = 0.0
             for ch in text:
-                a = _adv_cache.get(ch)
+                ck = (font_family, cache_px, ch)
+                a = _adv_char_cache.get(ck)
                 if a is None:
                     face = resolve(ch, real)
                     a = face.advance_width(ch, font_px) if face is not None else real_adv(ch, font_px)
-                    _adv_cache[ch] = a
+                    if len(_adv_char_cache) < _ADV_CHAR_CACHE_MAX:
+                        _adv_char_cache[ck] = a
                 total += a
             return total
         # P33.R5 — Latin-only path (no CJK fallback face).  The
@@ -385,6 +395,19 @@ _adv_tables_max = 64
 _doc_width_cache: dict = {}
 _doc_width_cache_max = 4096
 
+# P34.5 — per-char advance-width table: the CJK branch of
+# advance_text() rebuilds a dict of codepoint → advance on every call
+# (21k calls in a 10k-node layout); wrap()'s own _adv_of() helper
+# re-invokes advance_text(ch, ...) one character at a time, discarding
+# the local cache each time.  Hoist the cache to module level, keyed
+# on (family, font_px_bucket, char).  Faces are immutable once loaded
+# so a cached advance is valid for the whole process;
+# clear_advance_cache() resets it between independent renders (tests
+# that swap the font registry).  Bounded at 8192 entries — a CJK
+# document realistically uses < 4000 distinct codepoints.
+_adv_char_cache: dict = {}
+_ADV_CHAR_CACHE_MAX = 8192
+
 
 def _adv_width_for(ch: str, font_px: float, font_family: str) -> float:
     """P34.2 — O(1) advance-width lookup for one character.
@@ -415,10 +438,13 @@ def clear_advance_cache() -> None:
     by font identity, so it would survive a re-render of the same
     family; the document-width cache is content-scoped and MUST be
     dropped, otherwise a string that changed between renders would
-    keep its old width.
+    keep its old width.  P34.5 — also resets the shared per-char
+    advance table so a test that swaps the font registry does not
+    read a stale (family, font_px, char) → advance entry.
     """
     _adv_width_tables.clear()
     _doc_width_cache.clear()
+    _adv_char_cache.clear()
 
 
 # ---------------------------------------------------------------------------
