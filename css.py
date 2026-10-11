@@ -2064,6 +2064,19 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     # The child's parent_font_px is the *current* node's resolved font-size,
     # which is what em/% reference in the child's context.
     inherited_color = sn.props.get("color", Color(0, 0, 0))
+    # P34.6 — pre-compute which of the 8 inheritable properties the
+    # parent actually carries.  The legacy loop did 8 individual dict
+    # checks per child (21k children × 8 = 170k lookups on a
+    # 10k-node document) even when the parent carried none of them;
+    # the candidate dict holds only the keys that are present, so
+    # the per-child loop typically iterates 0-2 entries instead of 8.
+    _inherit_candidates: dict = {}
+    for _k in ("line-height", "text-align", "text-transform",
+               "font-family", "overflow-wrap", "font-weight",
+               "letter-spacing", "word-spacing"):
+        _v = sn.props.get(_k)
+        if _v is not None:
+            _inherit_candidates[_k] = _v
     for c in node.children:
         sub = _apply_subtree(c, rules, interaction_state, sn.props,
                              parent_custom_props=merged_cp,
@@ -2078,12 +2091,14 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
         # the parent's color as the default.
         if "color" not in sub.props:
             sub.props["color"] = inherited_color
-        # P18/P19/P25.3 — inherit line-height / text-align / text-transform /
-        # font-family / overflow-wrap from parent when not explicitly set.
-        for inherited in ("line-height", "text-align", "text-transform",
-                          "font-family", "overflow-wrap", "font-weight",
-                          "letter-spacing", "word-spacing"):
-            if inherited not in sub.props and inherited in sn.props:
-                sub.props[inherited] = sn.props[inherited]
+        # P18/P19/P25.3 — inherit the 8 text properties from the parent
+        # P34.6 — iterate only the keys the parent actually carries
+        # (the pre-computed _inherit_candidates dict) instead of the
+        # legacy 8-way per-child dict checks.  Child-owned values
+        # still win (in sub.props unchanged), preserving behavior.
+        _sub_props = sub.props
+        for _k, _v in _inherit_candidates.items():
+            if _k not in _sub_props:
+                _sub_props[_k] = _v
         sn.children.append(sub)
     return sn

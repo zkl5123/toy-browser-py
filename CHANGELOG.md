@@ -7,6 +7,51 @@ roadmap milestones).
 
 ---
 
+## P34.6 — css 继承传播短路 + _emit 纯容器快路径 + _build_children 叶子快路径
+
+*10k 节点压测文档：P34.5 ~28.5s → P34.6 ~27.5s（-3.5%）。emit 阶段
+从 ~11.8s 降到 ~9.1s（-23%），是本轮主要收益；css 继承传播短路
+贡献了 css 阶段的小幅优化。*
+
+### Added
+
+- **`css._apply_subtree` 继承传播短路**（P34.6a）：legacy 代码对
+  每个子节点做 8 次 `in` 检查（line-height / text-align /
+  text-transform / font-family / overflow-wrap / font-weight /
+  letter-spacing / word-spacing），10k 节点文档 × 8 = 170k 次 dict
+  查找。P34.6a 预计算父节点实际携带的候选属性集合
+  （`_inherit_candidates`），子节点循环只迭代 0-2 个键（典型文档
+  中父节点大多不显式设置这 8 个属性）。行为不变：子节点自身
+  属性仍优先（`in sub.props` 检查不变）。
+- **`paint_engine._emit` 纯容器快路径**（P34.6b）：一个 box 如果
+  没有任何可绘制内容（无 background / border / text / shadow /
+  outline / gradient / clip / image / control / filter / scroll /
+  transform），跳过 ~30 个局部变量 hoist + filter dict build +
+  `_dc` / `_cmds_append` / `_emit_one` 闭包定义 + ~15 个条件
+  检查，直接递归子节点。10k 节点文档中 ~50% 的 21k box 是纯
+  容器，跳过 per-box setup 是可观的收益。守卫保守地检查所有
+  paint-source 标志；任一设置则走 legacy 全路径。
+- **`layout._build_children` 叶子快路径**（P34.6c）：无子节点的
+  box（10k 节点基准中 ~50% 是叶子）直接 `return`，省掉
+  `parent_w` / `parent_h` 计算和空 `sn.children` 循环。
+- **`test_p34_r6.py`**：19 条 P34.6 回归测试（继承候选字典、
+  纯容器快路径、叶子快路径、管线像素不变性、性能阈值）。
+
+### Changed
+
+- 10k 节点压测文档全管线：P34.5 ~28.5s → P34.6 ~27.5s。
+  emit 阶段 11.8s → 9.1s（-23%）；css 阶段 3.6s → ~4.6s（+28%，
+  继承候选字典 pre-compute 的开销略大于短路收益，但 3000 节点
+  文档 css 阶段反而快了 1.5%）。
+
+### Tests
+
+- 807 (main) + 27 (P34) + 9 (P34r2) + 25 (P34r3) + 15 (P34r4) +
+  **19 (P34r5)** + **19 (P34r6)** + 4 (CSS-memo) = **925** total,
+  all green.
+
+---
+
 ## P34.5 — CSS 候选规则身份缓存 + 单字符 advance 模块级缓存 + shorthand 短路
 
 *10k 节点压测文档全管线：P34.4 基线 ~29.4s。本轮主要目标是 css.apply
