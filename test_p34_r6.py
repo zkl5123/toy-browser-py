@@ -306,3 +306,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("t1_inherit_candidates", t1_inherit_candidates))
+TESTS.append(("t2_emit_fast_path", t2_emit_fast_path))
+TESTS.append(("t3_leaf_fast_path", t3_leaf_fast_path))
+TESTS.append(("t4_pipeline_pixels", t4_pipeline_pixels))
+TESTS.append(("t5_perf", t5_perf))

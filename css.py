@@ -1229,9 +1229,213 @@ def _parse_supports_blocks_impl(css_text: str) -> list[SupportsRule]:
     return out
 
 
+# GPT P1-1 — property→value support matrix.  Only (property, value)
+# pairs the engine actually implements are listed; an @supports
+# condition like ``position: sticky`` is False even though the
+# property name "position" is in _CSS_CAPABILITY_TABLE, because the
+# layout stage does not implement sticky positioning.  This matrix
+# is intentionally conservative — a value that is parsed by the
+# CSS parser but never consumed by layout/paint is treated as
+# unsupported.
+_SUPPORTED_PROPERTY_VALUES: dict[str, frozenset] = {
+    # --- display ---
+    "display": frozenset({
+        "block", "inline", "inline-block", "none", "flex",
+        "inline-flex", "grid", "inline-grid", "list-item",
+        "table", "table-row", "table-cell",
+    }),
+    # --- position: static / relative / absolute are implemented;
+    #     sticky is NOT (layout treats it as relative).
+    "position": frozenset({"static", "relative", "absolute", "fixed"}),
+    # --- overflow ---
+    "overflow": frozenset({"visible", "hidden", "scroll", "auto"}),
+    "overflow-x": frozenset({"visible", "hidden", "scroll", "auto"}),
+    "overflow-y": frozenset({"visible", "hidden", "scroll", "auto"}),
+    # --- flex properties ---
+    "flex-direction": frozenset({"row", "row-reverse", "column", "column-reverse"}),
+    "flex-wrap": frozenset({"nowrap", "wrap", "wrap-reverse"}),
+    "justify-content": frozenset({
+        "flex-start", "flex-end", "center", "space-between",
+        "space-around", "space-evenly", "start", "end",
+    }),
+    "align-items": frozenset({
+        "stretch", "flex-start", "flex-end", "center", "baseline",
+    }),
+    "align-self": frozenset({
+        "auto", "stretch", "flex-start", "flex-end", "center", "baseline",
+    }),
+    "align-content": frozenset({
+        "stretch", "flex-start", "flex-end", "center",
+        "space-between", "space-around",
+    }),
+    # --- grid (toy: equal-width columns only) ---
+    "grid-auto-flow": frozenset({"row", "column", "dense", "row dense", "column dense"}),
+    # --- visibility ---
+    "visibility": frozenset({"visible", "hidden", "collapse"}),
+    # --- float ---
+    "float": frozenset({"left", "right", "none", "inline-start", "inline-end"}),
+    # --- text-align ---
+    "text-align": frozenset({"left", "right", "center", "justify", "start", "end"}),
+    # --- text-transform ---
+    "text-transform": frozenset({"none", "uppercase", "lowercase", "capitalize"}),
+    # --- white-space ---
+    "white-space": frozenset({
+        "normal", "nowrap", "pre", "pre-line", "pre-wrap", "break-spaces",
+    }),
+    # --- border-style ---
+    "border-style": frozenset({
+        "none", "hidden", "dotted", "dashed", "solid", "double",
+        "groove", "ridge", "inset", "outset",
+    }),
+    # --- box-sizing ---
+    "box-sizing": frozenset({"content-box", "border-box"}),
+    # --- text-overflow ---
+    "text-overflow": frozenset({"clip", "ellipsis"}),
+    # --- direction ---
+    "direction": frozenset({"ltr", "rtl"}),
+}
+
+
 def supports_matches(condition: str) -> bool:
-    """P11.3 — toy: every @supports condition is considered supported."""
+    """P11.3 — check an @supports condition against the toy engine's
+    real CSS capability table.
+
+    GPT P1-1 — the legacy implementation returned ``True`` for every
+    condition, so authors could not distinguish between a property the
+    engine actually implements and one it silently drops.  This
+    implementation matches *property: value* conditions against
+    ``_CSS_CAPABILITY_TABLE`` (the set of properties the engine can
+    parse and cascade).  Conditions are:
+
+    - ``display: grid`` — the property is known, so True.
+    - ``position: sticky`` — the engine does not implement sticky,
+      so False.
+    - ``selector(...)`` or ``font-tech(...)`` — toy: always True
+      (the engine's parser is too small to evaluate these).
+    - ``not (...)`` — negation of the inner condition.
+    - ``and`` / ``or`` — logical combination of sub-conditions.
+
+    The condition text may be wrapped in parentheses (the standard
+    ``@supports (display: grid)`` form); the outer parens are stripped
+    before matching.  Unknown property names return False (a property
+    the engine does not parse is not supported, even if a real
+    browser would support it — the @supports gate is about *this*
+    engine's capabilities).
+    """
+    import re as _re
+    cond = condition.strip()
+    if not cond:
+        return True
+    # Strip a single outer parenthesised group: "(display: grid)" →
+    # "display: grid".  The CSS @supports condition is *usually*
+    # parenthesised; parse_supports_blocks captures the text between
+    # "@supports" and "{", so the condition arrives as
+    # "(display: grid)" with the outer parens intact.
+    if cond.startswith("(") and cond.endswith(")") \
+            and cond.count("(") == 1 and cond.count(")") == 1:
+        cond = cond[1:-1].strip()
+    # --- not ( … ) -----------------------------------------------------
+    m = _re.match(r"^not\s*\((.*)\)$", cond, _re.DOTALL)
+    if m:
+        return not supports_matches(m.group(1))
+    # --- and / or ------------------------------------------------------
+    m = _re.match(r"^(.*)\s+and\s+(.*)$", cond, _re.DOTALL)
+    if m:
+        return supports_matches(m.group(1)) and supports_matches(m.group(2))
+    m = _re.match(r"^(.*)\s+or\s+(.*)$", cond, _re.DOTALL)
+    if m:
+        return supports_matches(m.group(1)) or supports_matches(m.group(2))
+    # --- selector( … ) / font-tech( … ) — toy: always supported --------
+    if cond.startswith("selector(") or cond.startswith("font-tech("):
+        return True
+    # --- property: value condition (GPT P1-1) -----------------------
+    # Check the property name against the capability table; when the
+    # property is in _SUPPORTED_PROPERTY_VALUES, also check the
+    # specific value (e.g. ``position: sticky`` → False even though
+    # "position" is a known property, because sticky is not
+    # implemented — layout treats it as relative).
+    if ":" in cond:
+        prop, _, val = cond.partition(":")
+        prop = prop.strip().lower().strip("()")
+        val = val.strip().lower()
+        if prop not in _CSS_CAPABILITY_TABLE:
+            return False
+        # Value-level check: only when the property has a known
+        # supported-value set.  For properties without a value-level
+        # table entry (numeric properties, colors, etc.), the
+        # property-level check above is sufficient.
+        allowed_vals = _SUPPORTED_PROPERTY_VALUES.get(prop)
+        if allowed_vals is not None and val and val != "auto":
+            # Multi-word values (e.g. "space-between") are checked
+            # as full-string matches; a value like "sticky" that is
+            # not in the set → False.
+            return val in allowed_vals
+        return True
+    # Unrecognised syntax — toy: treat as supported (forward-compat).
     return True
+
+
+# GPT P1-1 — the toy engine's CSS capability table.  Only properties
+# that are actually parsed, cascaded, and consumed by the layout /
+# paint stages are listed.  The table is intentionally conservative:
+# a property that is parsed but never read by layout/paint is treated
+# as unsupported so that @supports gates reflect real behaviour.
+#
+# The table is the intersection of:
+#   * properties in INITIAL_VALUES (the cascade knows their initial
+#     value and therefore parses them),
+#   * properties in INHERITED_PROPS,
+#   * properties in EDGE_PROPS (shorthand parsers),
+#   * a small set of engine-specific keywords (flex, grid, position:
+#     absolute/relative, overflow-wrap, etc.) that are consumed by
+#     layout or paint even when they are not in INITIAL_VALUES.
+_CSS_CAPABILITY_TABLE: frozenset = frozenset({
+    # --- box / layout properties --------------------------------
+    "display", "width", "height", "min-width", "min-height",
+    "max-width", "max-height",
+    "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+    "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "border", "border-width", "border-top-width", "border-right-width",
+    "border-bottom-width", "border-left-width",
+    "border-style", "border-color", "border-top-color", "border-right-color",
+    "border-bottom-color", "border-left-color",
+    "border-top", "border-right", "border-bottom", "border-left",
+    "position", "top", "right", "bottom", "left", "z-index",
+    "float", "clear", "overflow", "overflow-x", "overflow-y",
+    "text-indent", "white-space", "word-break", "overflow-wrap",
+    # --- text / font properties ---------------------------------
+    "color", "font", "font-size", "font-family", "font-weight",
+    "font-style", "font-variant", "line-height",
+    "letter-spacing", "word-spacing", "text-align", "text-transform",
+    "text-decoration", "text-overflow", "text-shadow",
+    # --- background / border-image --------------------------------
+    "background", "background-color", "background-image",
+    "background-repeat", "background-position", "background-size",
+    # --- opacity / effects ----------------------------------------
+    "opacity", "box-shadow", "outline", "outline-width",
+    "outline-style", "outline-color",
+    "border-radius",
+    "filter", "backdrop-filter",
+    # --- flexbox ---------------------------------------------------
+    "flex", "flex-grow", "flex-shrink", "flex-basis", "flex-direction",
+    "flex-wrap", "justify-content", "align-items", "align-self",
+    "align-content", "gap", "row-gap", "column-gap", "order",
+    # --- grid (toy: equal-width columns) --------------------------
+    "grid", "grid-template-columns", "grid-template-rows",
+    "grid-column", "grid-row", "grid-auto-flow",
+    # --- transform / clipping --------------------------------------
+    "transform", "transform-origin", "clip", "clip-path", "mix-blend-mode",
+    # --- scroll / overflow ------------------------------------------
+    "scroll-behavior", "scroll-margin", "scroll-padding",
+    "resize", "aspect-ratio",
+    # --- cursor / list / table --------------------------------------
+    "cursor", "list-style", "list-style-type",
+    "table-layout", "caption-side",
+    # --- visibility --------------------------------------------------
+    "visibility", "content", "speak",
+    # --- custom property namespace (always "supported" for var()) --
+    # (no need to list individual --* names)
+})
 
 
 # --- P33.P3 — @font-face ----------------------------------------------------------
@@ -2179,11 +2383,8 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
         # the parent's color as the default.
         if "color" not in sub.props:
             sub.props["color"] = inherited_color
-        # P18/P19/P25.3 — inherit the 8 text properties from the parent
-        # P34.6 — iterate only the keys the parent actually carries
-        # (the pre-computed _inherit_candidates dict) instead of the
-        # legacy 8-way per-child dict checks.  Child-owned values
-        # still win (in sub.props unchanged), preserving behavior.
+        # P18/P19/P25.3 — inherit text properties from the parent
+        # (P34.6 — iterate only the keys the parent actually carries)
         _sub_props = sub.props
         for _k, _v in _inherit_candidates.items():
             if _k not in _sub_props:

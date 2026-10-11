@@ -7,6 +7,66 @@ roadmap milestones).
 
 ---
 
+## P0/P1 — GPT 报告剩余项整改（CORS/CSP 执行 + @supports 属性检查 + 测试拆分 + 文档澄清）
+
+*GPT P0-4（CORS/CSP 接入请求流）、P1-1（@supports 真实属性检查）、
+P1-2（test.py 拆分为模块化测试文件）、P1-3（文档澄清 + 工件清理）。
+主测试套件 920/925 通过（5 个失败为环境相关：R5 性能基准 ×3 +
+P34 R2 CJK 字体 ×2，与整改前基线一致）。*
+
+### Added
+
+- **`css.py` — @supports 真实属性检查（GPT P1-1）**：
+  `_CSS_CAPABILITY_TABLE`（引擎实际解析并消费的 CSS 属性集合）+
+  `_SUPPORTED_PROPERTY_VALUES`（属性→值的矩阵，例如
+  `position: sticky` 为 False 因为布局阶段未实现粘性定位，
+  而 `position: absolute`/`fixed`/`relative`/`static` 为 True）。
+  `supports_matches(condition)` 现在按属性名 + 值级别判断，
+  支持 `not` / `and` / `or` 逻辑组合，`selector()`/`font-tech()`
+  始终视为支持（玩具语义），未知属性返回 False。
+- **`net.py` — CORS/CSP 策略接入请求流（GPT P0-4）**：
+  `HttpResponse.is_policy_allowed(requesting_origin, resource_kind,
+  resource_url)` 统一执行 CORS（跨源读取需 ACAO 匹配）+ CSP
+  （`style-src`/`img-src`/`script-src`/`connect-src` 指令检查）。
+  `load_subresources` / `load_subresources_parallel` 新增
+  `enforce_policy`（默认 True）+ `doc_csp`（文档级 CSP 头）参数，
+  策略拦截的子资源映射为 `None`（与 404 失败契约一致）。
+  `_csp_blocks(values, source_value)` 辅助函数供文档级 CSP 路径复用。
+  `render_document_from_url` 现在传递文档的 `Content-Security-Policy`
+  头到子资源加载。
+- **`test.py` 拆分为模块化测试文件（GPT P1-2）**：
+  原 11,156 行的 `test.py` 拆分为 7 个模块测试文件
+  （`test_dom.py` / `test_css.py` / `test_js.py` / `test_layout.py` /
+  `test_paint.py` / `test_net.py` / `test_browser.py`）+ 共享
+  辅助函数文件 `test_helpers.py`（23 个辅助函数）。
+  `test.py` 变为薄编排器（99 行），从各模块导入 `TESTS` 列表并
+  以原有 try/except 契约运行。所有预存模块测试文件
+  （`test_r1.py` … `test_p34_r6.py`、`test_p0_js_budget.py` 等）
+  新增 `TESTS` 列表。新增 `test_p0_policy.py`（16 条 CORS/CSP
+  策略测试）+ `test_p1_supports.py`（19 条 @supports 测试）。
+- **`README.md` — 功能状态说明（GPT P1-3）**：新增
+  "功能状态说明"表格，标注每项功能为
+  "已实现 / 部分支持 / 模拟实现 / 尚未实现"（@supports、
+  position: sticky、CSP、CORS、fetch、WebSocket、localStorage、
+  CSS Grid、@keyframes、scroll-behavior）。移除已废弃的
+  `out_event.ppm` 引用。
+
+### Changed
+
+- **`browser.py`**：`render_document_from_url` 传递文档 CSP 头到
+  `load_subresources(doc_csp=...)`。
+- **`net.py`**：`load_subresources` / `load_subresources_parallel`
+  默认执行 CORS/CSP 策略检查（`enforce_policy=True`），可通过
+  `enforce_policy=False` 恢复旧行为（测试用）。
+
+### Removed
+
+- **工件清理（GPT P1-3）**：`out_event.ppm` 和 `p22_err.ppm`
+  已在之前的 P0 轮次中从 git 移除（.gitignore 覆盖 `*.ppm`）。
+  README 中对应的废弃引用已清除。
+
+---
+
 ## P0 — GPT/GLM 报告 P0 专项整改
 
 *字体渲染崩溃、JS 执行预算、网络与 Cookie 安全边界、级联源优先级、

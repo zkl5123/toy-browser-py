@@ -127,3 +127,19 @@ def test_r1_glyph_mask_cache_cap_constant():
     is 'stop storing new keys' once the cap is reached)."""
     import text
     assert text._glyph_cache_max == 4096
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_mem_guard_cap_constants", test_mem_guard_cap_constants))
+TESTS.append(("test_mem_guard_can_load_face_size_gate", test_mem_guard_can_load_face_size_gate))
+TESTS.append(("test_mem_guard_heap_mb_nonnegative", test_mem_guard_heap_mb_nonnegative))
+TESTS.append(("test_mem_guard_check_budget_true_at_start", test_mem_guard_check_budget_true_at_start))
+TESTS.append(("test_mem_guard_enforce_cap_true_at_start", test_mem_guard_enforce_cap_true_at_start))
+TESTS.append(("test_mem_guard_peak_ge_heap", test_mem_guard_peak_ge_heap))
+TESTS.append(("test_ttf_load_respects_mem_guard", test_ttf_load_respects_mem_guard))
+TESTS.append(("test_ttf_outline_cache_bounded", test_ttf_outline_cache_bounded))
+TESTS.append(("test_ttf_advance_array_capped", test_ttf_advance_array_capped))
+TESTS.append(("test_mem_guard_process_rss_proxy", test_mem_guard_process_rss_proxy))
+TESTS.append(("test_font_registry_clear_and_reinit", test_font_registry_clear_and_reinit))
+TESTS.append(("test_r1_glyph_mask_cache_cap_constant", test_r1_glyph_mask_cache_cap_constant))

@@ -168,3 +168,17 @@ def test_p3_svg_css_size_override():
     assert sv is not None
     assert sv.rect.w == 80.0, f"CSS width should override attr, got {sv.rect.w}"
     assert sv.rect.h == 60.0, f"CSS height should override attr, got {sv.rect.h}"
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_p3_font_face_parse_basic", test_p3_font_face_parse_basic))
+TESTS.append(("test_p3_font_face_multiple", test_p3_font_face_multiple))
+TESTS.append(("test_p3_font_face_empty_css", test_p3_font_face_empty_css))
+TESTS.append(("test_p3_font_face_unicode_range", test_p3_font_face_unicode_range))
+TESTS.append(("test_p3_svg_default_size", test_p3_svg_default_size))
+TESTS.append(("test_p3_svg_size_from_attrs", test_p3_svg_size_from_attrs))
+TESTS.append(("test_p3_svg_paint_placeholder", test_p3_svg_paint_placeholder))
+TESTS.append(("test_p3_video_default_size", test_p3_video_default_size))
+TESTS.append(("test_p3_audio_default_size", test_p3_audio_default_size))
+TESTS.append(("test_p3_svg_css_size_override", test_p3_svg_css_size_override))

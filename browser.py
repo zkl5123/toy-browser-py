@@ -118,11 +118,21 @@ def render_document_from_url(
     # P22.4/P22.5 — load subresources against the document base.
     if load_subresources:
         base = net.parse_url(resp.final_url or url)
+        # GPT P0-4 — the document's CSP header gates subresource
+        # loading (the real browser uses the document's CSP, not
+        # each subresource's own header).  CORS is enforced via
+        # the subresource's ACAO header (is_policy_allowed).
+        doc_csp = ""
+        for k, v in resp.headers.items():
+            if k.lower() == "content-security-policy":
+                doc_csp = v
+                break
         try:
             loaded = net.load_subresources(
                 tree, base,
                 client=eff_client, timeout=timeout,
                 progress=progress,
+                doc_csp=doc_csp,
             )
             # Append any successfully fetched stylesheets.
             for _u, r in (loaded.get("stylesheet") or {}).items():

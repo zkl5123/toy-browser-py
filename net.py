@@ -382,6 +382,103 @@ class HttpResponse:
                 return False
         return True
 
+    # ------------------------------------------------------------------
+    # GPT P0-4 — unified policy enforcement
+    # ------------------------------------------------------------------
+
+    def is_policy_allowed(self, requesting_origin: str = "",
+                          resource_kind: str = "",
+                          resource_url: str = "") -> bool:
+        """GPT P0-4 — enforce BOTH CORS and CSP in one call.
+
+        Returns ``True`` when the subresource at *resource_url* is
+        allowed to be used by the document at *requesting_origin*.
+        The check is a conjunction: the resource is blocked when
+        **either** policy rejects it.
+
+        * **CORS** — when *resource_url*'s origin differs from
+          *requesting_origin* the response **must** carry a matching
+          ``Access-Control-Allow-Origin`` header; same-origin
+          requests skip the CORS check (a real browser enforces CORS
+          only on cross-origin reads).  A blank *requesting_origin*
+          (file://, about:blank, or a caller that does not track
+          origins) skips the CORS check entirely (legacy behaviour,
+          preserved for backward compatibility).
+        * **CSP** — the response's ``Content-Security-Policy``
+          ``*resource_kind*-src`` (or ``default-src``) directive is
+          matched against *resource_url*.
+
+        *resource_kind* is one of "style" (stylesheet), "script",
+        "img" (image), "connect" (fetch/XHR); the directive name is
+        derived as ``<kind>-src`` with the legacy mapping
+        style→"style-src", script→"script-src", img→"img-src",
+        connect→"connect-src" (a blank resource_kind skips the CSP
+        check).
+        """
+        # --- CORS check (cross-origin only) ---
+        if requesting_origin and resource_url:
+            res_origin = _origin_str(resource_url)
+            req_origin = _origin_str(requesting_origin) if "://" in requesting_origin \
+                         else requesting_origin
+            if not is_origin_match(req_origin, res_origin):
+                # Cross-origin read: require a matching ACAO header.
+                if not self.is_cors_allowed(req_origin):
+                    return False
+        # --- CSP check ---
+        kind_map = {
+            "style": "style-src", "stylesheet": "style-src",
+            "script": "script-src", "img": "img-src",
+            "image": "img-src", "connect": "connect-src",
+            "font": "font-src", "worker": "worker-src",
+        }
+        directive = kind_map.get(resource_kind,
+                                 f"{resource_kind}-src"
+                                 if resource_kind else "")
+        if directive and resource_url:
+            if self.is_csp_violation(directive, resource_url):
+                return False
+        return True
+
+
+def _origin_str(url_str: str) -> str:
+    """Helper for is_policy_allowed: normalise a URL to its origin
+    string (scheme://host[:port], default ports stripped)."""
+    import urllib.parse as _up
+    p = _up.urlparse(url_str)
+    default = _DEFAULT_PORTS.get(p.scheme.lower())
+    host = p.hostname or ""
+    port = p.port
+    if default and port == default:
+        port = None
+    netloc = host if not port else f"{host}:{port}"
+    return f"{p.scheme.lower()}://{netloc}"
+
+
+def _csp_blocks(values: list, source_value: str) -> bool:
+    """GPT P0-4 — return True when *source_value* is blocked by the
+    CSP source-list *values* (the same token-matching logic as
+    :meth:`HttpResponse.is_csp_violation`, factored out so the
+    document-level CSP path in :func:`load_subresources` can reuse
+    it without constructing a throwaway HttpResponse)."""
+    if not values:
+        return False  # no constraint
+    for tok in values:
+        tok_lower = tok.lower()
+        tok_bare = tok_lower.strip("'")
+        if tok_bare == "self":
+            # Toy: 'self' is treated as "permit" (a real browser
+            # would compare the source to the document origin).
+            return False
+        if tok_bare == "none":
+            if len(values) == 1:
+                return True
+            continue
+        if tok_bare == source_value.lower().strip("'"):
+            return False
+        if tok_bare == "data:" and source_value.lower().startswith("data:"):
+            return False
+    return True
+
 
 # ---------------------------------------------------------------------------
 # P33.P2 — CORS / CSP basic enforcement
@@ -1518,7 +1615,9 @@ def collect_subresources(dom_root) -> list[dict]:
 
 def load_subresources(dom_root, base_url, client: HttpClient | None = None,
                       timeout: float | None = None,
-                      progress: LoadEventSink | None = None) -> dict:
+                      progress: LoadEventSink | None = None,
+                      enforce_policy: bool = True,
+                      doc_csp: str = "") -> dict:
     """P22.4 — load every subresource in *dom_root* against *base_url*.
 
     1. Resolve a document-level base: ``<base href>`` wins over
@@ -1528,6 +1627,25 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     3. Resolve each relative src against the base, then GET each one
        (玩具语义：顺序执行 + 失败不阻塞 —— 一个子资源 404/超时不会
        中断其余加载，也不会影响页面渲染）。
+
+    GPT P0-4 — when *enforce_policy* is True (default), each
+    successfully fetched subresource is passed through
+    :meth:`HttpResponse.is_policy_allowed` with the document's
+    *base_url* origin and the subresource's kind ("stylesheet" →
+    style-src, "image" → img-src).  A subresource blocked by CORS
+    (cross-origin read without ``Access-Control-Allow-Origin``) or
+    by the document's CSP ``style-src`` / ``img-src`` directive is
+    mapped to ``None`` (the caller skips it silently, matching the
+    legacy failure contract).  Set *enforce_policy* to False to
+    restore the legacy behaviour (no policy check) for tests that
+    use bare HTTP fixtures.
+
+    *doc_csp* (GPT P0-4) is the document response's
+    ``Content-Security-Policy`` header; when non-empty it is
+    applied to every subresource fetch (the real browser uses the
+    *document's* CSP to gate subresources, not each subresource's
+    own response header).  When *doc_csp* is blank the legacy
+    behaviour is used (the subresource's own CSP header is checked).
 
     Returns a mapping ``kind → {absolute_url: HttpResponse-or-None}``
     so the caller can, e.g., parse a successfully fetched stylesheet
@@ -1546,6 +1664,8 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     total = len(specs)
     by_kind: dict = {}
     done = 0
+    # GPT P0-4 — the document's origin (for CORS cross-origin check).
+    doc_origin = _origin_str(eff_base.to_string()) if eff_base else ""
     for spec in specs:
         src = spec["src"]
         # data: URIs are inline — no network fetch.
@@ -1557,6 +1677,34 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
             progress.emit(LoadProgress(
                 PHASE_SUBRESOURCE, done / max(total, 1), absu.to_string()))
         resp = fetch_resource(absu, client=c)
+        # GPT P0-4 — enforce CORS/CSP on the fetched subresource.
+        # When *doc_csp* is supplied the document's CSP header is
+        # used to gate the subresource (the real browser behaviour);
+        # otherwise the subresource's own response header is checked
+        # (legacy behaviour).
+        if enforce_policy and resp is not None:
+            kind_map = {"stylesheet": "style", "image": "img"}
+            res_kind = kind_map.get(spec["kind"], spec["kind"])
+            if doc_csp:
+                # Build a temporary policy view from the document's
+                # CSP header + the subresource's CORS headers.
+                csp_directives = parse_csp_directives(doc_csp)
+                csp_blocked = False
+                if csp_directives:
+                    values = (csp_directives.get(
+                        f"{res_kind}-src",
+                        csp_directives.get("default-src", [])))
+                    if values:
+                        csp_blocked = _csp_blocks(
+                            values, absu.to_string())
+                cors_ok = resp.is_cors_allowed(doc_origin) \
+                    if doc_origin else True
+                if not cors_ok or csp_blocked:
+                    resp = None  # policy-blocked → treat as failed
+            else:
+                if not resp.is_policy_allowed(
+                        doc_origin, res_kind, absu.to_string()):
+                    resp = None  # policy-blocked → treat as failed
         by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
         done += 1
     if progress is not None:
@@ -1569,6 +1717,7 @@ def load_subresources_parallel(dom_root, base_url,
                                max_workers: int = 4,
                                timeout: float | None = None,
                                progress: "LoadEventSink | None" = None,
+                               enforce_policy: bool = True,
                                ) -> dict:
     """P33.R2 — :func:`load_subresources` with a bounded thread pool.
 
@@ -1583,6 +1732,11 @@ def load_subresources_parallel(dom_root, base_url,
     path is used (thread startup would cost more than it saves).
     Progress events are emitted on the main thread as futures
     complete, so the sink sees a monotone 0→1 fraction.
+
+    GPT P0-4 — *enforce_policy* (default True) routes each fetched
+    subresource through :meth:`HttpResponse.is_policy_allowed` with
+    the document origin and the subresource kind; a policy-blocked
+    resource maps to ``None`` (same failure contract as a 404).
     """
     eff_base = base_url_from_dom(dom_root) or base_url
     if not isinstance(eff_base, URL):
@@ -1604,6 +1758,20 @@ def load_subresources_parallel(dom_root, base_url,
         else:
             net_specs.append(spec)
 
+    # GPT P0-4 — the document's origin (for CORS cross-origin check).
+    doc_origin = _origin_str(eff_base.to_string()) if eff_base else ""
+    kind_map = {"stylesheet": "style", "image": "img"}
+
+    def _apply_policy(resp, absu, spec_kind):
+        if resp is None:
+            return None
+        if not enforce_policy:
+            return resp
+        res_kind = kind_map.get(spec_kind, spec_kind)
+        if not resp.is_policy_allowed(doc_origin, res_kind, absu.to_string()):
+            return None
+        return resp
+
     done = 0
     if len(net_specs) <= 2:
         # Sequential fast path (matches the legacy P22.4 timing
@@ -1614,7 +1782,8 @@ def load_subresources_parallel(dom_root, base_url,
                 progress.emit(LoadProgress(
                     PHASE_SUBRESOURCE, done / max(total, 1),
                     absu.to_string()))
-            resp = fetch_resource(absu, client=c)
+            resp = _apply_policy(
+                fetch_resource(absu, client=c), absu, spec["kind"])
             by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
             done += 1
     else:
@@ -1634,6 +1803,7 @@ def load_subresources_parallel(dom_root, base_url,
             futs = [pool.submit(_fetch, s) for s in net_specs]
             for fut in futs:
                 spec, absu, resp = fut.result()
+                resp = _apply_policy(resp, absu, spec["kind"])
                 by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
                 done += 1
                 if progress is not None:

@@ -311,3 +311,19 @@ def test_r2_gui_content_height_probe():
     probe2 = layout.layout(styled, 800.0, 300.0)
     ch2 = p._content_height_probe(probe2)
     assert ch2 == ch, "content height is viewport-independent"
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_r2_http_client_pool_exists", test_r2_http_client_pool_exists))
+TESTS.append(("test_r2_pool_key_shape", test_r2_pool_key_shape))
+TESTS.append(("test_r2_keepalive_reuses_connection", test_r2_keepalive_reuses_connection))
+TESTS.append(("test_r2_release_dead_conn_not_pooled", test_r2_release_dead_conn_not_pooled))
+TESTS.append(("test_r2_pool_cap_8", test_r2_pool_cap_8))
+TESTS.append(("test_r2_load_subresources_parallel_data_uri", test_r2_load_subresources_parallel_data_uri))
+TESTS.append(("test_r2_parallel_loader_network", test_r2_parallel_loader_network))
+TESTS.append(("test_r2_parallel_loader_failure_is_none", test_r2_parallel_loader_failure_is_none))
+TESTS.append(("test_r2_sequential_fast_path_short_list", test_r2_sequential_fast_path_short_list))
+TESTS.append(("test_r2_gui_page_scroll_max", test_r2_gui_page_scroll_max))
+TESTS.append(("test_r2_gui_clip_bitmap_rows", test_r2_gui_clip_bitmap_rows))
+TESTS.append(("test_r2_gui_content_height_probe", test_r2_gui_content_height_probe))
