@@ -4161,34 +4161,38 @@ class Host:
         return None
 
     def _layout_box_for(self, el: "DomElement"):
-        """P14.1 — lazily compute a LayoutBox for this element (cached)."""
+        """P14.1 — lazily compute a LayoutBox for this element (cached).
+
+        P34.1 — the layout runs *once* and the whole box tree is kept;
+        the per-id lookup walks the tree (bounded by the box count, not
+        re-running css.apply + layout on every cache miss as the P14
+        implementation did, which was O(n²) in the number of queried
+        elements)."""
         eid = el.id
         if eid is None:
             return None
-        cache = getattr(self, "_layout_cache", None)
-        if cache is None:
-            cache = {}
-            self._layout_cache = cache
-        if eid not in cache:
+        tree = getattr(self, "_layout_root_cache", None)
+        if tree is None:
             try:
                 import layout as _layout_mod
                 import css as _css_mod
-                import dom as _dom_mod
-                styled = _css_mod.apply(self.root, "")
-                lroot = _layout_mod.layout(styled, 800.0, 600.0)
-                def _find(bx, target_id):
-                    if bx.dom is not None and bx.dom.is_element() and bx.dom.attr("id") == target_id:
-                        return bx
-                    for c in bx.children:
-                        r = _find(c, target_id)
-                        if r is not None:
-                            return r
-                    return None
-                box = _find(lroot, eid)
-                cache[eid] = box
+                _styled = _css_mod.apply(self.root, "")
+                tree = _layout_mod.layout(_styled, 800.0, 600.0)
+                self._layout_root_cache = tree
             except Exception:
-                cache[eid] = None
-        return cache[eid]
+                tree = None
+            return None
+        return self._find_box_by_id(tree, eid)
+
+    def _find_box_by_id(self, box, target_id: str):
+        """BFS id lookup over the layout tree (P34.1)."""
+        stack = [box]
+        while stack:
+            bx = stack.pop()
+            if bx.dom is not None and bx.dom.is_element() and bx.dom.attr("id") == target_id:
+                return bx
+            stack.extend(reversed(bx.children))
+        return None
 
     def eval_element_method(self, el: DomElement, method: str, args: list):
         # P15.2 — scrollIntoView() / scrollBy()

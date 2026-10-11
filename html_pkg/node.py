@@ -19,6 +19,7 @@ class Node:
         "text",
         "children",
         "parent",
+        "__weakref__",
     )
 
     ELEMENT = "element"

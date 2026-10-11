@@ -5,6 +5,7 @@ walks to emit display commands.
 """
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -22,7 +23,44 @@ from css import resolve_length as _resolve_length
 from paint import Color as _Color
 _DEFAULT_BORDER_COLOR = _Color(0, 0, 0)
 _DEFAULT_TEXT_COLOR = _Color(0, 0, 0)
-_child_index_cache: dict = {}  # id(parent_node) → {id(child_node) → index}
+# P34.1 — child-index cache with an address-reuse guard.  The key is
+# the *parent node object* (a weakref.ref, so the table itself never
+# keeps dead DOM trees alive; ``Node`` gained a ``__weakref__`` slot
+# for this).  A plain id()-keyed dict would be poisoned when CPython's
+# allocator hands the same address to a freshly created node of a later
+# document; the live-parent check (``entry[0]() is parent_dom``) makes
+# the mapping correct across re-renders.  The table also bounds itself
+# (LRU drop of the oldest entries at ``_CHILD_INDEX_CACHE_MAX``).
+# ``clear_caches()`` still resets the whole table between independent
+# document renders.
+_child_index_cache: dict = {}  # id(parent) → (weakref(parent), {id(child) → idx})
+_CHILD_INDEX_CACHE_MAX = 4096
+
+
+def _child_index_for(node, parent_dom) -> int:
+    """P34.1 — O(1) child index with an address-reuse guard.
+
+    The weakref guard makes the cache safe across re-renders: when the
+    parent node is collected and a *new* node reuses its address, the
+    stored weakref is dead (or points to a different object) and the
+    mapping is rebuilt instead of returning a stale index.
+    """
+    _idparent = id(parent_dom)
+    entry = _child_index_cache.get(_idparent)
+    if entry is not None and entry[0]() is parent_dom:
+        return entry[1].get(id(node), 0)
+    idx = 0
+    mapping = {}
+    for c in parent_dom.children:
+        if c.node_type == "element":
+            idx += 1
+            mapping[id(c)] = idx
+    if len(_child_index_cache) >= _CHILD_INDEX_CACHE_MAX:
+        # Drop the 1/8 oldest entries (dicts preserve insertion order).
+        for k in list(_child_index_cache)[:_CHILD_INDEX_CACHE_MAX // 8]:
+            del _child_index_cache[k]
+    _child_index_cache[_idparent] = (weakref.ref(parent_dom), mapping)
+    return mapping.get(id(node), 0)
 
 # P33.R5 — frozenset of CSS properties that, when present, force the
 # slow path of build_box.  Checked once per call via set intersection.
@@ -522,29 +560,11 @@ def build_box(sn: StyledNode, parent_font_px: float,
     tag = (node.tag or "").lower()
     node_tag = tag
 
-    # P33.R5 — compute child_index in O(1) by walking the parent's children
-    # only for element siblings.  The legacy O(n) scan is replaced by a
-    # cached counter on the parent node (set during the first build_box
-    # call on that parent's children).
+    # P33.R5 / P34.1 — child index in O(1) with an address-reuse guard.
     child_index = 0
     parent_dom = node.parent
     if parent_dom is not None:
-        # P33.R5 — use a module-level cache keyed by id(parent) so we
-        # don't re-scan siblings on every build_box call.
-        cached = _child_index_cache.get(id(parent_dom))
-        if cached is not None:
-            # The cached dict maps id(child) → index.
-            child_index = cached.get(id(node), 0)
-        else:
-            # First time for this parent: build the full mapping.
-            idx = 0
-            mapping = {}
-            for c in parent_dom.children:
-                if c.node_type == "element":
-                    idx += 1
-                    mapping[id(c)] = idx
-            _child_index_cache[id(parent_dom)] = mapping
-            child_index = mapping.get(id(node), 0)
+        child_index = _child_index_for(node, parent_dom)
 
     # P33.R5 — text content: collect direct text-node children.
     if is_element:

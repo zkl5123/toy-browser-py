@@ -84,14 +84,21 @@ class Bitmap:
         if x1 <= x0 or y1 <= y0:
             return
         rgb = color.to_u32()
+        if color.a == 255:
+            # P34.1 — opaque fast path: per-row slice assignment (the
+            # legacy inner loop was the single biggest rasterize-stage
+            # cost on large backgrounds; slice writes are ~10x faster).
+            row_len = x1 - x0
+            fill_row = [rgb] * row_len
+            for py in range(y0, y1):
+                base = py * self.width
+                self.pixels[base + x0:base + x1] = fill_row
+            return
         for py in range(y0, y1):
             base = py * self.width
             row = self.pixels
             for px in range(x0, x1):
-                if color.a == 255:
-                    row[base + px] = rgb
-                else:
-                    row[base + px] = color.blend_over(row[base + px])
+                row[base + px] = color.blend_over(row[base + px])
 
     def save_ppm(self, path: str) -> None:
         with open(path, "wb") as f:
