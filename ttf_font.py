@@ -364,6 +364,13 @@ def _parse_cmap_subtable(sub: bytes) -> dict:
                 break
             start_c, end_c, start_g = struct.unpack(">III", sub[goff:goff + 12])
             goff += 12
+            # P34.7 — bound the per-group scan: a corrupt group (e.g.
+            # start_c=0, end_c=0x10FFFF) would materialize a 1 M-entry
+            # dict.  A legitimate CJK group covers at most ~20k code-
+            # points; cap the per-group span at 50k so a corrupt
+            # subtable cannot OOM the whole process.
+            if end_c - start_c > 50000:
+                continue
             for c in range(start_c, end_c + 1):
                 result[c] = start_g + (c - start_c)
     elif fmt == 14:
@@ -588,7 +595,8 @@ def load_face_best_cjk(path: str) -> FontMetrics:
     for i in range(n):
         try:
             fm = load_ttc(path, i)
-        except TTFError:
+        except (TTFError, MemoryError, OSError, struct.error,
+                ValueError, IndexError):
             continue
         # P33.R1 — perf: bound the CJK scan so a giant cmap does not make
         # face-selection O(cmap) (the cmap dict can have 60k+ entries).
@@ -1270,38 +1278,164 @@ def find_cjk_font(search_dirs: Optional[list] = None,
     P33.R1 resource governance — files larger than *max_bytes* are
     skipped so a low-memory host does not hold a 17 MB collection in
     RAM; the caller then falls back to the bitmap font.
+
+    P34.8 — candidate order + load budget: the legacy alphabetical
+    order put ``msgothic.ttc`` (8.8 MB, a 3-face TTC whose cmap
+    parse takes minutes on this host) *before* ``simhei.ttf`` (9.5 MB
+    .ttf, ~20 000 CJK glyphs, parses in <1 s), so the scan stalled
+    on the collection for the whole parse budget.  The P34.8 order
+    tries the known-good *standalone* CJK .ttf families first
+    (simhei, msyh, Deng, simsun, Noto, WQY, …), and only falls back
+    to the alphabetical scan (including the slow collections) if none
+    of them are present.  A hard wall-clock budget (``_CJK_LOAD_BUDGET_S``)
+    is also enforced across all load attempts so a single corrupt /
+    slow face can never stall the scan past the budget.
     """
     import os
+    import time as _time
     if search_dirs is None:
         search_dirs = _system_font_dirs()
+    # P34.8 — known-good *standalone* CJK .ttf families, best coverage
+    # first.  These are tried before any .ttc collection because the
+    # collections (msgothic / msyhl / simsun) can take minutes to parse
+    # every face on a slow host while a single .ttf with 20k+ CJK
+    # glyphs parses in under a second.
+    _PREFERRED_STEMS = [
+        "simhei", "msyh", "deng", "dengb", "dengl", "msyhbd", "msyhl",
+        "simsun", "notosanssc", "notosanscjk", "notosansmono",
+        "notoserifsc", "notoserifcjk", "notoseriftc", "notosanstc",
+        "wqy", "wqymicrohei", "wqyzenhei", "wenquanyi",
+        "sourcehan", "unfonts", "takao", "batang", "gulim",
+        "msmincho", "pingfang", "hiragino", "songti", "heiti", "kaiti",
+        "cjk", "droid", "arphic", "arpl",
+    ]
+    best: Optional[FontMetrics] = None
+    best_cjk_count = -1
+    # P34.7 — limit the number of candidate files we attempt to load.
+    # A full system font dir can have 500+ files; loading each one is
+    # O(file-size) in RAM + CPU.  We only need to find *one* complete
+    # CJK font, so cap the number of load attempts at 16 (the first 16
+    # CJK-matching files in sorted order are almost always enough —
+    # simhei.ttf / msyh.ttc / NotoSansSC-VF all sort early on Windows
+    # and Linux).  If none of the first 16 have CJK coverage we fall
+    # back to the best of the 16 (which may be None → bitmap fallback).
+    _load_attempts = 0
+    _MAX_LOAD_ATTEMPTS = 16
+    # P34.8 — hard wall-clock budget for the whole CJK load scan.
+    # A single face's cmap parse can stall for minutes (corrupt or
+    # very large TTC); the scan must not exceed this budget, after
+    # which the best-so-far (or None → bitmap fallback) is returned.
+    _CJK_LOAD_BUDGET_S = 120.0
+    _t_start = _time.monotonic()
+    # Build a name → path map for the first search dir (the common
+    # case: Windows has all fonts in one dir).
+    _by_name: dict[str, str] = {}
     for d in search_dirs:
         if not os.path.isdir(d):
             continue
         try:
-            entries = os.listdir(d)
+            for name in os.listdir(d):
+                _by_name.setdefault(name.lower(), os.path.join(d, name))
         except OSError:
             continue
-        for name in sorted(entries):
-            low = name.lower()
-            if not (low.endswith(".ttf") or low.endswith(".ttc")):
+
+    def _try_load(path: str) -> Optional[FontMetrics]:
+        """P34.8 — load one candidate, honouring the budget + caps."""
+        nonlocal _load_attempts
+        if _load_attempts >= _MAX_LOAD_ATTEMPTS:
+            return None
+        # P34.8 — budget check: if the scan has already run long,
+        # stop trying new files and return the best-so-far.
+        if _time.monotonic() - _t_start > _CJK_LOAD_BUDGET_S:
+            return None
+        try:
+            if os.path.getsize(path) > max_bytes:
+                return None
+            _load_attempts += 1
+            if is_ttc(path):
+                m = load_face_best_cjk(path)
+            else:
+                m = load_ttf(path)
+        except (TTFError, MemoryError, OSError, struct.error,
+                ValueError, IndexError):
+            # P34.7 — a MemoryError in _parse_cmap_subtable (some
+            # TTC faces carry a corrupt format-12 subtable whose
+            # group ranges explode) or a struct.error (corrupt
+            # format-4 subtable with a too-small buffer) must not
+            # take down the whole CJK scan; skip the face and try
+            # the next candidate.
+            return None
+        if m is None:
+            return None
+        # P34.7 — pick the candidate with the most CJK Unified
+        # Ideographs coverage (U+4E00–U+9FFF) so a sparse font
+        # (e.g. HYZhongHeiTi with ~70 CJK glyphs) does not shadow a
+        # complete one (simhei with ~20 000).  A font that has
+        # *no* CJK-ideograph coverage is rejected outright.
+        # Early exit at 500 CJK codepoints (same threshold as
+        # load_face_best_cjk) — enough to discriminate a complete
+        # font from a sparse one, without an O(cmap) scan on the
+        # 9 MB simhei (60k+ cmap entries).
+        cjk_count = 0
+        for k in m.cmap:
+            if 0x4E00 <= k <= 0x9FFF:
+                cjk_count += 1
+                if cjk_count >= 500:
+                    break
+        if cjk_count == 0:
+            return None
+        nonlocal best, best_cjk_count
+        if cjk_count > best_cjk_count:
+            best_cjk_count = cjk_count
+            best = m
+        return best
+
+    # P34.8 — pass 1: try the preferred standalone .ttf families in
+    # known-coverage order.  On a Windows host with simhei.ttf
+    # present this pass finds a 20k-glyph CJK face in <1 s and the
+    # early-exit fires, so the slow msgothic/msyhl collections are
+    # never even attempted.
+    for stem in _PREFERRED_STEMS:
+        if best is not None and best_cjk_count >= 500:
+            break  # early exit: complete CJK font found
+        for d in search_dirs:
+            if not os.path.isdir(d):
                 continue
-            # P0 — match the stem against the CJK token table.
-            stem = low.rsplit(".", 1)[0]
-            if not _cjk_stem_match(stem):
+            cand = os.path.join(d, f"{stem}.ttf")
+            if os.path.isfile(cand):
+                _try_load(cand)
+                break
+    # P34.8 — pass 2: the legacy alphabetical scan (covers the
+    # preferred families that are absent, plus any host-specific
+    # CJK file the token table matches).  Budget + attempt caps
+    # still apply.
+    if not (best is not None and best_cjk_count >= 500):
+        for d in search_dirs:
+            if not os.path.isdir(d):
                 continue
-            p = os.path.join(d, name)
             try:
-                if os.path.getsize(p) > max_bytes:
-                    continue
-                if is_ttc(p):
-                    m = load_face_best_cjk(p)
-                else:
-                    m = load_ttf(p)
-            except TTFError:
+                entries = os.listdir(d)
+            except OSError:
                 continue
-            if m is not None:
-                return m
-    return None
+            for name in sorted(entries):
+                if _load_attempts >= _MAX_LOAD_ATTEMPTS:
+                    break
+                if best is not None and best_cjk_count >= 500:
+                    break
+                low = name.lower()
+                if not (low.endswith(".ttf") or low.endswith(".ttc")):
+                    continue
+                # P0 — match the stem against the CJK token table.
+                stem = low.rsplit(".", 1)[0]
+                if not _cjk_stem_match(stem):
+                    continue
+                p = os.path.join(d, name)
+                _try_load(p)
+                if best is not None and best_cjk_count >= 500:
+                    break
+            if best is not None and best_cjk_count >= 500:
+                break
+    return best
 
 
 def _system_font_dirs() -> list:

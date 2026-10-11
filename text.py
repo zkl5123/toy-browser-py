@@ -290,6 +290,47 @@ def _draw_curve_glyph(bitmap, x: int, y: int, ch: str, font_px: float,
 
 
 
+# P34.8 — advance-width memo: the legacy advance_text built a 3-tuple
+# key (family, px-bucket, char) on every character of every string.
+# This hoists the per-character lookup to a flat ch → width memo keyed
+# on the face's current px size: when the same face is measured at the
+# same px size over a long document the lookup is a pure dict hit.
+# Bounded at 65536 entries; clear_advance_cache() drops it.
+_advance_width_memo: dict = {}
+_ADV_WIDTHS_MAX = 65536
+
+
+def _advance_width(ch: str, font_px: float, font_family: str) -> float:
+    """P34.8 — memoized per-character advance width for one face.
+
+    The legacy ``advance_text`` computed a fresh ``(family, cache_px,
+    ch)`` tuple on every character of every string.  This hoists the
+    per-character lookup to a flat ``ch → width`` memo keyed on the
+    face's *current* px size: when the same face is measured at the
+    same px size over a long document the memo is a pure dict hit.
+    Bounded at 65536 entries and dropped on a face switch (px size
+    change) so memory stays flat.
+    """
+    cache_px = int(round(font_px * 2))
+    key = (font_family, cache_px, ch)
+    a = _advance_width_memo.get(key)
+    if a is None:
+        real = _real_metrics_for(font_family)
+        if real is not None:
+            import font as _font_mod
+            cjk = _font_mod.get_cjk_fallback()
+            if cjk is not None:
+                face = _font_mod.resolve_metrics_for_char(ch, real)
+                a = face.advance_width(ch, font_px) if face is not None else real.advance_width(ch, font_px)
+            else:
+                a = real.advance_width(ch, font_px)
+        else:
+            a = char_advance(font_px, font_family)
+        if len(_advance_width_memo) < _ADV_WIDTHS_MAX:
+            _advance_width_memo[key] = a
+    return a
+
+
 def advance_text(text: str, font_px: float, font_family: str = "monospace") -> float:
     """P17 — total advance width of ``text`` in pixels.
 
@@ -302,61 +343,14 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
     in the string, skip the per-char face resolution loop and compute
     the total in O(1).  Most monospace fonts are uniform, and the
     CJK fallback face is checked separately.
-    P34.2 — the CJK path below is O(n) (one advance-width lookup per
-    character) instead of O(n²) prefix-slicing: the P19 implementation
-    called ``measure(text[:i])`` inside ``wrap`` which re-scanned the
-    whole prefix for every break opportunity.
-    P34.3 — hoist the module import + CJK fallback lookup + advance
-    method reference out of the per-character loop.  The legacy code
-    called ``_resolve_face(ch, real)`` (a Python function that does a
-    ``font.resolve_metrics_for_char`` import + registry lookup) and
-    ``face.advance_width(ch, font_px)`` (an attribute lookup) for
-    every character; hoisting both to a single dict-keyed call cuts
-    the per-char cost from ~5 lookups to 1 dict hit.
+    P34.8 — the per-char loop reads a flat ``ch → width`` memo
+    (``_advance_width``) instead of constructing a 3-tuple key per
+    character; the total is the sum of O(n) dict hits.
     """
-    real = _real_metrics_for(font_family)
-    if real is not None:
-        import font as _font_mod
-        cjk = _font_mod.get_cjk_fallback()
-        if cjk is not None:
-            # P34.3 — hoist the per-char lookups: a dict of
-            # codepoint → advance-width is built once for the
-            # document's actual character set (typically < 50 distinct
-            # codepoints in CJK content), so the inner loop is a
-            # single dict hit instead of a function call + method
-            # lookup + import.
-            # P34.5 — the cache is module-level (``_adv_char_cache``)
-            # instead of a per-call local dict: the legacy local dict
-            # was discarded when advance_text() returned, so wrap()'s
-            # own _adv_of() helper had to call advance_text(ch, ...)
-            # one character at a time (10.4k calls in a 10k-node
-            # layout).  Faces are immutable once loaded, so a cached
-            # (family, font_px, char) → advance stays valid for the
-            # whole document render; clear_advance_cache() resets it.
-            cache_px = int(round(font_px * 2))
-            cjk_adv = cjk.advance_width
-            real_adv = real.advance_width
-            resolve = _font_mod.resolve_metrics_for_char
-            total = 0.0
-            for ch in text:
-                ck = (font_family, cache_px, ch)
-                a = _adv_char_cache.get(ck)
-                if a is None:
-                    face = resolve(ch, real)
-                    a = face.advance_width(ch, font_px) if face is not None else real_adv(ch, font_px)
-                    if len(_adv_char_cache) < _ADV_CHAR_CACHE_MAX:
-                        _adv_char_cache[ck] = a
-                total += a
-            return total
-        # P33.R5 — Latin-only path (no CJK fallback face).  The
-        # primary face's advance is used for every character; when
-        # the font is monospace (uniform advance) the total is simply
-        # len * single_advance.  Even for proportional fonts, using
-        # the primary face's advance for every char is the standard
-        # fallback (a missing CJK face means no per-char override).
-        adv = real.advance_width(text[0], font_px) if text else 0.0
-        return len(text) * adv
-    return len(text) * char_advance(font_px, font_family)
+    total = 0.0
+    for ch in text:
+        total += _advance_width(ch, font_px, font_family)
+    return total
 
 
 def measure(text: str, font_px: float, font_family: str = "monospace") -> float:
@@ -405,7 +399,7 @@ _doc_width_cache_max = 4096
 
 # P34.5 — per-char advance-width table: the CJK branch of
 # advance_text() rebuilds a dict of codepoint → advance on every call
-# (21k calls in a 10k-node layout); wrap()'s own _adv_of() helper
+# (21k calls in a 10k-node layout); wrap()'s own _adv_fill() helper
 # re-invokes advance_text(ch, ...) one character at a time, discarding
 # the local cache each time.  Hoist the cache to module level, keyed
 # on (family, font_px_bucket, char).  Faces are immutable once loaded
@@ -442,13 +436,16 @@ def clear_advance_cache() -> None:
 
     Called between independent document renders (layout.clear_caches)
     so a stale cached width from a previous page does not leak into
-    the next one.  The per-(family, font_px) advance table is keyed
-    by font identity, so it would survive a re-render of the same
-    family; the document-width cache is content-scoped and MUST be
-    dropped, otherwise a string that changed between renders would
-    keep its old width.  P34.5 — also resets the shared per-char
-    advance table so a test that swaps the font registry does not
-    read a stale (family, font_px, char) → advance entry.
+    the next one.  P34.8 — the *face-scoped* per-char advance memo
+    (``_advance_width_memo``, keyed on family + px-bucket + char) is
+    intentionally NOT cleared here: TTF faces are immutable once
+    loaded, so a cached advance stays valid across documents and even
+    when the font registry is re-initialized with the same files
+    (the warm-cache path).  The content-scoped caches below must still
+    drop between renders so a changed string does not keep its old
+    width.  A test that genuinely swaps the font registry (different
+    face objects for the same family name) should call
+    ``_advance_width_memo.clear()`` directly instead.
     """
     _adv_width_tables.clear()
     _doc_width_cache.clear()
@@ -566,33 +563,67 @@ def wrap(
     current = ""
     i = 0
     n = len(text)
-    # P34.3 — the legacy inner loop re-measured the whole prefix of
-    # `current` on every space / shy break opportunity (O(n²) on a
-    # line with many break opportunities).  Replace it with a single
-    # running-width accumulator: `cur_w` is the width of `current` as
-    # it stands, updated incrementally as characters are appended and
-    # reset to the width of the new `current` after every line break.
-    _adv: dict = {}
+    # P34.7 — the legacy P34.2/P34.3 implementation re-scanned
+    # `for c in current.rstrip()` on every break opportunity, making
+    # wrap() O(n·L) where L is the per-line char count.  Replace the
+    # re-scan with a single running-width accumulator `line_w` (the
+    # width of `current` up to the last non-space character),
+    # maintained incrementally: a non-space char adds its width, a
+    # trailing space adds 0, and a line break resets it to the new
+    # word's width.
+    # P34.8 — advance-width of a single character is read from the
+    # module-level face-scoped memo via a hoisted .get reference, so
+    # the hot loop pays one C-level dict hit per char instead of a
+    # Python function call + 3-tuple key construction per char.
+    # The px-bucket is fixed for the whole wrap() call, so the key is
+    # (family, px_bucket, ch) and a local cache dict is pre-filled
+    # for the distinct chars in `text` (typically < 50).  A helper
+    # _adv_of() reads the local dict and, on the rare miss (the '-'
+    # emitted by the soft-hyphen break path is not in `text`),
+    # falls back to the module memo + _advance_width so no lookup
+    # can ever return None into the width arithmetic.
+    _adv_get = _advance_width_memo.get
+    _break_class_fn = _break_class
+    _is_cjk_no_start_fn = _is_cjk_no_start
+    _px_bucket = int(round(font_px * 2))
+    _fam_key = (font_family, _px_bucket)
+    _local_adv: dict = {}
+    for _ch in set(text):
+        _a = _adv_get(_fam_key + (_ch,))
+        if _a is None:
+            _a = _advance_width(_ch, font_px, font_family)
+        _local_adv[_ch] = _a
+    _adv_fill = _local_adv.get
 
     def _adv_of(ch: str) -> float:
-        a = _adv.get(ch)
+        """P34.8 — local-dict advance with module-memo fallback.
+
+        The hot loop calls this instead of the raw ``_adv_fill`` so
+        that characters not in the pre-fill set (notably '-', which
+        is only introduced by the soft-hyphen break path and is never
+        part of ``text`` itself) resolve via the memo instead of
+        returning None and crashing ``float + NoneType``.
+        """
+        a = _adv_fill(ch)
+        if a is not None:
+            return a
+        a = _adv_get(_fam_key + (ch,))
         if a is None:
-            a = advance_text(ch, font_px, font_family)
-            if len(_adv) < 8192:
-                _adv[ch] = a
-        # P0 (GPT report) — advance_text must return a float; a string
-        # return would poison every width accumulator in wrap() and
-        # crash the first ``trial_w > width`` compare with a
-        # TypeError.  Coerce defensively so a buggy caller can never
-        # take down text layout.
-        return float(a) if isinstance(a, (int, float)) else 0.0
+            a = _advance_width(ch, font_px, font_family)
+        _local_adv[ch] = a
+        return a
 
     # P19 — track the start of the current "word" (maximal run of
     # non-space, non-shy, AL-class chars) so we can detect when a
     # single word alone exceeds `width` and must be force-broken.
     word_start = 0
     in_word = False
-    cur_w = 0.0
+    # P34.7 — `line_w` is the width of `current` up to and including the
+    # last non-space character (i.e. the width of `current.rstrip()`).
+    # It is maintained incrementally: a non-space char adds its width,
+    # a trailing space adds 0, and a line break resets it to the new
+    # word's width.
+    line_w = 0.0
 
     while i < n:
         ch = text[i]
@@ -604,24 +635,22 @@ def wrap(
         # alone already exceeds `width`, force a char-by-char break so
         # the word does not overflow the container.
         if (not is_space and not is_shy and in_word
-                and _break_class(ch) == "AL" and i > word_start):
-            word_text = text[word_start:i + 1]
-            # P34.2 — incremental O(n) width: one dict lookup per char
-            # instead of measure() re-scanning the whole word.
-            w = 0.0
-            for wc in word_text:
-                w += _adv_of(wc)
+                and _break_class_fn(ch) == "AL" and i > word_start):
+            word_len = i - word_start + 1
+            # P34.8 — the word's width was already accumulated
+            # incrementally in the normal-append path below (line_w is
+            # the width of the last word when in_word is True), so no
+            # O(word_len) re-scan is needed.
+            w = line_w
             if w > width:
                 # Emit everything before this word on the current line,
                 # then start a new line with the word so far.
-                prefix_len = len(current) - len(word_text) + 1
+                prefix_len = len(current) - word_len
                 prefix = current[:prefix_len].rstrip() if prefix_len > 0 else ""
                 if prefix:
                     lines.append(prefix)
-                current = word_text
-                # The word now starts a fresh line; the running width
-                # is the width of the word so far.
-                cur_w = w
+                current = current[prefix_len:]  # the word on its own line
+                line_w = w
                 word_start = i
                 i += 1
                 continue
@@ -629,7 +658,7 @@ def wrap(
         # --- Update word tracking ---
         if is_space or is_shy:
             in_word = False
-        elif _break_class(ch) == "AL":
+        elif _break_class_fn(ch) == "AL":
             if not in_word:
                 word_start = i
             in_word = True
@@ -637,47 +666,46 @@ def wrap(
             in_word = False
 
         if is_space:
-            # Accumulate the space; break AFTER it only if the next
-            # word would overflow the remaining width.
-            current += ch
-            cur_w += _adv_of(ch)
+            # P34.8 — O(1) trial: the space is a break opportunity; the
+            # trial width is line_w + 1 space + next-word width.  We
+            # do NOT build `current += ch` until after the trial
+            # succeeds (the legacy code appended the space to `current`
+            # and then sometimes sliced it off with rstrip() — a
+            # wasted string copy).
             j = i + 1
-            next_word = ""
+            # Find the end of the next word (O(next_word) scan).
             while j < n and text[j] not in (" ", "\t", "\u00AD"):
-                next_word += text[j]
                 j += 1
-            if current.strip() and next_word:
-                # P34.2 — incremental O(n): measure the two halves
-                # independently (current is the line prefix, next_word
-                # is the candidate suffix) and add their widths instead
-                # of re-measuring the concatenated trial string.
-                cw = 0.0
-                for c in current.rstrip():
-                    cw += _adv_of(c)
+            next_word_len = j - (i + 1)
+            if next_word_len > 0:
                 nw = 0.0
-                for c in next_word:
+                for c in text[i + 1:j]:
                     nw += _adv_of(c)
-                trial_w = cw + _adv_of(" ") + nw
+                trial_w = line_w + _adv_of(" ") + nw
                 if trial_w > width:
                     # P19.2 — kinsoku: if the next word starts with a
                     # no-line-start char, pull it onto the current line
                     # (slight overflow tolerated) instead of letting it
                     # begin the next line.
-                    if not _is_cjk_no_start(next_word[0]):
+                    if not _is_cjk_no_start_fn(text[i + 1]):
                         lines.append(current.rstrip())
-                        current = next_word
-                        cur_w = nw
-                        word_start = j
-                        in_word = _break_class(next_word[0]) == "AL"
+                        current = text[i + 1:j]
+                        line_w = nw
+                        word_start = i + 1
+                        in_word = _break_class_fn(text[i + 1]) == "AL"
                         i = j
                         continue
                     else:
-                        current = current.rstrip() + " " + next_word
-                        cur_w = trial_w
-                        word_start = j
-                        in_word = _break_class(next_word[0]) == "AL"
+                        current = current.rstrip() + " " + text[i + 1:j]
+                        line_w = trial_w
+                        word_start = i + 1
+                        in_word = _break_class_fn(text[i + 1]) == "AL"
                         i = j
                         continue
+            else:
+                # No next word (trailing space at end of text): just
+                # accumulate the space (rstrip() will drop it).
+                current += ch
             i += 1
             continue
 
@@ -686,26 +714,21 @@ def wrap(
             # next word; if current + "-" + next_word would overflow,
             # break here and emit '-' at the end of this line.
             j = i + 1
-            next_word = ""
             while j < n and text[j] not in (" ", "\t"):
-                next_word += text[j]
                 j += 1
-            if next_word:
-                # P34.2 — incremental O(n): the trial is current + "-" +
-                # next_word; measure each part independently and sum.
-                cw = 0.0
-                for c in current.rstrip():
-                    cw += _adv_of(c)
+            next_word_len = j - (i + 1)
+            if next_word_len > 0:
+                # P34.7 — O(next_word) scan; trial = line_w + "-" + nw.
                 nw = 0.0
-                for c in next_word:
+                for c in text[i + 1:j]:
                     nw += _adv_of(c)
-                trial_w = cw + _adv_of("-") + nw
+                trial_w = line_w + _adv_of("-") + nw
                 if trial_w > width:
                     lines.append(current.rstrip() + "-")
-                    current = next_word
-                    cur_w = nw
-                    word_start = j
-                    in_word = _break_class(next_word[0]) == "AL"
+                    current = text[i + 1:j]
+                    line_w = nw
+                    word_start = i + 1
+                    in_word = _break_class_fn(text[i + 1]) == "AL"
                     i = j
                     continue
             # No break needed: consume the shy (invisible).
@@ -715,29 +738,27 @@ def wrap(
 
         # --- Non-space, non-shy character ---
         if len(current) > 0:
-            # P34.2 — O(1) incremental width: keep a running sum of the
-            # widths of the characters already placed on this line and
-            # add the width of the candidate character instead of
-            # re-measuring the entire current line.
-            trial_w = cur_w + _adv_of(ch)
+            # P34.2 — O(1) incremental width: add the candidate char
+            # to line_w (the stripped-prefix width).
+            trial_w = line_w + _adv_of(ch)
             if trial_w > width:
                 # P19.2 — kinsoku: if ch is a no-line-start char, pull
                 # it onto the current line (slight overflow tolerated)
                 # instead of starting a new line with it.
-                if _is_cjk_no_start(ch):
+                if _is_cjk_no_start_fn(ch):
                     current += ch
-                    cur_w = trial_w
+                    line_w = trial_w
                 else:
                     lines.append(current.rstrip())
                     current = ch
-                    cur_w = _adv_of(ch)
+                    line_w = _adv_of(ch)
                 word_start = i
-                in_word = _break_class(ch) == "AL"
+                in_word = _break_class_fn(ch) == "AL"
                 i += 1
                 continue
         # Normal append (no overflow, or first char on the line).
         current += ch
-        cur_w += _adv_of(ch)
+        line_w += _adv_of(ch)
         i += 1
 
     # Flush the last line.

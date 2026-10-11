@@ -1784,6 +1784,13 @@ class StyledNode:
         self.custom_props: dict[str, Value] = {}
         self.props: dict[str, Value] = {}
         self.children: list["StyledNode"] = []
+        # P34.7 — layout-stage memo: the font-size value is a parse-time
+        # invariant (independent of the containing block), so the
+        # resolved pixel value can be cached on the node after the first
+        # call.  ``None`` means "not yet computed" (a computed value of
+        # 0.0 would be a legitimate font size and would never be stored
+        # because _resolve_with_var returns None for 0).
+        self._resolved_prop_font_px: float | None = None
 
     # P33.P1 — custom property access (inheritance-aware).
     def get_custom_prop(self, name: str) -> Value | None:
@@ -1850,12 +1857,74 @@ class StyledNode:
         return resolve_length(rv, self.parent_font_px)
 
     def prop_font_px(self) -> float:
+        # P34.7 — the font-size value is a parse-time invariant (it does
+        # not depend on the containing block, unlike width/height).
+        # Memoize the resolved pixel value on the node so the
+        # layout-stage hot path (build_box × 2000 calls per 1000-node
+        # layout) pays the _resolve_var + resolve_length chain once,
+        # not on every call.
+        #
+        # P34.8 — the memo ONLY covers values whose resolution does
+        # NOT depend on self.parent_font_px: px Lengths, numeric
+        # Keywords, and parent-independent CalcExprs.  These are the
+        # 99 %+ case in real documents and are safe to freeze on the
+        # node.
+        #
+        # P34.9 — the trace (_p25_trace3.py) proved that em/%
+        # font-sizes must NOT be memoized: during the cascade
+        # (_apply_subtree) a node's line_height_px() can call
+        # prop_font_px() while parent_font_px is still the parse-time
+        # default (16 px), and the P34.7 memo then freezes e.g.
+        # 2em→32 px; when _apply_subtree later assigns the true
+        # parent_font_px (40 px) the memo keeps returning 32 and the
+        # P25.5 em-computed chain (2em of 40px must be 80px) breaks.
+        # The inherited fallback (no font-size in props) is likewise
+        # parent-dependent and must never be cached: it is recomputed
+        # from the live self.parent_font_px on every call.
         v = self.props.get("font-size")
         if v is not None:
+            _pfx = self._resolved_prop_font_px
+            if _pfx is not None:
+                return _pfx
             r = self._resolve_with_var(v)
-            if r is not None:
-                return r
+            if r is None:
+                return self.parent_font_px
+            if not self._font_size_depends_on_parent(v):
+                # Parent-independent value (px / numeric keyword /
+                # px-only calc): safe to freeze on the node.
+                self._resolved_prop_font_px = r
+            return r
         return self.parent_font_px
+
+    @staticmethod
+    def _font_size_depends_on_parent(v: "Value") -> bool:
+        """P34.9 — True when resolving *v* to px requires the node's
+        (still-mutable during the cascade) ``parent_font_px``.
+
+        Only px Lengths, numeric Keywords, and px-only CalcExprs are
+        parent-independent.  em/% Lengths, CalcExprs containing em or
+        % terms, and VarExpr (whose value may carry em/%) must be
+        re-resolved on every call.
+        """
+        from css import CalcExpr, Keyword, Length, VarExpr
+        if isinstance(v, Length):
+            return v.unit not in ("px",)
+        if isinstance(v, Keyword):
+            try:
+                float(v.value)
+                return False
+            except ValueError:
+                # non-numeric keyword (e.g. "normal" / "larger") —
+                # resolved through the parent font px by the
+                # resolver; treat as parent-dependent.
+                return True
+        if isinstance(v, CalcExpr):
+            return any(tu in ("em", "%") for _, tu in v.terms)
+        if isinstance(v, VarExpr):
+            # the var's substituted value may itself carry em/% —
+            # conservatively re-resolve every call.
+            return True
+        return False
 
     def font_family(self) -> str:
         """P18 — CSS font-family (raw value, e.g. 'serif'/'monospace'/'arial')."""

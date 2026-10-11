@@ -62,35 +62,66 @@ def test_draw_text_cjk_is_fast():
 def test_advance_text_is_linear():
     """P34.2 — advance_text on a 10k-char string must run in O(n);
     the legacy O(n²) prefix-slice in wrap would be ~10⁸ char
-    operations for 10k chars."""
+    operations for 10k chars.
+
+    P34.8 — hardware-adaptive target: the fixed 50 ms was calibrated
+    on the development host.  Measure the O(n) constant with a 1k-char
+    warm-cache reference, then allow 10k = 10× the reference plus
+    slack.  A genuine O(n²) regression would be ~100× the reference,
+    far above the 10× × 3.0 ceiling."""
     font.init_real_fonts(["fonts"])
     real = text._real_metrics_for("monospace")
     if real is None:
         return
+    s1k = "a" * 1000
+    t0 = time.perf_counter()
+    text.advance_text(s1k, 12.0)  # warm the advance memo
+    t0 = time.perf_counter()
+    text.advance_text(s1k, 12.0)
+    t1 = time.perf_counter()
+    ref_ms_1k = (t1 - t0) * 1000.0
     s = "a" * 10000
     t0 = time.perf_counter()
     total = text.advance_text(s, 12.0)
     dt = time.perf_counter() - t0
+    target_ms = ref_ms_1k * 10.0 * 3.0
     assert total > 0
-    # O(n) advance over 10k chars should complete well under 50 ms.
-    assert dt < 0.050, f"P34.2 advance_text too slow: {dt*1000:.1f} ms for 10k chars"
+    assert dt * 1000.0 < target_ms, \
+        (f"P34.2 advance_text too slow: {dt*1000:.1f} ms for 10k chars "
+         f"(target <{target_ms:.0f} ms = ref({ref_ms_1k:.1f} ms for 1k)×10×3)")
 
 
 def test_wrap_is_linear():
     """P34.2 — wrap() on a 5k-char string must run in O(n); the legacy
     implementation called measure(text[:i]) per break opportunity,
-    giving O(n²) total work."""
+    giving O(n²) total work.
+
+    P34.8 — hardware-adaptive target: the fixed 200 ms was calibrated
+    on the development host.  Measure the O(n) constant factor on
+    this host with a 1k-char warm-cache reference, then allow
+    5k = 5× the reference plus slack.  A genuine O(n²) regression
+    would be ~25× the reference, far above the 5× × 3.0 ceiling."""
     font.init_real_fonts(["fonts"])
     real = text._real_metrics_for("monospace")
     if real is None:
         return
+    # Warm the module-level advance memo with a small reference first.
+    text.wrap("word " * 200, 100.0, 12.0)  # 1000 chars, warm caches
+    t0 = time.perf_counter()
+    text.wrap("word " * 200, 100.0, 12.0)
+    t1 = time.perf_counter()
+    ref_ms_1k = (t1 - t0) * 1000.0
+    # Now measure the 5k wrap (the module memo is warm).
     s = "word " * 1000  # 5000 chars
     t0 = time.perf_counter()
     lines = text.wrap(s, 100.0, 12.0)
     dt = time.perf_counter() - t0
+    target_ms = ref_ms_1k * 5.0 * 3.0
     assert len(lines) > 1, "wrap must produce multiple lines"
-    # O(n) wrap over 5k chars should complete well under 200 ms.
-    assert dt < 0.200, f"P34.2 wrap too slow: {dt*1000:.1f} ms for 5k chars"
+    # O(n) wrap over 5k chars should be proportional to the 1k reference.
+    assert dt * 1000.0 < target_ms, \
+        (f"P34.2 wrap too slow: {dt*1000:.1f} ms for 5k chars "
+         f"(target <{target_ms:.0f} ms = ref({ref_ms_1k:.1f} ms for 1k)×5×3)")
     # Sanity: every line must fit in the width (allow trailing space).
     for line in lines:
         w = text.measure(line, 12.0)
