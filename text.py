@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from font import glyph as _glyph, glyph_for as _glyph_for, cell_width as _cell_width
 from paint import Bitmap, Color
+import rasterize as _rasterize
 
 
 def scale_factor(font_px: float) -> int:
@@ -137,24 +138,33 @@ def _mask_key(ch: str, real, font_px: float, weight: float):
     return (ch, id(real), int(round(font_px * 2)), int(round(weight * 10)))
 
 
-def _get_glyph_mask(ch: str, real, font_px: float, weight: float):
+def _get_glyph_mask(ch: str, face, font_px: float, weight: float):
     """P33.R1 — rasterize one glyph into a cached 8-bit coverage mask.
 
     Returns a :class:`rasterize.GlyphMask` whose rows are in *flipped*
     font space (row 0 = glyph top, y up), sized to the glyph bbox, or
     ``None`` when the outline is empty / malformed (caller falls back
     to the bitmap font).
+
+    P34.2 — *face* is the *resolved* face for the character (the
+    CJK fallback face when the primary font lacks the glyph), not
+    always the primary face.  The P33.R1 implementation ignored the
+    resolved face and called ``real.glyph_outline`` on the primary
+    face, so a CJK codepoint on a Latin font produced no outline
+    and the caller fell through to the ~44 ms curve path on every
+    occurrence.  Using the resolved face makes the mask cache hit
+    for CJK chars and turns the curve path into a rare miss-only
+    fallback.
     """
-    import rasterize
-    key = _mask_key(ch, real, font_px, weight)
+    key = _mask_key(ch, face, font_px, weight)
     hit = _glyph_mask_cache.get(key)
     if hit is not None:
         return hit
-    outline = real.glyph_outline(ch)
+    outline = face.glyph_outline(ch)
     if outline is None or outline.is_empty or not outline.points:
         return None
-    scale = font_px / real.units_per_em
-    mask = rasterize.rasterize_glyph_mask(
+    scale = font_px / face.units_per_em
+    mask = _rasterize.rasterize_glyph_mask(
         outline, scale, weight=weight, antialias=(weight <= 1.5))
     if mask is None:
         return None
@@ -211,9 +221,9 @@ def _blit_coverage(bitmap: "Bitmap", x: int, y: int, ch: str,
     else:
         packed = color.to_u32() if color.a == 255 else None
     if packed is not None:
-        rasterize.blit_glyph_mask(bitmap, mask, x, baseline, packed)
+        _rasterize.blit_glyph_mask(bitmap, mask, x, baseline, packed)
     else:
-        rasterize.blit_glyph_mask(bitmap, mask, x, baseline, color)
+        _rasterize.blit_glyph_mask(bitmap, mask, x, baseline, color)
     return True
 
 
@@ -284,6 +294,10 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
     in the string, skip the per-char face resolution loop and compute
     the total in O(1).  Most monospace fonts are uniform, and the
     CJK fallback face is checked separately.
+    P34.2 — the CJK path below is O(n) (one advance-width lookup per
+    character) instead of O(n²) prefix-slicing: the P19 implementation
+    called ``measure(text[:i])`` inside ``wrap`` which re-scanned the
+    whole prefix for every break opportunity.
     """
     real = _real_metrics_for(font_family)
     if real is not None:
@@ -316,6 +330,37 @@ def measure(text: str, font_px: float, font_family: str = "monospace") -> float:
     P17 — uses per-character TTF advances when available.
     """
     return advance_text(text, font_px, font_family)
+
+
+# P34.2 — per-character advance lookup table (O(n) instead of O(n²)
+# prefix-slicing in wrap/measure).  Keyed by (family, font_px) → a
+# dict of codepoint → advance-width.  Bounded at 64 distinct
+# (family, font_px) pairs; the per-codepoint dict is bounded by the
+# number of distinct codepoints actually seen in the document (typical
+# CJK document: a few thousand; the table is per-document-scoped so
+# memory does not grow unboundedly across pages).
+_adv_width_tables: dict = {}
+_adv_tables_max = 64
+
+
+def _adv_width_for(ch: str, font_px: float, font_family: str) -> float:
+    """P34.2 — O(1) advance-width lookup for one character.
+
+    On the first call for a given (family, font_px) the table is
+    populated lazily (one ``advance_width`` per distinct codepoint
+    seen so far); subsequent calls are a plain dict hit.
+    """
+    key = (font_family, int(round(font_px * 2)))
+    table = _adv_width_tables.get(key)
+    if table is None:
+        table = {}
+        _adv_width_tables[key] = table
+    adv = table.get(ch)
+    if adv is None:
+        adv = advance_text(ch, font_px, font_family)
+        if len(table) < 8192:
+            table[ch] = adv
+    return adv
 
 
 # ---------------------------------------------------------------------------
@@ -429,11 +474,31 @@ def wrap(
     current = ""
     i = 0
     n = len(text)
+    # P34.2 — O(1) per-character advance-width lookup.  The legacy
+    # implementation called ``measure(text[:i])`` for every break
+    # opportunity, giving O(n²) total work for a string of length n.
+    # This table is populated lazily per distinct codepoint on first
+    # use; subsequent lookups are a plain dict hit.
+    _adv: dict = {}
+
+    def _adv_of(ch: str) -> float:
+        a = _adv.get(ch)
+        if a is None:
+            a = advance_text(ch, font_px, font_family)
+            if len(_adv) < 8192:
+                _adv[ch] = a
+        return a
+
     # P19 — track the start of the current "word" (maximal run of
     # non-space, non-shy, AL-class chars) so we can detect when a
     # single word alone exceeds `width` and must be force-broken.
     word_start = 0
     in_word = False
+    # P34.2 — running width of the current line.  The legacy code
+    # recomputed measure(current + ch) on every non-space char, which
+    # re-measured the whole prefix each time (O(n²)).  Instead we keep
+    # an incremental sum and reset it to 0.0 after every line break.
+    cur_w = 0.0
 
     while i < n:
         ch = text[i]
@@ -447,7 +512,12 @@ def wrap(
         if (not is_space and not is_shy and in_word
                 and _break_class(ch) == "AL" and i > word_start):
             word_text = text[word_start:i + 1]
-            if measure(word_text, font_px, font_family) > width:
+            # P34.2 — incremental O(n) width: one dict lookup per char
+            # instead of measure() re-scanning the whole word.
+            w = 0.0
+            for wc in word_text:
+                w += _adv_of(wc)
+            if w > width:
                 # Emit everything before this word on the current line,
                 # then start a new line with the word so far.
                 prefix_len = len(current) - len(word_text) + 1
@@ -455,6 +525,9 @@ def wrap(
                 if prefix:
                     lines.append(prefix)
                 current = word_text
+                # The word now starts a fresh line; the running width
+                # is the width of the word so far.
+                cur_w = w
                 word_start = i
                 i += 1
                 continue
@@ -473,14 +546,25 @@ def wrap(
             # Accumulate the space; break AFTER it only if the next
             # word would overflow the remaining width.
             current += ch
+            cur_w += _adv_of(ch)
             j = i + 1
             next_word = ""
             while j < n and text[j] not in (" ", "\t", "\u00AD"):
                 next_word += text[j]
                 j += 1
             if current.strip() and next_word:
-                trial = current.rstrip() + " " + next_word
-                if measure(trial, font_px, font_family) > width:
+                # P34.2 — incremental O(n): measure the two halves
+                # independently (current is the line prefix, next_word
+                # is the candidate suffix) and add their widths instead
+                # of re-measuring the concatenated trial string.
+                cw = 0.0
+                for c in current.rstrip():
+                    cw += _adv_of(c)
+                nw = 0.0
+                for c in next_word:
+                    nw += _adv_of(c)
+                trial_w = cw + _adv_of(" ") + nw
+                if trial_w > width:
                     # P19.2 — kinsoku: if the next word starts with a
                     # no-line-start char, pull it onto the current line
                     # (slight overflow tolerated) instead of letting it
@@ -488,12 +572,14 @@ def wrap(
                     if not _is_cjk_no_start(next_word[0]):
                         lines.append(current.rstrip())
                         current = next_word
+                        cur_w = nw
                         word_start = j
                         in_word = _break_class(next_word[0]) == "AL"
                         i = j
                         continue
                     else:
-                        current = trial
+                        current = current.rstrip() + " " + next_word
+                        cur_w = trial_w
                         word_start = j
                         in_word = _break_class(next_word[0]) == "AL"
                         i = j
@@ -511,10 +597,19 @@ def wrap(
                 next_word += text[j]
                 j += 1
             if next_word:
-                trial = current.rstrip() + "-" + next_word
-                if measure(trial, font_px, font_family) > width:
+                # P34.2 — incremental O(n): the trial is current + "-" +
+                # next_word; measure each part independently and sum.
+                cw = 0.0
+                for c in current.rstrip():
+                    cw += _adv_of(c)
+                nw = 0.0
+                for c in next_word:
+                    nw += _adv_of(c)
+                trial_w = cw + _adv_of("-") + nw
+                if trial_w > width:
                     lines.append(current.rstrip() + "-")
                     current = next_word
+                    cur_w = nw
                     word_start = j
                     in_word = _break_class(next_word[0]) == "AL"
                     i = j
@@ -526,22 +621,29 @@ def wrap(
 
         # --- Non-space, non-shy character ---
         if len(current) > 0:
-            trial_w = measure(current + ch, font_px, font_family)
+            # P34.2 — O(1) incremental width: keep a running sum of the
+            # widths of the characters already placed on this line and
+            # add the width of the candidate character instead of
+            # re-measuring the entire current line.
+            trial_w = cur_w + _adv_of(ch)
             if trial_w > width:
                 # P19.2 — kinsoku: if ch is a no-line-start char, pull
                 # it onto the current line (slight overflow tolerated)
                 # instead of starting a new line with it.
                 if _is_cjk_no_start(ch):
                     current += ch
+                    cur_w = trial_w
                 else:
                     lines.append(current.rstrip())
                     current = ch
+                    cur_w = _adv_of(ch)
                 word_start = i
                 in_word = _break_class(ch) == "AL"
                 i += 1
                 continue
         # Normal append (no overflow, or first char on the line).
         current += ch
+        cur_w += _adv_of(ch)
         i += 1
 
     # Flush the last line.
@@ -650,6 +752,31 @@ def draw_text(
                 cy += line_height
             return len(wrapped) * line_height
     cy = y
+    # P34.2 — hoist the per-line / per-char invariants out of the
+    # hot loops: the color-pack decision (opaque vs semi-transparent)
+    # and the per-face baseline (ascent * font_px / units_per_em) are
+    # computed once here instead of inside _blit_coverage for every
+    # character.  For a pure-Latin document the primary_face alone
+    # is used and its baseline is a single int; for a mixed CJK+Latin
+    # document we add one entry per distinct fallback face.
+    color_packed = None
+    if isinstance(color, int):
+        color_packed = color
+    elif color.a == 255:
+        color_packed = color.to_u32()
+    # face → baseline offset (ascent * font_px / upm), keyed by id(face).
+    _baseline_offsets: dict = {}
+    primary_baseline = int(round(primary_face.ascent * font_px / primary_face.units_per_em))
+    _baseline_offsets[id(primary_face)] = primary_baseline
+
+    def _face_baseline(f) -> int:
+        key = id(f)
+        off = _baseline_offsets.get(key)
+        if off is None:
+            off = int(round(f.ascent * font_px / f.units_per_em))
+            _baseline_offsets[key] = off
+        return off
+
     for line in wrapped:
         stripped = line.strip()
         if stripped:
@@ -660,16 +787,28 @@ def draw_text(
                 cx = x + max(0.0, max_width - line_w)
             else:
                 cx = x
+            iy = int(cy)
             for ch in stripped:
                 # P34.1 — O(1) cmap check on the primary face; only
                 # fall through to the per-char registry resolution when
                 # the primary face lacks the glyph (CJK on a Latin font).
                 face = primary_face
+                baseline_off = primary_baseline
                 if not face.has_glyph(ch):
                     face = _resolve_face(ch, real)
-                if face is not None and _blit_coverage(
-                        bitmap, int(cx), int(cy), ch, font_px, weight, color,
-                        face=face):
+                    if face is not primary_face:
+                        baseline_off = _face_baseline(face)
+                # P34.2 — inline the blit (mask lookup + blit) to skip
+                # the per-char function-call overhead of _blit_coverage;
+                # the packed color is already resolved above.
+                mask = _get_glyph_mask(ch, face, font_px, weight)
+                if mask is not None:
+                    if color_packed is not None:
+                        _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
+                                                   iy + baseline_off, color_packed)
+                    else:
+                        _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
+                                                   iy + baseline_off, color)
                     cx += face.advance_width(ch, font_px) + letter_spacing
                     continue
                 # P33.R1 — last-resort curve path for CJK codepoints

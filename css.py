@@ -183,6 +183,14 @@ def parse_value(val: str) -> Value:
     return Keyword(v)
 
 
+# P34.1 — precompiled regex for parse_calc (the P33 implementation
+# re-compiled the pattern string on every call — a hot path when a
+# document uses calc() in many rules).
+_CALC_TOKEN_RE = __import__("re").compile(
+    r"([\d.]+)(px|em|%|pt)?\s*(?=[+-]|$)|([+-])"
+)
+
+
 def parse_calc(expr: str) -> Value:
     """P12.3 / P33.P1 — evaluate a calc() expression.
 
@@ -197,9 +205,8 @@ def parse_calc(expr: str) -> Value:
     import re as _re
     expr = expr.strip()
     # Tokenize: number+unit pairs and binary + / - operators.
-    token_re = _re.compile(
-        r"([\d.]+)(px|em|%|pt)?\s*(?=[+-]|$)|([+-])",
-    )
+    # P34.1 — use the module-level precompiled pattern.
+    token_re = _CALC_TOKEN_RE
     # Simpler approach: split on + and - operators while respecting
     # signed numbers.  Toy: no nested calc() inside calc().
     # Walk the string building (value, sign, unit) terms.
