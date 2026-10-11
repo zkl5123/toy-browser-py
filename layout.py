@@ -576,6 +576,54 @@ def build_box(sn: StyledNode, parent_font_px: float,
     else:
         text_str = node.text or ""
 
+    # P34.3 — text-node fast path: a text node (node_type != "element")
+    # with a small props dict and no special properties skips the ~100
+    # property reads + regex calls of the slow path.  The slow path's
+    # text-box construction is dominated by the form-control / iframe /
+    # img / caption blocks that never apply to a plain text node, plus
+    # ~40 sn.props.get() lookups for CSS that a text node rarely carries.
+    # This is the single biggest layout-stage cost on the 10k-node
+    # benchmark (text nodes ≈ 50 % of all build_box calls).
+    if not is_element:
+        _prop = sn.props
+        if len(_prop) <= _FAST_PATH_MAX_PROPS and not (_SPECIAL_PROPS & _prop.keys()):
+            _col = _DEFAULT_TEXT_COLOR
+            _col_raw = _prop.get("color")
+            if _col_raw is not None:
+                if isinstance(_col_raw, Color):
+                    _col = _col_raw
+                else:
+                    _rv = sn._resolve_var(_col_raw)
+                    if _rv is not None and isinstance(_rv, Color):
+                        _col = _rv
+            _bg = None
+            _bg_raw = _prop.get("background")
+            if _bg_raw is not None:
+                if isinstance(_bg_raw, Color):
+                    _bg = _bg_raw
+                else:
+                    _rv = sn._resolve_var(_bg_raw)
+                    if _rv is not None and isinstance(_rv, Color):
+                        _bg = _rv
+            _bxBLOCK = LayoutBox(
+                BoxType.TEXT,
+                Rect(),
+                EdgeSizes(), EdgeSizes(), EdgeSizes(),
+                text_content=text_str,
+                text_color=_col,
+                background=_bg,
+                border_color=_DEFAULT_BORDER_COLOR,
+                font_px=my_font,
+                text_align="left",
+                explicit_width=None,
+                explicit_height=None,
+                line_height_px=my_font * 1.2,
+                dom=None,
+                child_index=child_index,
+                font_family=parent_font_family or "monospace",
+            )
+            return _bxBLOCK
+
     background = sn.background()
     color = sn.color()
     border_color = sn.get_color("border-color", _DEFAULT_BORDER_COLOR)
@@ -1852,9 +1900,21 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             text_str = text_str.lower()
         elif bx.text_transform == "capitalize":
             text_str = " ".join(w[:1].upper() + w[1:] for w in text_str.split(" "))
-        wrapped = text_mod.wrap(text_str, max(0.0, available), bx.font_px, bx.font_family,
-                                word_break=bx.word_break,
-                                overflow_wrap=bx.overflow_wrap)
+        # P34.3 — measure only when the text could actually wrap.  Most
+        # text nodes in a typical document are a single short line; the
+        # legacy code ran the full O(n) wrap advance scan for every text
+        # box even when the text fit on one line at the available width.
+        # A single measure() call (O(n), cached advance table) plus a
+        # float compare is cheaper than the wrap's break-opportunity
+        # loop on the no-wrap case; on the wrap case both paths still
+        # run wrap, so the common case is the win.
+        if text_mod.measure(text_str, bx.font_px, bx.font_family) > available:
+            wrapped = text_mod.wrap(text_str, max(0.0, available), bx.font_px,
+                                    bx.font_family,
+                                    word_break=bx.word_break,
+                                    overflow_wrap=bx.overflow_wrap)
+        else:
+            wrapped = [text_str]
         # P6.2 — line-clamp: limit the number of visible lines.
         if bx.line_clamp > 0 and len(wrapped) > bx.line_clamp:
             wrapped = wrapped[: bx.line_clamp]
@@ -1874,8 +1934,7 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         ascent_px = 0.0
         descent_px = 0.0
         try:
-            import font as _font_mod
-            real_fm = _font_mod.get_real_metrics(bx.font_family)
+            real_fm = font.get_real_metrics(bx.font_family)
             if real_fm is not None and real_fm.units_per_em > 0:
                 scale = bx.font_px / real_fm.units_per_em
                 ascent_px = real_fm.ascent * scale

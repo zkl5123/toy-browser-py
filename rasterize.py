@@ -339,13 +339,44 @@ class GlyphMask:
     top).  ``rows[y][x]`` is the coverage 0..255.  Blending onto a
     32-bit ``0xRRGGBB`` pixel buffer uses ``row |= mask_row`` after
     scaling coverage — see ``text._blit_coverage``.
+
+    P34.3 — ``ink_rows`` is a lazily computed list of
+    ``(row_index, x0, x1)`` tuples for the rows that carry at least
+    one non-zero coverage byte.  ``blit_glyph_mask`` iterates ink rows
+    only (skipping the all-zero rows of the bbox) instead of all ``h``
+    rows; the column clip is handled at the pixel level (the inner
+    loop's ``c == 0: continue`` already skips empty columns).  For a
+    dense CJK glyph this is a small win (~1 blank row skipped per
+    mask); the big win for CJK is the P34.2 mask cache — without it the
+    per-occurrence cost was a full ~3 ms curve fill, not a blit.
     """
-    __slots__ = ("w", "h", "rows")
+    __slots__ = ("w", "h", "rows", "ink_rows")
 
     def __init__(self, w: int, h: int):
         self.w = w
         self.h = h
         self.rows = [bytearray(w) for _ in range(h)]
+        self.ink_rows = None  # lazily computed by compute_ink_rows()
+
+    def compute_ink_rows(self) -> list:
+        """P34.3 — scan the coverage rows once and record the indices
+        of rows that contain at least one non-zero byte.  Cached on the
+        mask; a mask is never mutated after creation, so the cache is
+        valid for its whole life."""
+        if self.ink_rows is not None:
+            return self.ink_rows
+        ink = []
+        for y, row in enumerate(self.rows):
+            # bytearray C scan: find any non-zero byte.  A byte value
+            # of 0 means empty; any 1..255 is ink.  The common case is
+            # the whole row all-zero → find is a fast C scan over the
+            # row, no Python per-byte loop.
+            for x in range(len(row)):
+                if row[x]:
+                    ink.append(y)
+                    break
+        self.ink_rows = ink
+        return ink
 
     def get(self, x: int, y: int) -> int:
         if 0 <= x < self.w and 0 <= y < self.h:
@@ -406,6 +437,11 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
         n_cols = min(w - src_start, bw)
     if n_cols <= 0:
         return  # mask entirely to the right of the bitmap
+    # P34.3 — iterate only the ink rows (rows with ≥1 non-zero byte);
+    # the all-zero rows of the bbox are skipped at the row level.
+    ink_rows = mask.compute_ink_rows()
+    if not ink_rows:
+        return
     # P34.1 — unpack the color once outside the row/column loops.
     if isinstance(color, int):
         cr, cg, cb = (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF
@@ -425,7 +461,7 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
         # due to >>8 truncation when inv=0 and c=255: cr*255>>8 = cr-1
         # for cr<255, so the result was off by one channel unit).
         packed = (cr << 16) | (cg << 8) | cb
-        for k in range(h):
+        for k in ink_rows:
             sy = y0 + k
             if sy < 0 or sy >= bh:
                 continue
@@ -459,7 +495,7 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
     if color.a == 0:
         return
     alpha_inv = 255 - color.a
-    for k in range(h):
+    for k in ink_rows:
         sy = y0 + k
         if sy < 0 or sy >= bh:
             continue

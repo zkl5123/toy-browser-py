@@ -298,6 +298,13 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
     character) instead of O(n²) prefix-slicing: the P19 implementation
     called ``measure(text[:i])`` inside ``wrap`` which re-scanned the
     whole prefix for every break opportunity.
+    P34.3 — hoist the module import + CJK fallback lookup + advance
+    method reference out of the per-character loop.  The legacy code
+    called ``_resolve_face(ch, real)`` (a Python function that does a
+    ``font.resolve_metrics_for_char`` import + registry lookup) and
+    ``face.advance_width(ch, font_px)`` (an attribute lookup) for
+    every character; hoisting both to a single dict-keyed call cuts
+    the per-char cost from ~5 lookups to 1 dict hit.
     """
     real = _real_metrics_for(font_family)
     if real is not None:
@@ -305,13 +312,23 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
         import font as _font_mod
         cjk = _font_mod.get_cjk_fallback()
         if cjk is not None:
-            # Mixed-script path: resolve the face per character.
+            # P34.3 — hoist the per-char lookups: a dict of
+            # codepoint → advance-width is built once for the
+            # document's actual character set (typically < 50 distinct
+            # codepoints in CJK content), so the inner loop is a
+            # single dict hit instead of a function call + method
+            # lookup + import.
+            cjk_adv = cjk.advance_width
+            real_adv = real.advance_width
+            resolve = _font_mod.resolve_metrics_for_char
+            _adv_cache: dict = {}
             for ch in text:
-                face = _resolve_face(ch, real)
-                if face is not None:
-                    total += face.advance_width(ch, font_px)
-                else:
-                    total += real.advance_width(ch, font_px)
+                a = _adv_cache.get(ch)
+                if a is None:
+                    face = resolve(ch, real)
+                    a = face.advance_width(ch, font_px) if face is not None else real_adv(ch, font_px)
+                    _adv_cache[ch] = a
+                total += a
             return total
         # P33.R5 — Latin-only path (no CJK fallback face).  The
         # primary face's advance is used for every character; when
@@ -474,11 +491,12 @@ def wrap(
     current = ""
     i = 0
     n = len(text)
-    # P34.2 — O(1) per-character advance-width lookup.  The legacy
-    # implementation called ``measure(text[:i])`` for every break
-    # opportunity, giving O(n²) total work for a string of length n.
-    # This table is populated lazily per distinct codepoint on first
-    # use; subsequent lookups are a plain dict hit.
+    # P34.3 — the legacy inner loop re-measured the whole prefix of
+    # `current` on every space / shy break opportunity (O(n²) on a
+    # line with many break opportunities).  Replace it with a single
+    # running-width accumulator: `cur_w` is the width of `current` as
+    # it stands, updated incrementally as characters are appended and
+    # reset to the width of the new `current` after every line break.
     _adv: dict = {}
 
     def _adv_of(ch: str) -> float:
@@ -494,10 +512,6 @@ def wrap(
     # single word alone exceeds `width` and must be force-broken.
     word_start = 0
     in_word = False
-    # P34.2 — running width of the current line.  The legacy code
-    # recomputed measure(current + ch) on every non-space char, which
-    # re-measured the whole prefix each time (O(n²)).  Instead we keep
-    # an incremental sum and reset it to 0.0 after every line break.
     cur_w = 0.0
 
     while i < n:
