@@ -52,6 +52,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="enable on-disk HTTP cache under DIR (P23.2/3)")
     p.add_argument("--progress", action="store_true",
                    help="print load-progress events to stderr (P23.4)")
+    # P32 — mini DevTools
+    p.add_argument("--devtools", action="store_true",
+                   help="print a DevTools report (DOM tree + computed style + "
+                        "selector provenance) to stdout; use with "
+                        "--devtools-el ID and/or --devtools-sel SELECTOR (P32.4)")
+    p.add_argument("--devtools-el", metavar="ID", default="",
+                   help="element id whose computed style to show in --devtools")
+    p.add_argument("--devtools-sel", metavar="SEL", default="",
+                   help="selector whose hits/rules to show in --devtools")
     return p.parse_args(argv)
 
 
@@ -116,16 +125,22 @@ def main(argv: list[str] | None = None) -> int:
             _write_image(bmp, args)
             return 0
         except net.FetchError as e:
+            # P32.5 — categorize the failure for per-kind error-page copy.
+            cat = net.categorize_fetch_error(e)
             print(f"network error: {e}", file=sys.stderr)
             html = net.error_page_html(
-                f"Network error: {e}",
-                f"Loading {args.input} failed.",
+                f"HTTP {getattr(e, 'status', '')}".strip() or "Request failed",
+                f"Loading {args.input} failed: {e}",
+                category=cat,
             )
             _render_error_and_exit(html, args)
             return 3
         except Exception as e:
+            cat = net.categorize_fetch_error(e)
             print(f"connection error: {e}", file=sys.stderr)
-            html = net.error_page_html("Connection error", str(e))
+            html = net.error_page_html(
+                "Connection error", str(e), category=cat,
+            )
             _render_error_and_exit(html, args)
             return 3
     else:
@@ -140,6 +155,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.css and os.path.exists(args.css):
         with open(args.css, encoding="utf-8", errors="replace") as f:
             css_text = f.read()
+
+    # P32.4 — mini DevTools report (printed before the image is written so
+    # it can be captured independently of the PPM/PNG artifact).
+    if args.devtools:
+        import browser as _browser
+        _report = _browser.devtools_report(
+            html, css_text, args.width, args.height,
+            element_id=args.devtools_el, selector=args.devtools_sel,
+        )
+        print(_report)
+        # A --devtools run still renders the image unless the user only
+        # asked for the report; keep the default behaviour (write the image).
 
     # P2.2 — collect links before rendering (DOM is mutated by scripts).
     tree = dom_mod.parse(html)

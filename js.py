@@ -326,6 +326,32 @@ class Block(JNode):
 class LetDecl(JNode):
     name: str
     value: Optional[JNode] = None
+    # P33.R3 — declaration kind: "let", "const", or "var".  ``var``
+    # keeps the legacy function-scoped / hoisted behavior; ``let`` and
+    # ``const`` are block-scoped with a TDZ (temporal dead zone) —
+    # reading the name before its declaration in the enclosing block
+    # raises a ReferenceError instead of returning undefined.
+    kind: str = "var"
+
+
+@dataclass
+class IncDec(JNode):
+    """P33.R3 — increment / decrement: ``i++``, ``i--``, ``++i``,
+    ``--i``.  ``prefix`` selects the JS semantics: postfix returns the
+    value *before* the mutation; prefix returns it *after*.  The
+    operand is an Ident (or a Member / Index access) whose binding is
+    found in the enclosing lexical environment."""
+    operand: JNode
+    op: str = "++"            # "++" or "--"
+    prefix: bool = False
+
+
+class TDZError(NameError):
+    """P33.R3 — the temporal dead zone: a ``let``/``const`` binding
+    that has been *declared* in a scope but not yet *initialized*
+    (i.e. the binding record exists with value None and kind
+    "let"/"const", and the execution point is inside the block that
+    declared it)."""
 
 
 @dataclass
@@ -440,10 +466,12 @@ class DestructuringDecl(JNode):
     ``bindings`` is a list of target names; ``value`` is the RHS expression.
     For object destructuring, ``keys`` carries the property names to pluck
     from the RHS dict; for array destructuring it is ``None``.
+    P33.R3 — ``kind`` is the declaration kind ("let" / "const" / "var").
     """
     bindings: list[str]            # target variable names
     value: JNode                  # RHS expression
     keys: list[str] | None = None  # property names (object destructure) or None (array)
+    kind: str = "var"             # P33.R3 — declaration kind
 
 
 # P13.1 — object spread
@@ -623,7 +651,6 @@ class ToyClass:
 
         # Run own constructor (if any).  `this.x = …` writes to obj;
         # `super(…)` is bound so that when the ctor calls it the parent
-        # constructor runs once and copies inherited fields.
         ctor = cls.methods.get("constructor")
         if ctor is not None:
             params, body = ctor
@@ -801,7 +828,7 @@ class Parser:
         higher-precedence operators on the right bind tighter
         (``a + b * c`` → ``a + (b * c)``).
         """
-        left = self.parse_postfix()
+        left = self.parse_unary()
         while True:
             t = self.peek()
             if t.kind == "eof":
@@ -899,9 +926,31 @@ class Parser:
                 self.next()
                 args = self.parse_arg_list()
                 node = Call(node, args)
+            # P33.R3 — postfix / prefix increment & decrement: ``i++``,
+            # ``i--``, ``++i``, ``--i``.  Both return the numeric value
+            # (postfix returns the value *before* the mutation, prefix
+            # after).  The operand must be an Ident (toy: no
+            # compound-assignment-to-member forms beyond ``obj.x++``
+            # via the Member node).
+            elif t.value in ("++", "--"):
+                self.next()
+                node = IncDec(node, op=t.value, prefix=False)
             else:
                 break
         return node
+
+    def parse_unary(self) -> JNode:
+        """P33.R3 — prefix operators: ``++``, ``--`` before their
+        operand (called from the primary-operand position of the Pratt
+        parser).  ``++x`` / ``--x`` mutate the binding; the result is
+        the new value.
+        """
+        t = self.peek()
+        if t.value in ("++", "--"):
+            self.next()
+            operand = self.parse_unary()
+            return IncDec(operand, op=t.value, prefix=True)
+        return self.parse_postfix()
 
     def _expect_id(self) -> Token:
         t = self.peek()
@@ -1016,10 +1065,10 @@ class Parser:
             return TemplateLit(parts)
         if t.value == "!":
             self.next()
-            return Unary("!", self.parse_postfix())
+            return Unary("!", self.parse_unary())
         if t.value == "-":
             self.next()
-            return Unary("-", self.parse_postfix())
+            return Unary("-", self.parse_unary())
         if t.value == "[":
             return self.parse_array_lit()
         if t.value == "{":
@@ -1242,19 +1291,26 @@ class Parser:
     def parse_statement(self) -> JNode:
         t = self.peek()
         if t.value == "{":
-            return self.parse_block()
+            block = self.parse_block()
+            # P33.R3 — allow a bare block statement to be terminated by
+            # an optional ``;`` (JS permits `{ ... };`).  The ``;`` is
+            # not part of the Block node; it is consumed here so the
+            # enclosing statement loop does not choke on it.
+            self.match(";")
+            return block
         if t.kind == "id" and t.value in ("let", "const", "var"):
+            decl_kind = t.value
             self.next()
             # P13.1 — destructuring: `let {a, b} = obj` / `let [x, y] = arr`
             nt = self.peek()
             if nt.value in ("{", "["):
-                return self.parse_destructuring()
+                return self.parse_destructuring(decl_kind)
             name = self._expect_id().value
             value = None
             if self.match("="):
                 value = self.parse_expression(1)
             self.match(";")
-            return LetDecl(name, value)
+            return LetDecl(name, value, decl_kind)
         if t.value == "function":
             return self.parse_func_decl()
         if t.value == "if":
@@ -1360,6 +1416,7 @@ class Parser:
         # P29.2 — ``for...of``: ``for (let|const|var name of expr) body``.
         # Detect the ``of`` keyword; rewind on non-for-of shapes.
         init = None
+        init_kind = None
         if self.peek().kind == "id" and self.peek().value in ("let", "const", "var"):
             save_i = self.i
             kw = self.next()  # consume let/const/var
@@ -1375,8 +1432,19 @@ class Parser:
                     return ForOf(name_tok.value, iterable, body)
                 # Not for-of: rewind and parse as classic for.
                 self.i = save_i
-        # Not a for-of: classic C-style ``for``.
-        if self.peek().value != ";":
+        # P33.R3 — classic C-style for: the init may be a
+        # ``let``/``const``/``var`` declaration (e.g.
+        # ``for (let i = 0; i < 3; i++)``).  Parse it as a
+        # LetDecl so the evaluator applies block scoping + TDZ.
+        if self.peek().kind == "id" and self.peek().value in ("let", "const", "var"):
+            decl_kind = self.next().value
+            decl_name = self._expect_id().value
+            decl_val = None
+            if self.match("="):
+                decl_val = self.parse_expression(1)
+            self.match(";")
+            init = LetDecl(decl_name, decl_val, decl_kind)
+        elif self.peek().value != ";":
             init = self.parse_expression(0)
             self.match(";")
         else:
@@ -1393,11 +1461,13 @@ class Parser:
         return For(init, cond, step, body)
 
     # P13.1 — destructuring declaration
-    def parse_destructuring(self) -> DestructuringDecl:
+    def parse_destructuring(self, kind: str = "var") -> DestructuringDecl:
         """Parse `let {a, b} = obj` or `let [x, y] = arr` (P13.1).
 
         The `let`/`const`/`var` keyword has already been consumed by
-        `parse_statement`; this method handles the opening brace or bracket.
+        `parse_statement`; this method handles the opening brace or
+        bracket.  P33.R3 — *kind* is the declaration kind so the
+        evaluator can apply block scoping + TDZ.
         """
         binding_char = self.peek().value
         self.next()  # consume "{" or "["
@@ -1437,7 +1507,7 @@ class Parser:
         self.expect("=")
         value = self.parse_expression(1)
         self.match(";")
-        return DestructuringDecl(bindings, value, keys)
+        return DestructuringDecl(bindings, value, keys, kind)
 
     # P12.2 — class declaration
     def parse_class(self) -> ClassDecl:
@@ -1484,29 +1554,116 @@ def parse_program(src: str) -> Block:
 
 
 class Env:
-    def __init__(self, scope: dict, parent: Optional[Env] = None):
+    """P33.R3 — lexical environment with block-level binding records.
+
+    Each binding is a :class:`_Binding` (value + kind + initialized
+    flag) so that ``let``/``const`` can be block-scoped with a
+    temporal dead zone (TDZ): the binding is *created* when the
+    enclosing block is entered (before its initializer runs), and
+    *initialized* when the declaration statement executes.  Reading
+    a name that is in the TDZ raises :class:`TDZError`.
+    """
+
+    def __init__(self, scope: "dict | None" = None,
+                 parent: Optional["Env"] = None):
+        # P33.R3 — the scope maps name → _Binding.  Callers may still
+        # pass a raw dict (the legacy host-globals shim); a raw dict is
+        # wrapped in a fresh record map.
+        if scope is None:
+            scope = {}
         self.scope = scope
         self.parent = parent
 
     def lookup(self, name: str) -> Any:
         e = self
         while e is not None:
-            if name in e.scope:
-                return e.scope[name]
+            b = e.scope.get(name)
+            if b is not None:
+                if isinstance(b, _Binding):
+                    if not b.initialized:
+                        raise TDZError(
+                            f"Cannot access '{name}' before initialization")
+                    return b.value
+                # Legacy raw-value entry (host-globals dict).
+                return b
             e = e.parent
         raise NameError(f"'{name}' is not defined")
 
     def set(self, name: str, value: Any) -> None:
         e = self
         while e is not None:
-            if name in e.scope:
-                e.scope[name] = value
+            b = e.scope.get(name)
+            if b is not None:
+                # P33.R3 — const bindings reject re-assignment; a
+                # ``const`` in the TDZ also rejects (the binding was
+                # declared but not initialized yet).
+                if isinstance(b, _Binding):
+                    if b.kind == "const":
+                        raise RuntimeError(
+                            f"Assignment to constant variable '{name}'")
+                    if not b.initialized:
+                        raise TDZError(
+                            f"Cannot assign to '{name}' before initialization")
+                    b.value = value
+                else:
+                    # Legacy raw-value entry: just overwrite.
+                    e.scope[name] = value
                 return
             e = e.parent
-        self.scope[name] = value
+        self.define(name, value)
 
-    def define(self, name: str, value: Any) -> None:
-        self.scope[name] = value
+    def define(self, name: str, value: Any, kind: str = "var") -> None:
+        """P33.R3 — create (or overwrite) a binding in this scope.
+
+        ``kind`` is the declaration kind ("var", "let", "const").
+        A *var* declaration at a block level hoists the binding into
+        the nearest function scope (legacy behavior); a *let* /
+        *const* declaration creates the binding in the *current*
+        block scope (the TDZ record is created here).
+        """
+        if kind in ("let", "const"):
+            self.scope[name] = _Binding(value, kind,
+                                         initialized=True)
+        else:
+            # P33.R3 — var stays function-scoped: if the current env is
+            # a block scope, hoist into the enclosing function scope.
+            target = self._func_scope()
+            target.scope[name] = _Binding(value, "var",
+                                          initialized=True)
+
+    def declare_block(self, name: str, kind: str) -> None:
+        """P33.R3 — create the TDZ record for a block-level binding.
+
+        Called at the *top* of a block (before its statements run)
+        for each ``let``/``const`` declaration inside that block.
+        The binding is not initialized yet; the matching
+        :meth:`define` call fills in the value.
+        """
+        if kind in ("let", "const"):
+            self.scope[name] = _Binding(None, kind,
+                                        initialized=False)
+
+    def _func_scope(self) -> "Env":
+        """P33.R3 — the nearest function-level scope (an env with
+        ``_is_func`` True), or this env when already at function
+        level.  Block envs are marked with ``_is_func=False``."""
+        e = self
+        while e is not None:
+            if getattr(e, "_is_func", True):
+                return e
+            e = e.parent
+        return self
+
+
+class _Binding:
+    """P33.R3 — one lexical binding record (value + kind + initialized)."""
+
+    __slots__ = ("value", "kind", "initialized")
+
+    def __init__(self, value, kind: str, initialized: bool):
+        self.value = value
+        self.kind = kind
+        self.initialized = initialized
 
 
 class _Return(Exception):
@@ -1610,27 +1767,33 @@ class Interpreter:
                     return None
             try:
                 return self.env.lookup(node.name)
+            except TDZError:
+                raise
             except NameError:
                 if node.name in self.host.globals:
                     return self.host.globals[node.name]
                 return None
         if isinstance(node, LetDecl):
+            # P33.R3 — let/const initialize the TDZ record created at
+            # block entry; var defines directly (no TDZ).  const
+            # re-assignment is rejected by Env.set.
             v = self.eval(node.value) if node.value is not None else None
-            self.env.define(node.name, v)
+            self.env.define(node.name, v, kind=node.kind)
             return v
-        # P13.1 — destructuring declaration
+        # P13.1 — destructuring declaration (P33.R3: kind-aware)
         if isinstance(node, DestructuringDecl):
             rhs = self.eval(node.value)
+            kind = node.kind
             if node.keys is not None:
                 # Object destructuring: pluck properties from a dict.
                 for key, name in zip(node.keys, node.bindings):
                     val = rhs.get(key) if isinstance(rhs, dict) else None
-                    self.env.define(name, val)
+                    self.env.define(name, val, kind=kind)
             else:
                 # Array destructuring: bind by position.
                 for i, name in enumerate(node.bindings):
                     val = rhs[i] if isinstance(rhs, (list, tuple)) and i < len(rhs) else None
-                    self.env.define(name, val)
+                    self.env.define(name, val, kind=kind)
             return None
         if isinstance(node, FuncDecl):
             f = self._make_func(node.name, node.params, node.body)
@@ -1697,6 +1860,13 @@ class Interpreter:
                     return callee(*args)
                 except _Throw:
                     raise
+                except TDZError:
+                    raise  # P33.R3 — TDZ must propagate
+                except RuntimeError as e:
+                    if "constant variable" in str(e):
+                        raise  # P33.R3 — const re-assignment must propagate
+                    self.host.log(f"call error: {e}")
+                    return None
                 except Exception as e:
                     # P4.2 — constructor call (`new Date()`): if the direct
                     # call failed, retry through the host's constructor table.
@@ -1822,20 +1992,11 @@ class Interpreter:
         if isinstance(node, Try):
             return self.eval_try(node)
         if isinstance(node, While):
-            # P29.2 — inline while evaluation (no separate method).
-            try:
-                while self.truthy(self.eval(node.cond)):
-                    try:
-                        self.eval_block(node.body)
-                    except _Break:
-                        break
-                    except _Continue:
-                        continue
-            except _Return:
-                raise
-            return None
+            return self.eval_while(node)
         if isinstance(node, For):
             return self.eval_for(node)
+        if isinstance(node, IncDec):
+            return self.eval_incdec(node)
         if isinstance(node, Return):
             v = self.eval(node.value) if node.value is not None else None
             raise _Return(v)
@@ -1874,13 +2035,32 @@ class Interpreter:
         raise TypeError(f"cannot evaluate {node}")
 
     def eval_block(self, block: Block) -> Any:
-        # P16.2 — let _Return bubble up so a function's `return` inside a
-        # nested if/else block propagates to the function-level catch in
-        # _make_func / _make_arrow.  Top-level programs catch _Return
-        # themselves (Host.execute).
-        last = None
+        """P33.R3 — evaluate a block in a *fresh* lexical scope.
+
+        Each ``Block`` node now creates its own :class:`Env` (marked
+        ``_is_func=False`` when it is a plain block, not a function
+        frame).  Before the statements run, every ``let`` /
+        ``const`` declaration directly inside the block is *declared*
+        (TDZ record created) so that a read of the name inside the
+        block before its initializer raises :class:`TDZError`
+        instead of falling through to an outer scope.  ``var``
+        declarations keep the legacy function-level hoisting (no TDZ
+        record; the binding lands in the nearest function scope).
+        """
+        old_env = self.env
+        block_env = Env({}, old_env)
+        block_env._is_func = False
+        self.env = block_env
+        # P33.R3 — create the TDZ records for direct let/const decls.
         for s in block.stmts:
-            last = self.eval(s)
+            if isinstance(s, LetDecl) and s.kind in ("let", "const"):
+                block_env.declare_block(s.name, s.kind)
+        last = None
+        try:
+            for s in block.stmts:
+                last = self.eval(s)
+        finally:
+            self.env = old_env
         return last
 
     # P29.2 — yield: raise _Yield so the generator wrapper can pause.
@@ -1899,10 +2079,13 @@ class Interpreter:
         items = self._js_iterable(iterable)
         old_env = self.env
         self.env = Env({}, old_env)  # for-of binding scope
-        self.env.define(node.target, None)
+        self.env._is_func = False
+        # P33.R3 — the loop body (typically a Block) declares its own
+        # let/const bindings; we must not shadow them from the for-of
+        # frame.  The body's own eval_block creates a child env.
         try:
             for item in items:
-                self.env.set(node.target, item)
+                self.env.define(node.target, item, kind="var")
                 try:
                     self.eval(node.body)
                 except _Break:
@@ -1998,6 +2181,46 @@ class Interpreter:
             raise _Continue()
         raise TypeError(f"unsupported unary {node.op}")
 
+    # P33.R3 — increment / decrement
+    def eval_incdec(self, node: IncDec) -> Any:
+        """P33.R3 — evaluate ``i++`` / ``i--`` / ``++i`` / ``--i``.
+
+        The operand must be a mutable binding (Ident) or a
+        property-access expression (Member / Index).  For an Ident,
+        the binding is looked up in the lexical environment; for
+        Member / Index, the property of the evaluated object is
+        mutated.  JS semantics: postfix returns the old value,
+        prefix returns the new value.
+        """
+        step = 1 if node.op == "++" else -1
+        # Resolve the target binding.
+        if isinstance(node.operand, Ident):
+            name = node.operand.name
+            old = self.env.lookup(name)
+            new = old + step if isinstance(old, (int, float)) else 0 + step
+            self.env.set(name, new)
+            return new if node.prefix else old
+        # Member / Index: mutate the property in place.
+        if isinstance(node.operand, Member):
+            obj = self.eval(node.operand.obj)
+            prop = node.operand.prop
+            if isinstance(obj, dict):
+                old = obj.get(prop, 0)
+                new = (old + step) if isinstance(old, (int, float)) else 0 + step
+                obj[prop] = new
+                return new if node.prefix else old
+            return None
+        if isinstance(node.operand, Index):
+            obj = self.eval(node.operand.obj)
+            idx = self.eval(node.operand.index)
+            if isinstance(obj, list) and 0 <= idx < len(obj):
+                old = obj[idx]
+                new = (old + step) if isinstance(old, (int, float)) else 0 + step
+                obj[idx] = new
+                return new if node.prefix else old
+            return None
+        raise TypeError("++/-- requires a variable or property access")
+
     def eval_logical(self, node: Logical) -> Any:
         if node.op == "&&":
             l = self.eval(node.left)
@@ -2035,12 +2258,36 @@ class Interpreter:
                 return lambda *a: obj.next()
             return None
         if isinstance(obj, DomElement):
-            return self.host.eval_element_prop(obj, prop)
+            v = self.host.eval_element_prop(obj, prop)
+            if v is not None:
+                return v
+            # P30.2 — parentElement / children / tagName are @property;
+            # P30.3 — method surface (appendChild, addEventListener, …) is
+            # Python methods.  Fall back to getattr for both.
+            attr = getattr(obj, prop, None)
+            return attr
         if isinstance(obj, dict):
             if "__doc__" in obj:
                 fn = self.host.eval_doc_method(obj["__doc__"], prop)
-                return fn
+                if fn is not None:
+                    return fn
+                # P30.1 — document.querySelector (full CSS selector, first match).
+                if prop == "querySelector":
+                    root = obj["__doc__"]
+                    def qs(sel):
+                        ns = root.query_selector_all(sel or "")
+                        return DomElement(ns[0], self) if ns else None
+                    return qs
+                return None
             if "__el__" in obj and prop not in ("get", "set", "prop", "__el__"):
+                if prop in ("add", "remove", "toggle", "contains"):
+                    # P30.3 — classList method calls (obj = classList dict).
+                    fn = obj.get(prop)
+                    if callable(fn):
+                        return lambda *a, _fn=fn: _fn(*a)
+                    return None
+                if prop == "value":
+                    return obj.get("value")
                 return obj.get(prop)
             return obj.get(prop)
         if isinstance(obj, list):
@@ -2124,12 +2371,44 @@ class Interpreter:
             raise
         return None
 
-    def eval_for(self, node: For) -> Any:
-        # P16.2 — `return` inside a for body must propagate; _Break / _Continue
-        # are loop-local.
-        if node.init is not None:
-            self.eval(node.init)
+    # P33.R3 — helper: create a child block-scope env with the
+    # ``_is_func`` flag, for statements that need their own lexical
+    # frame (loop heads, catch clauses, …).
+    def _block_env(self) -> Env:
+        e = Env({}, self.env)
+        e._is_func = False
+        return e
+
+    def eval_while(self, node: While) -> Any:
+        # P16.2 — `return` inside a while body must propagate; _Break /
+        # _Continue are loop-local.
         try:
+            while self.truthy(self.eval(node.cond)):
+                try:
+                    self.eval_block(node.body)
+                except _Break:
+                    break
+                except _Continue:
+                    continue
+        except _Return:
+            raise
+        return None
+
+    def eval_for(self, node: For) -> Any:
+        """P33.R3 — classic ``for`` with a block-scoped init frame.
+
+        The init expression (typically a ``let``/``const`` declaration)
+        and the loop body share a fresh block scope; the loop counter
+        is not visible after the loop ends.  ``var`` inits keep the
+        legacy function-level hoisting (no fresh frame for the var
+        binding, but the loop body still gets its own block scope).
+        """
+        old_env = self.env
+        loop_env = self._block_env()
+        self.env = loop_env
+        try:
+            if node.init is not None:
+                self.eval(node.init)
             while True:
                 if node.cond is not None and not self.truthy(self.eval(node.cond)):
                     break
@@ -2138,11 +2417,13 @@ class Interpreter:
                 except _Break:
                     break
                 except _Continue:
-                    pass
+                    continue
                 if node.step is not None:
                     self.eval(node.step)
         except _Return:
+            self.env = old_env
             raise
+        self.env = old_env
         return None
 
     def _js_iterable(self, v) -> list:
@@ -2208,70 +2489,77 @@ class Interpreter:
         via ``yield`` so that ``for...of`` over the ToyGenObject and
         manual ``.next()`` calls observe every yielded value in
         program order.  Other statements run through the interpreter.
-        """
-        interp = self
 
-        def _drive_stmt(s):
+        P33.R3 — the generator uses a *dedicated* :class:`Interpreter`
+        instance (sharing the same host) so that its env mutations do
+        not interfere with the outer execution context.  The outer
+        interpreter's ``env`` attribute is never touched.
+        """
+        host = self.host
+
+        def _drive_stmt(gen_interp, s):
             if isinstance(s, YieldExpr):
-                yield (interp.eval(s.value) if s.value is not None else None)
+                yield (gen_interp.eval(s.value) if s.value is not None else None)
             elif isinstance(s, While):
-                while interp.truthy(interp.eval(s.cond)):
-                    yield from _drive_block(s.body)
+                while gen_interp.truthy(gen_interp.eval(s.cond)):
+                    yield from _drive_block(gen_interp, s.body)
             elif isinstance(s, For):
                 if s.init is not None:
-                    interp.eval(s.init)
+                    gen_interp.eval(s.init)
                 while True:
-                    if s.cond is not None and not interp.truthy(interp.eval(s.cond)):
+                    if s.cond is not None and not gen_interp.truthy(gen_interp.eval(s.cond)):
                         break
-                    yield from _drive_block(s.body)
+                    yield from _drive_block(gen_interp, s.body)
                     if s.step is not None:
-                        interp.eval(s.step)
+                        gen_interp.eval(s.step)
             elif isinstance(s, ForOf):
-                items = interp._js_iterable(interp.eval(s.iterable))
+                items = gen_interp._js_iterable(gen_interp.eval(s.iterable))
                 for item in items:
-                    interp.env.set(s.target, item)
-                    yield from _drive_block(s.body)
+                    gen_interp.env.set(s.target, item)
+                    yield from _drive_block(gen_interp, s.body)
             elif isinstance(s, If):
-                if interp.truthy(interp.eval(s.cond)):
-                    yield from _drive_block(s.then)
+                if gen_interp.truthy(gen_interp.eval(s.cond)):
+                    yield from _drive_block(gen_interp, s.then)
                 elif s.else_ is not None:
-                    yield from _drive_block(s.else_)
+                    yield from _drive_block(gen_interp, s.else_)
             else:
-                interp.eval(s)
+                gen_interp.eval(s)
 
-        def _drive_block(blk_node):
+        def _drive_block(gen_interp, blk_node):
             if isinstance(blk_node, Block):
                 for s in blk_node.stmts:
-                    yield from _drive_stmt(s)
+                    yield from _drive_stmt(gen_interp, s)
             else:
-                yield from _drive_stmt(blk_node)
+                yield from _drive_stmt(gen_interp, blk_node)
 
         def gen_driver(*args):
             def py_gen():
-                env = Env(interp.host.globals, None)
+                # P33.R3 — dedicated interpreter for the generator body;
+                # its env mutations never touch the outer interpreter.
+                gen_interp = Interpreter(host)
+                gen_interp.env = Env(host.globals, None)
+                gen_interp.env._is_func = True  # P33.R3 — generator frame is a function scope
                 for i, p in enumerate(params):
-                    env.define(p, args[i] if i < len(args) else None)
-                interp_old = interp.env
-                interp.env = env
+                    gen_interp.env.define(p, args[i] if i < len(args) else None)
                 try:
-                    yield from _drive_block(body)
+                    yield from _drive_block(gen_interp, body)
                 except _Return as r:
                     return r.value
-                finally:
-                    interp.env = interp_old
             return ToyGenObject(py_gen())
 
         return gen_driver
 
     def _make_func(self, name, params, body):
         func_env = Env({}, self.env)
+        func_env._is_func = True  # P33.R3 — function-level scope marker
         closure = Interpreter(self.host)
         closure.env = func_env
 
         def f(*args):
             inner = Env({}, func_env)
+            inner._is_func = True  # P33.R3 — the call frame is a function scope
             for p, a in zip(params, args):
-                inner.scope[p] = a
+                inner.scope[p] = _Binding(a, "var", True)
             # P29.2 — `arguments`: the actual call-arg list (JS: iterable
             # indexed object).  Needed so `for (let v of arguments)` works.
             inner.define("arguments", list(args))
@@ -2299,13 +2587,15 @@ class Interpreter:
         For block bodies, a bare block is evaluated (uses explicit return).
         """
         func_env = Env({}, self.env)
+        func_env._is_func = True  # P33.R3 — closure captures the function scope
         closure = Interpreter(self.host)
         closure.env = func_env
 
         def f(*args):
             inner = Env({}, func_env)
+            inner._is_func = True  # P33.R3 — the call frame is a function scope
             for p, a in zip(params, args):
-                inner.scope[p] = a
+                inner.scope[p] = _Binding(a, "var", True)
             # P29.2 — arrow `arguments`: same as _make_func.
             inner.define("arguments", list(args))
             saved = closure.env
@@ -2331,8 +2621,12 @@ class Interpreter:
 
 
 class DomElement:
-    def __init__(self, node: DomNode):
+    def __init__(self, node: DomNode, host: Optional["Host"] = None):
         self.node = node
+        # P30.4 — the owning Host owns the listener registry (elements are
+        # re-wrapped frequently, so the registry is keyed by node, not by
+        # DomElement identity).
+        self._host_ref = host
 
     @property
     def id(self) -> Optional[str]:
@@ -2364,6 +2658,154 @@ class DomElement:
             return self.node.attr("checked") is not None
         return None
 
+    @property
+    def children(self) -> list["DomElement"]:
+        """P30.2 — element children as DomElements (document order)."""
+        return [DomElement(c, self._host_ref) for c in self.node.children if c.is_element()]
+
+    @property
+    def parentElement(self) -> Optional["DomElement"]:
+        """P30.2 — nearest element parent, or None."""
+        p = self.node.parent
+        while p is not None and not p.is_element():
+            p = p.parent
+        return DomElement(p, self._host_ref) if p is not None else None
+
+    @property
+    def tagName(self) -> str:
+        """P30.2 — the element's tag (lowercase)."""
+        return (self.node.tag or "").lower()
+
+    # --- P30.2 — node mutation (triggers re-layout on next render) ---------
+
+    def append_child(self, child: "DomElement") -> "DomElement":
+        self.node.append_child(child.node)
+        return child
+
+    def insert_before(self, child: "DomElement", ref) -> "DomElement":
+        ref_node = ref.node if isinstance(ref, DomElement) else ref
+        self.node.insert_before(child.node, ref_node)
+        return child
+
+    def remove_child(self, child: "DomElement") -> "DomElement":
+        self.node.remove_child(child.node)
+        return child
+
+    def remove(self) -> None:
+        """P30.2 — element.remove(): detach from parent."""
+        p = self.node.parent
+        if p is not None:
+            p.remove_child(self.node)
+
+    def replace_child(self, new_node: "DomElement", old_node: "DomElement") -> "DomElement":
+        self.node.replace_child(new_node.node, old_node.node)
+        return old_node
+
+    def set_attribute(self, name: str, value: Any) -> None:
+        """P30.3 — setAttribute(name, value): stringifies the value
+        (None → "") so attr round-trips through the renderer."""
+        v = "" if value is None else str(value)
+        self.node.set_attr(str(name), v)
+
+    def get_attribute(self, name: str):
+        return self.node.attr(str(name))
+
+    @property
+    def dataset(self) -> dict:
+        """P30.3 — el.dataset: {k: v} for every data-* attribute
+        (data-foo-bar → fooBar, per the DOM spec's camel-case mapping)."""
+        out: dict = {}
+        for k, v in (self.node.attrs or {}).items():
+            if k.startswith("data-"):
+                raw = k[5:]
+                # data-foo-bar → fooBar (JS dataset camelCase mapping).
+                parts = raw.split("-")
+                key = parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:])
+                out[key] = v
+        return out
+
+    # --- P30.3 — classList --------------------------------------------------
+
+    def _class_list_obj(self) -> dict:
+        """Toy ClassList: read-only view over the class attribute with
+        add / remove / toggle / contains (JS style returns boolean)."""
+        node = self.node
+
+        def classes() -> list:
+            return (node.attr("class") or "").split()
+
+        def set_classes(vals: list) -> None:
+            node.set_attr("class", " ".join(vals))
+
+        def add(*names):
+            cur = list(classes())
+            for n in names:
+                s = str(n)
+                if s not in cur:
+                    cur.append(s)
+            set_classes(cur)
+            return None
+
+        def remove(*names):
+            cur = [c for c in classes() if str(c) not in [str(n) for n in names]]
+            set_classes(cur)
+            return None
+
+        def contains(name) -> bool:
+            return str(name) in classes()
+
+        def toggle(name):
+            present = contains(name)
+            if present:
+                remove(name)
+            else:
+                add(name)
+            return not present
+
+        return {"__classlist__": True, "add": add, "remove": remove,
+                "contains": contains, "toggle": toggle, "value": classes}
+
+    @property
+    def classList(self) -> dict:
+        return self._class_list_obj()
+
+    # --- P30.4 — custom events ------------------------------------------------
+
+    def add_event_listener(self, event_name: str, listener) -> None:
+        """P30.4 — register a custom-event listener on this element.
+        ``listener`` is a JS function (closure); called with the event
+        dict when :meth:`dispatch_event` fires the same event name."""
+        registry = self._listeners_of()
+        registry.setdefault(str(event_name), []).append(listener)
+
+    def _listeners_of(self) -> dict:
+        """The Host-owned listener registry for this element's node
+        (keyed by node so re-wrapped elements keep the same listeners)."""
+        host = self._host_ref
+        if host is None:
+            return {}
+        return host._listeners.setdefault(self.node, {})
+
+    def dispatch_event(self, event_name: str, detail: Any = None) -> bool:
+        """P30.4 — fire a custom event synchronously: every listener
+        registered for *event_name* on this element is called in
+        registration order with an event object
+        ``{"type": …, "target": <this element>, "detail": …}``.
+        Returns ``True`` (cancelable events are not cancelled in the
+        toy engine)."""
+        ev = {"type": str(event_name), "target": self, "detail": detail}
+        registry = self._listeners_of()
+        for fn in list(registry.get(str(event_name), [])):
+            try:
+                r = fn(ev)
+                if r is False:
+                    # toy: report cancel but keep calling remaining handlers
+                    ev["defaultPrevented"] = True
+            except Exception as e:
+                if self._host_ref is not None:
+                    self._host_ref.log(f"listener error: {e}")
+        return True
+
 
 class Host:
     """Binds the JS engine to a DOM tree + host functions + sandbox rules."""
@@ -2373,6 +2815,8 @@ class Host:
         self.log = log
         self.logs: list[str] = []  # P1.2 — collected log lines
         self.element_table: dict = {}
+        # P30.4 — listener registry: element node -> {event_name: [fn, …]}
+        self._listeners: dict[DomNode, dict] = {}
         self._build_element_table()
         self._class_registry: dict[str, ToyClass] = {}  # P12.2
         self.globals: dict = {
@@ -2409,6 +2853,14 @@ class Host:
         self._raf_callbacks: list = []  # P1.2
         self._style_cache: dict = {}
         self._promise_counter = 0
+        # P33.P1 — Web API globals (localStorage / WebSocket / navigator /
+        # location / history / URL / URLSearchParams).  Imported lazily so
+        # that a circular-import problem between js and web_api never fires.
+        try:
+            import web_api as _web_api
+            _web_api.register_web_api(self)
+        except Exception:
+            pass
 
     def _interp(self) -> "Interpreter":
         """P12.2 — factory for a fresh Interpreter bound to this Host."""
@@ -2418,6 +2870,20 @@ class Host:
 
     def _document_obj(self) -> dict:
         return {"__doc__": self.root}
+
+    # P30.1 — full-selector document accessors (reuse css.Selector engine).
+    def _doc_query_selector_all(self, selector: str):
+        return self.root.query_selector_all(selector)
+
+    def _doc_query_selector(self, selector: str):
+        out = self.root.query_selector_all(selector)
+        return DomElement(out[0]) if out else None
+
+    def _doc_create_element(self, tag: str) -> "DomElement":
+        """P30.3 — document.createElement(tag): a fresh element node,
+        not yet attached to the tree (attach via appendChild etc.)."""
+        n = DomNode.element(str(tag).lower())
+        return DomElement(n)
 
     def _console_obj(self) -> dict:
         def log(*args):
@@ -3004,7 +3470,7 @@ class Host:
             if n.is_element():
                 eid = n.attr("id")
                 if eid:
-                    self.element_table[eid] = DomElement(n)
+                    self.element_table[eid] = DomElement(n, self)
                 tag = (n.tag or "").lower()
                 if tag == "iframe":
                     src = n.attr("src") or ""
@@ -3128,21 +3594,94 @@ class Host:
             return get_by_id
         if method == "querySelectorAll":
             def qsa(sel: str):
-                return doc.query_selector_all(sel)
+                # P30.1 — full CSS selector engine (css.Selector).
+                return [DomElement(n, self) for n in doc.query_selector_all(sel)]
             return qsa
+        # P30.1 — document.querySelector (full CSS selector, first match).
+        if method == "querySelector":
+            def qs(sel: str):
+                nodes = doc.query_selector_all(sel)
+                return DomElement(nodes[0], self) if nodes else None
+            return qs
+        # P30.3 — document.createElement(tag) → Detached element wrapper.
+        if method == "createElement":
+            def ce(tag: str):
+                n = DomNode.element(str(tag).lower())
+                return DomElement(n, self)
+            return ce
         return None
 
     def call_method(self, obj, method: str, args: list):
         if obj is None:
             return None
-        if isinstance(obj, DomElement):
-            return self.eval_element_method(obj, method, args)
         if isinstance(obj, (ToyGenObject, ToyIterator)):
             # P29.2 — generator objects + toy iterators: route .next / .return.
             if method == "next":
                 return obj.next(args[0] if args else None)
             if method == "return":
                 return {"done": True}
+            return None
+        if isinstance(obj, DomElement):
+            # P30.2/P30.3/P30.4 — element method surface: legacy scroll
+            # logging first, then the full Python method set
+            # (appendChild / removeChild / insertBefore / replaceChild /
+            # addEventListener / dispatchEvent / setAttribute / getAttribute /
+            # classList methods / remove …).
+            r = self.eval_element_method(obj, method, args)
+            if r is not None:
+                return r
+            # P30.2 — appendChild / removeChild / insertBefore / replaceChild
+            # / setAttribute / getAttribute / addEventListener / dispatchEvent
+            # / remove — mutate the underlying DOM node directly.
+            if method == "appendChild" and args:
+                child = args[0]
+                if isinstance(child, DomElement):
+                    obj.append_child(child)
+                    return child
+                return None
+            if method == "removeChild" and args:
+                child = args[0]
+                if isinstance(child, DomElement):
+                    removed = obj.remove_child(child)
+                    return removed
+                return None
+            if method == "insertBefore" and len(args) >= 1:
+                child = args[0]
+                ref = args[1] if len(args) > 1 else None
+                if isinstance(child, DomElement):
+                    return obj.insert_before(child, ref)
+                return None
+            if method == "replaceChild" and len(args) >= 2:
+                new_node, old_node = args[0], args[1]
+                if isinstance(new_node, DomElement) and isinstance(old_node, DomElement):
+                    return obj.replace_child(new_node, old_node)
+                return None
+            if method == "setAttribute" and len(args) >= 2:
+                obj.set_attribute(args[0], args[1])
+                return None
+            if method == "getAttribute" and args:
+                return obj.get_attribute(args[0])
+            if method == "addEventListener" and len(args) >= 2:
+                obj.add_event_listener(args[0], args[1])
+                return None
+            if method == "dispatchEvent" and args:
+                detail = args[1] if len(args) > 1 else None
+                return obj.dispatch_event(args[0], detail)
+            if method == "remove":
+                obj.remove()
+                return None
+            # classList add/remove/toggle/contains live on the classList
+            # dict, not the element — but `el.classList.add(...)` reaches us
+            # here only when someone called .add on the element itself;
+            # delegate to the classList view for convenience.
+            if method in ("add", "remove", "toggle", "contains") and hasattr(obj, "_class_list_obj"):
+                fn = obj._class_list_obj().get(method)
+                if callable(fn):
+                    try:
+                        out = fn(*args)
+                        return out
+                    except Exception as e:
+                        self.host.log(f"method error: {method}: {e}")
             return None
         if isinstance(obj, dict):
             # P4.2 — regexp dict: route .test / .exec / .replace / .split
@@ -3167,8 +3706,6 @@ class Host:
             if callable(val):
                 return val(*args)
             return None
-        if isinstance(obj, DomElement):
-            return self.eval_element_method(obj, method, args)
         # P4.2 — generic object method dispatch: for Python objects like
         # _ToyDate or any non-standard type, try getattr(obj, method).
         # P10.2 — ToyMap / ToySet classes route .size / .get / .set /
@@ -3553,6 +4090,8 @@ class Host:
         if prop == "id":
             return el.id
         if prop in ("textContent", "innerText", "innerHTML"):
+            # P30.2 — textContent reflects the live tree, so re-wrap the
+            # element to drop any stale view and read fresh.
             return el.node.text_content()
         if prop == "style":
             eid = el.id or f"__anon_{id(el.node)}"
@@ -3606,6 +4145,19 @@ class Host:
             import re as _re4
             m = _re4.search(r"(?:^|;)\s*-webkit-appearance\s*:\s*([^;]+)", style)
             return m.group(1).strip() if m else "auto"
+        # P30.3 — classList: dict with add / remove / contains / toggle /
+        # value, so `el.classList.contains('x')` routes through call_method
+        # (dict-dispatch) with method == "contains".
+        if prop == "classList":
+            return el._class_list_obj()
+        # P30.3 — element dataset: {k: v} for every data-* attribute.
+        if prop == "dataset":
+            return el.dataset
+        # P30.2 — structural element properties (getattr fallback in
+        # eval_member covers these; returned here so assignment checks stay
+        # uniform).
+        if prop in ("children", "parentElement", "tagName"):
+            return getattr(el, prop, None)
         return None
 
     def _layout_box_for(self, el: "DomElement"):
@@ -3695,6 +4247,12 @@ class Host:
         elif prop == "value":
             # P13.4 — set the <input> value attribute.
             node.set_attr("value", str(value))
+        elif prop == "className":
+            # P30.3 — el.className = "a b" writes the class attribute.
+            node.set_attr("class", str(value))
+        elif prop in ("children", "parentElement", "tagName"):
+            # P30.2 — read-only structural properties: assignment is a no-op.
+            return
         else:
             node.set_attr(prop, str(value))
 
@@ -3772,6 +4330,7 @@ class Host:
             program = parse_program(code)
             interpreter = Interpreter(self)
             interpreter.env = Env(self.globals, None)
+            interpreter.env._is_func = True  # P33.R3 — top level = function scope
             interpreter.eval_block(program)
         except _Return:
             pass
@@ -3782,30 +4341,36 @@ class Host:
             self.log(f"JS error: {e}")
 
     def eval(self, code: str):
-        """P9.3 — Evaluate a JS expression and return the result value."""
+        """P9.3 — Evaluate a JS expression and return the result value.
+
+        P33.R3 — errors (TDZError, RuntimeError from const re-assign,
+        NameError, TypeError, SyntaxError, ZeroDivisionError)
+        propagate to the caller so block-scope / TDZ / const
+        tests can assert on them.  The *host* ``execute`` path keeps
+        its legacy log-and-swell behavior.
+        """
+        interpreter = Interpreter(self)
+        interpreter.env = Env(self.globals, None)
+        interpreter.env._is_func = True  # P33.R3
+        # P33.R3 — capture the last statement's value: wrap the code
+        # in a function that returns the result of the last
+        # expression, then call it.  The legacy semantics are
+        # preserved (the last expression's value is the return).
+        wrapped = f"((function() {{ {code} }}))()"
+        program = parse_program(wrapped)
         try:
-            program = parse_program(code)
-            interpreter = Interpreter(self)
-            interpreter.env = Env(self.globals, None)
-            # Wrap in an assignment so the result is captured.
-            from js import _Return as _Ret
-            class _Capture:
-                val = None
-            cap = _Capture()
-            # Re-parse: treat the whole thing as a block; the last expression's
-            # value is the block result in many toy JS engines, but here we
-            # explicitly capture by wrapping in a function that returns it.
-            wrapped = f"((function() {{ {code} }}))()"
-            program2 = parse_program(wrapped)
-            interpreter.eval_block(program2)
+            interpreter.eval_block(program)
         except _Return as r:
             return r.value
         except _Throw as exc:
-            # P11.2 — uncaught throw in eval: log and return None.
             self.log(f"uncaught throw: {exc.value}")
-            return None
-        except (NameError, TypeError, SyntaxError, ZeroDivisionError) as e:
-            self.log(f"JS error: {e}")
+            raise
+        except TDZError:
+            raise
+        except RuntimeError:
+            raise
+        except (NameError, TypeError, SyntaxError, ZeroDivisionError):
+            raise
         return None
 
     def flush_timers(self) -> None:

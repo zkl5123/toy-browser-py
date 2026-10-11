@@ -1,31 +1,53 @@
 # toy-browser-py — Python 版浏览器内核（纯标准库）
 
 `toy-browser`（Rust 版）的 Python 重实现。零外部依赖，仅使用 Python 3.11
-标准库。实现完整的"HTML 到像素"渲染管线 + 玩具 JS 引擎。
+标准库。实现完整的"HTML 到像素"渲染管线 + 玩具 JS 引擎 + CJK 真实字体渲染
+（P33.R1：simhei/simsun/msyh TTF/TTC 解析、逐字 CJK 回退、8-bit 字形 mask
+缓存、12 MiB 资源上限）+ 子资源并发拉取 + GUI 全内容滚动（P33.R2）
++ JS 块作用域 / TDZ（P33.R3）
++ 布局验证 position/z-index/transform/overflow/grid（P33.R4）
++ 增量布局 dirty 子树标记 + 区域级重光栅化 + 布局热点优化（P33.R5）。
 
 ## 架构
 
 ```
 toy-browser-py/
-├── main.py            CLI 入口（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress）
+├── main.py            CLI 入口（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress / P32 --devtools）
 ├── dom.py             P24 兼容 shim（转发 html_pkg；import dom / from dom import Node 不变）
 ├── html_pkg/          P24 HTML 解析器子模块（node / entities / tokenize / build，字节流输入）
-├── css.py             CSS 解析 + 级联 + 选择器（后代/子/多类）+ @keyframes
+├── css.py             CSS 解析 + 级联 + 选择器（后代/子/多类/tag.class 复合）+ @keyframes
 ├── layout.py          盒模型布局（块/内联/文本/占位/flex/grid + 命中测试）
 ├── paint.py           位图 + 颜色混合
 ├── paint_engine.py    显示列表 + CPU 光栅化 + 图片像素渲染
-├── text.py            8×8 位图字体 + 文本测量/换行/绘制（P17 TTF 度量）
-├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册
-├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）
-├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体）
-├── net.py             P21/P22/P23 URL + HTTP/1.1 客户端 + 重定向/gzip/chunked + 缓存 + TLS + 进度
+├── text.py            8×8 位图字体 + 文本测量/换行/绘制（P17 TTF 度量 + P33.R1 CJK 逐字回退 + 8-bit mask 缓存）
+├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册 + P33.R1 CJK 回退面注册
+├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）+ P33.R1 TTC/CFF/资源治理
+├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体 + P33.R1 blit_glyph_mask 整型混合）
+├── mem_guard.py       P33.R1 内存治理：6 GB 进程堆硬上限 + 12 MiB 单面文件门控（tracemalloc，纯 stdlib）
+├── net.py             P21/P22/P23/P32 URL + HTTP/1.1 + 重定向/gzip/chunked + 缓存 + TLS + 进度 + Cookie 挂载 + 错误页分类
 ├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
-├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate
+├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate + P32 DevTools
 ├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
-├── gui.py             P31 tkinter GUI 外壳（零依赖，多标签页；P21 http 加载）
-├── test.py            603 条测试（python test.py）
+├── session.py         P32 会话层：HistoryStore + BookmarkStore（JSON 原子持久化）
+├── cookie_store.py    P32 Cookie 玩具：parse_set_cookie + CookieJar（无安全边界）
+├── web_api.py         P33.P1 Web API：localStorage / WebSocket / navigator / location / history / URL / URLSearchParams
+├── gui.py             P31/P32/P33 tkinter GUI 外壳（多标签页；http 加载；about/bookmarks/view-source；历史/书签；事件模型 + 焦点 + 表单）
+├── ARCHITECTURE.md    P32 M4 架构文档 + P33.R1 CJK 渲染层 + 内存治理（模块边界 + 数据流 + 扩展点）
+├── test.py            807 条测试（python test.py）
+├── test_r1.py         P33.R1 CJK 渲染 28 条测试
+├── test_mem.py        P33.R1 内存治理 12 条测试
+├── test_r2.py         P33.R2 网络并发 + GUI 滚动 12 条测试
+├── test_r3.py         P33.R3 JS 块作用域 + TDZ 12 条测试
+├── test_r4.py         P33.R4 布局验证（position/z-index/transform/overflow/grid）24 条测试
+├── test_r5.py         P33.R5 增量布局 + 区域光栅化 + 布局优化 9 条测试
+├── test_web_api.py    P33.P1 Web API 22 条测试（localStorage/WebSocket/navigator/location/history/URL）
+├── test_p2.py         P33.P2 CORS/CSP + Canvas 2D + 性能基准 21 条测试
+├── test_p3.py         P33.P3 @font-face + SVG/媒体占位渲染 10 条测试
+├── LICENSE            MIT 许可证
+├── CONTRIBUTING.md    贡献指南（代码风格 + 测试规范 + 里程碑标签）
+├── CHANGELOG.md       变更记录（P33.R1–R5 + P1–P3）
 ├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P29 + P31 全部完成）
+├── ROADMAP.md         改进路线图（P0–P32 + P33.R1/R2/R3/R4/R5/P1/P2/P3 全部完成，807/807）
 └── demo.html          示例文档
 ```
 
@@ -913,7 +935,7 @@ convert out.ppm out.png
 python test.py
 ```
 
-**603 条测试**，覆盖：
+**657 条测试**，覆盖：
 
 | 类别 | 测试 |
 |---|---|
@@ -999,6 +1021,7 @@ python test.py
 | Flexbox 完整化（P27） | `p27_flex_shrink_proportional`、`p27_flex_shrink_weighted`、`p27_flex_basis_explicit`、`p27_flex_wrap_two_lines`、`p27_flex_wrap_single_line_fits`、`p27_align_items_start`、`p27_align_items_end`、`p27_align_self_overrides`、`p27_justify_content_space_evenly`、`p27_justify_content_space_around`、`p27_flex_direction_column_reverse`、`p27_flex_order_reorders`、`p27_min_width_auto_floor`、`p27_flex_basis_zero`、`p27_flex_shrink_zero_keeps_size`、`p27_align_content_center_multi_line`、`p27_flex_row_reverse`、`p27_flex_grow_shrink_basis_shorthand`、`p27_wrap_reverse_direction`、`p27_flex_full_pipeline_render` |
 | 表单与交互（P28） | `p28_input_checkbox_render`、`p28_input_radio_render`、`p28_select_option_render`、`p28_file_input_render`、`p28_textarea_default_size`、`p28_form_get_query_string`、`p28_form_post_body`、`p28_form_select_multiple`、`p28_form_radio_group`、`p28_form_action_url_resolution`、`p28_required_validation`、`p28_required_checkbox`、`p28_submit_blocked_by_validation`、`p28_tab_order_natural`、`p28_tab_order_explicit`、`p28_focus_marks_box`、`p28_checkbox_toggle_render_diff`、`p28_full_pipeline_form_render`、`p28_js_element_value_prop`、`p28_form_hidden_field`、`p28_required_select` |
 | JS 引擎补全（P29） | `p29_regexp_literal_test`、`p29_regexp_literal_flags`、`p29_regexp_exec_groups`、`p29_string_match_regexp`、`p29_string_replace_regexp`、`p29_new_regexp_ctor`、`p29_for_of_array`、`p29_for_of_string_chars`、`p29_for_of_generator`、`p29_generator_next_done`、`p29_generator_expression_form`、`p29_generator_yield_in_loop`、`p29_for_of_map_iterable`、`p29_symbol_iterator_protocol`、`p29_math_trig_log`、`p29_math_constants`、`p29_json_stringify_nested`、`p29_json_parse_stringify_roundtrip`、`p29_array_tail_methods`、`p29_string_tail_methods` |
+| DOM API 补全（P30） | `p30_qsel_simple_selectors`、`p30_qsel_descendant_child`、`p30_qsel_comma_list`、`p30_qsel_child_pseudos`、`p30_qsel_hover_no_state`、`p30_qsel_js_query_selector`、`p30_qsel_scoped_include_self`、`p30_append_child_mutation`、`p30_remove_child_mutation`、`p30_insert_before_mutation`、`p30_mutation_renders`、`p30_create_element_detached`、`p30_classlist_add_toggle`、`p30_dataset_camelcase`、`p30_set_get_attribute`、`p30_custom_event_two_listeners`、`p30_custom_event_isolated`、`p30_custom_event_mutation_visible`、`p30_full_pipeline_regression`、`p30_qsel_js_mutation_roundtrip` |
 
 ## 改进路线图
 
@@ -1157,26 +1180,41 @@ python test.py
 - [x] P29.2 迭代器协议 + 生成器（`for...of` + `Symbol.iterator` 玩具 `"@@iterator"` + `function*`/`yield` 递归驱动器 + Map/Set 可迭代 + 函数内 `arguments` 列表）
 - [x] P29.3 Date/Math/JSON 补全（`Date.parse`/`UTC` 毫秒语义 + 三角/对数/常量 + 嵌套往返 + `Array.fill`/`findLast`/`toReversed`/`toSorted` + `String.at`/`codePointAt`）
 - [x] P29.4 测试扩充至 603 条（测试总数 583 → 603）
+- [x] P30.1 querySelector / querySelectorAll 全选择器引擎（复用 `css.Selector`：简单/后代/子/逗号/伪类）
+- [x] P30.2 节点增删改 + 失效重绘（`append_child` / `insert_before` / `remove_child` / `replace_child` + 实时 `textContent` + 重布局重绘）
+- [x] P30.3 `createElement` / `classList` / `dataset` / `setAttribute` / `getAttribute`
+- [x] P30.4 自定义事件 `addEventListener` / `dispatchEvent`（Host 按节点分区监听器注册表）
+- [x] P30.5 全管线回归 + M3 闭环（测试总数 603 → 623）
+- [x] P32.1 历史记录（`session.HistoryStore`：持久化访问日志 + back/forward 栈）
+- [x] P32.2 书签（`session.BookmarkStore`：增删 + `about:bookmarks` 渲染）
+- [x] P32.3 Cookie 玩具（`cookie_store.CookieJar`：Set-Cookie 存储 + 请求回带，无安全边界）
+- [x] P32.4 迷你 DevTools（`browser.devtools_report` + `main.py --devtools`：DOM 树 + computed style + 选择器命中来源）
+- [x] P32.5 统一错误页（`net.categorize_fetch_error` + `error_page_html`：DNS/连接/超时/非法URL/重定向/HTTP 分类文案）
+- [x] P32.6 `about:blank` / `view-source:` 玩具（`gui._about_page` / `_view_source_page`）
+- [x] P32.7 M4 架构文档（`ARCHITECTURE.md`：模块边界 + 数据流 + 扩展点 + 边界不变式）
+- [x] P32.8 测试总数 623 → **657**（M4 收官）
 
 ## 与 Rust 版的对应关系
 
 | Python 模块 | Rust 模块 | 说明 |
 |---|---|---|
 | `dom.py` | `dom.rs` | P24 兼容 shim（转发 html_pkg；Node 与 html_pkg.node.Node 同一类对象） |
-| `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
-| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链；P26.3：parent_height_px 百分比高度解析链） |
+| `html_pkg/` | （新增） | P24 HTML 解析器子模块：node（Node + VOID_TAGS + P30 节点增删改 + 全选择器查询）/ entities（P24.1 完整表 + 数字引用）/ tokenize（P24.2/5 词法 + BOM 嗅探 + 原始文本模式）/ build（P24.2/3/4 容错树构建：void / 隐式闭合 / adoption agency / foster parenting / 大小写不敏感） |
+| `css.py` | `css.rs` | CSS 解析 + 级联 + 选择器（P25：specificity 四元组 / !important 来源级联 / inherit·initial·unset / shorthand 展开 / em/% 计算值链；P26.3：parent_height_px 百分比高度解析链；P32.4：`Rule.selector_text` / `Selector.selector_text` DevTools 溯源字段 + 修复 `tag.class` 复合选择器） |
 | `layout.py` | `layout.rs` | 盒模型 + 命中测试（P26：margin 折叠 / BFC 浮动包含 / min-max 约束 / width:auto 分配；P28：表单控件默认盒 + 状态字段） |
 | `paint.py` | `paint.rs` | 位图 + 颜色 |
 | `paint_engine.py` | `paint.rs`（显示列表部分） | 显示列表 + 光栅化 |
 | `text.py` + `font.py` | `text.rs` + `font.rs` | 8×8 位图字体 |
 | `rasterize.py` | （新增） | P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体） |
 | `ttf_font.py` | （新增） | P17 TTF/OTF 解析器 + P20 字重/回退链 |
-| `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派；P29：正则字面量 + `for...of`/`function*`/`yield` 生成器 + 迭代器协议 + Map/Set 可迭代 + 三角/对数常量 + Array/String 残尾方法） |
-| `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate |
+| `js.py` | `js.rs` | 玩具 JS 引擎（Math/JSON/Date/RegExp + 通用对象分派；P29：正则字面量 + `for...of`/`function*`/`yield` 生成器 + 迭代器协议 + Map/Set 可迭代 + 三角/对数常量 + Array/String 残尾方法；P30：`querySelector`/`querySelectorAll` 全选择器 + 节点增删改 + `createElement`/`classList`/`dataset`/`setAttribute` + 自定义事件 `addEventListener`/`dispatchEvent`） |
+| `browser.py` | `lib.rs` / `browser.rs` | 公开 API + 失效 + a11y + links + PNG + transition + animate + P32.4 DevTools（DOM 树/computed style/选择器命中） |
 | `transition.py` | （新增） | CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp） |
-| `gui.py` | （新增） | P31 tkinter 零依赖多标签 GUI 外壳（P21 http 加载） |
-| `net.py` | （新增） | P21/P22/P23 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 缓存 + TLS + 进度 |
-| `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress） |
+| `gui.py` | （新增） | P31/P32 tkinter 零依赖多标签 GUI 外壳（http 加载 + about/bookmarks/view-source + 历史/书签） |
+| `net.py` | （新增） | P21/P22/P23/P32 URL 解析 + HTTP/1.1 客户端 + 重定向/gzip/chunked + 缓存 + TLS + 进度 + Cookie 挂载（P32.3）+ 错误页分类（P32.5） |
+| `session.py` | （新增） | P32.1/2 会话层：HistoryStore + BookmarkStore（JSON 原子持久化） |
+| `cookie_store.py` | （新增） | P32.3 Cookie 玩具：parse_set_cookie + CookieJar（无安全边界） |
+| `main.py` | `main.rs` | CLI（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress / P32 --devtools） |
 
 ## 环境
 
@@ -1209,5 +1247,5 @@ python test.py
   | `anim_test/` | — | `python main.py demo.html --animate` 的帧输出目录 |
 
 - **运行环境**：Python 3.11.9，零外部依赖（纯标准库）。
-- **自测**：`python test.py` → **415/415 通过**。
+- **自测**：`python test.py` → **807/807 通过**。
 - **姊妹项目**：[toy-browser](https://gitee.com/zklzkl11111/toy-browser)（Rust 版，同一管线的原生实现）。

@@ -35,6 +35,9 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 
+# P32.3 — cookie jar (lazy import to avoid a hard module dependency at
+# import time; cookie_store only needs net for URL parsing).
+
 # ---------------------------------------------------------------------------
 # P21.1 — URL 解析
 # ---------------------------------------------------------------------------
@@ -284,6 +287,206 @@ class HttpResponse:
         """P23.3 — the response's ETag ("" when absent)."""
         return self.headers.get("etag", "")
 
+    # ------------------------------------------------------------------
+    # P33.P2 — CORS / CSP
+    # ------------------------------------------------------------------
+
+    @property
+    def cors_policy(self) -> "CorsPolicy":
+        """P33.P2 — the response's parsed CORS policy (from
+        ``Access-Control-Allow-*`` headers)."""
+        return CorsPolicy.from_headers(self.headers)
+
+    def is_cors_allowed(self, requesting_origin: str = "") -> bool:
+        """P33.P2 — True when a cross-origin fetch from
+        *requesting_origin* is permitted by this response's CORS
+        headers.  A blank *requesting_origin* (file:// / about:blank)
+        only matches the wildcard ``*``."""
+        return self.cors_policy.permits(requesting_origin)
+
+    @property
+    def csp_directives(self) -> dict:
+        """P33.P2 — the response's parsed CSP directives (from the
+        ``Content-Security-Policy`` header).  Returns an empty dict
+        when the header is absent.  The parser is permissive;
+        enforcement is left to the caller.
+
+        Header lookup is case-insensitive (the ``headers`` dict may
+        carry mixed-case keys from ``http.client`` or test fixtures).
+        """
+        # Case-insensitive lookup: the raw headers dict from
+        # http.client may use any casing; tests use "Content-Security-Policy".
+        csp = ""
+        for k, v in self.headers.items():
+            if k.lower() == "content-security-policy":
+                csp = v
+                break
+        return parse_csp_directives(csp)
+
+    def is_csp_violation(self, source_kind: str,
+                         source_value: str) -> bool:
+        """P33.P2 — toy CSP check: return True when *source_value*
+        would be blocked by the response's CSP *source_kind* directive
+        (e.g. ``script-src``, ``img-src``, ``connect-src``).
+
+        The check is intentionally simple: it collects all allowed
+        source tokens from the matching directive (falling back to
+        ``default-src`` when the specific directive is absent) and
+        returns True when *source_value* matches none of them.
+        A blank directive list (no CSP header) permits everything.
+        """
+        csp = self.csp_directives
+        if not csp:
+            return False
+        # The specific directive takes precedence; fall back to
+        # default-src when absent.
+        values = csp.get(source_kind, csp.get("default-src", []))
+        if not values:
+            return False  # no constraint
+        for tok in values:
+            tok_lower = tok.lower()
+            # Strip surrounding single quotes for keyword tokens.
+            tok_bare = tok_lower.strip("'")
+            # 'self' matches when the source_value is same-origin (toy:
+            # always allow 'self' as a pass-through).
+            if tok_bare == "self":
+                # Toy: 'self' is treated as "permit" (a real browser
+                # would compare the source to the document origin).
+                return False
+            if tok_bare == "none":
+                # 'none' blocks all sources — but only when it is the
+                # sole value in the list.  If other values exist,
+                # 'none' is just a no-op token.
+                if len(values) == 1:
+                    return True
+                continue
+            # Exact string match (case-insensitive for scheme/host).
+            if tok_bare == source_value.lower().strip("'"):
+                return False
+            # wildcard "data:" permit.
+            if tok_bare == "data:" and source_value.lower().startswith("data:"):
+                return False
+        return True
+
+
+# ---------------------------------------------------------------------------
+# P33.P2 — CORS / CSP basic enforcement
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CorsPolicy:
+    """P33.P2 — a parsed CORS response policy.
+
+    Extracted from the response's ``Access-Control-Allow-Origin`` and
+    ``Access-Control-Allow-Credentials`` headers.  Used by
+    :meth:`HttpResponse.is_cors_allowed` to check whether a cross-origin
+    subresource fetch is permitted by the server.
+
+    A *requesting origin* is allowed when:
+
+    * the response carries ``Access-Control-Allow-Origin: *``, or
+    * the response carries ``Access-Control-Allow-Origin: <specific>``
+      matching the requesting origin exactly (case-insensitive host,
+      case-sensitive scheme+port).
+    """
+    allow_origin: str = ""       # "*" or a specific origin string
+    allow_credentials: bool = False
+    allow_headers: str = ""      # comma-separated list (empty = any)
+
+    @classmethod
+    def from_headers(cls, headers: dict) -> "CorsPolicy":
+        h = {k.lower(): v for k, v in headers.items()}
+        allow_origin = h.get("access-control-allow-origin", "")
+        allow_cred = h.get("access-control-allow-credentials", "").lower() == "true"
+        allow_hdrs = h.get("access-control-allow-headers", "")
+        return cls(
+            allow_origin=allow_origin,
+            allow_credentials=allow_cred,
+            allow_headers=allow_hdrs,
+        )
+
+    def permits(self, requesting_origin: str) -> bool:
+        """Return True when *requesting_origin* is permitted by this policy.
+
+        A blank requesting origin (e.g. ``file://`` / ``about:blank``)
+        is treated as opaque and never matches a specific origin; only
+        the wildcard ``*`` permits it.
+        """
+        if not requesting_origin:
+            return self.allow_origin == "*"
+        if self.allow_origin == "*":
+            return True
+        # Exact origin match (scheme://host[:port]).
+        return self.allow_origin.lower() == requesting_origin.lower()
+
+
+def parse_csp_directives(csp_header: str) -> dict[str, list[str]]:
+    """P33.P2 — parse a ``Content-Security-Policy`` response header into
+    a dict of directive → [values].  The parser is intentionally
+    permissive: it strips comments, splits on whitespace and
+    semicolons, and keeps the first value of each directive token as
+    the directive name.
+
+    Example::
+
+        "default-src 'self'; script-src 'self' cdn.example.com"
+
+    parses to::
+
+        {"default-src": ["'self'"],
+         "script-src": ["'self'", "cdn.example.com"]}
+
+    Toy semantics: only the values are recorded; no enforcement is done
+    here (enforcement is left to the caller / CSS/JS engine).
+    """
+    if not csp_header:
+        return {}
+    directives: dict[str, list[str]] = {}
+    # Strip any comments (toy: ``/* ... */`` and ``--`` are not CSP
+    # comment syntax; we just handle whitespace + semicolon splitting).
+    raw = csp_header.strip()
+    # Split on semicolons to get individual directives.
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        # Split on whitespace to get the directive name + values.
+        tokens = chunk.split()
+        if not tokens:
+            continue
+        name = tokens[0].lower()
+        values = tokens[1:]
+        directives[name] = values
+    return directives
+
+
+def is_origin_match(a: str, b: str) -> bool:
+    """P33.P2 — compare two origin strings (``scheme://host[:port]``)
+    for equality, ignoring case on the host portion.
+
+    A blank string never matches anything.  The scheme is
+    case-insensitive; the host is case-insensitive; the port is
+    case-sensitive (but omitted ports are treated as default ports
+    per-scheme).
+    """
+    if not a or not b:
+        return False
+    import urllib.parse as _up
+    pa, pb = _up.urlparse(a), _up.urlparse(b)
+    # Normalize: lowercase scheme and netloc.
+    a_norm = f"{pa.scheme.lower()}://{pa.netloc.lower()}"
+    b_norm = f"{pb.scheme.lower()}://{pb.netloc.lower()}"
+    # When the port is the scheme default, omit it for comparison.
+    def _norm(origin_str, parsed):
+        s = parsed.scheme.lower()
+        h = parsed.netloc.lower()
+        # Strip default ports.
+        default = _DEFAULT_PORTS.get(s)
+        if default and h.endswith(f":{default}"):
+            h = h[:-(len(str(default)) + 1)]
+        return f"{s}://{h}"
+    return _norm(a, pa) == _norm(b, pb)
+
 
 class HttpClient:
     """P21.2 — minimal HTTP/1.1 client.
@@ -303,16 +506,92 @@ class HttpClient:
       304 reuses the cached body and refreshes its freshness.
     * **load progress** (P23.4) — pass a :class:`LoadEventSink` via
       ``progress=``; each fetch emits start/document/subresource/done.
+    * **connection reuse** (P33.R2) — keep-alive connections are
+      pooled per (scheme, host, port, verify_tls) and reused across
+      requests to the same origin; a dead connection (``RemoteDisconnected``
+      / ``ConnectionResetError``) is discarded and one retry is made
+      with a fresh connection.
     """
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT,
                  verify_tls: bool = True,
                  cache: "CacheStore | None" = None,
-                 progress: "LoadEventSink | None" = None) -> None:
+                 progress: "LoadEventSink | None" = None,
+                 cookies: "cookie_store.CookieJar | None" = None) -> None:
         self.timeout = timeout
         self.verify_tls = verify_tls
         self.cache = cache
         self.progress = progress
+        # P32.3 — optional cookie jar: responses set-cookie, requests
+        # carry the Cookie header for matching host/path.
+        self.cookies = cookies
+        # P33.R2 — keep-alive connection pool (one connection per
+        # origin).  The pool is small (typically 1-4 origins per page
+        # load) and is cleared by :meth:`close` / :meth:`close_pool`.
+        self._conn_pool: dict = {}
+
+    # ------------------------------------------------------------------
+    # P33.R2 — connection reuse
+    # ------------------------------------------------------------------
+
+    def _pool_key(self, url: URL) -> tuple:
+        return (url.scheme, url.host or "localhost", url.effective_port,
+                self.verify_tls)
+
+    def _open_conn(self, url: URL):
+        host = url.host or "localhost"
+        port = url.effective_port
+        ssl_ctx = None
+        if url.is_https:
+            ssl_ctx = ssl.create_default_context()
+            if not self.verify_tls:
+                # P23.1 — the --insecure switch: skip hostname + cert
+                # verification (self-signed / debug servers).
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+        if url.is_https:
+            return http.client.HTTPSConnection(
+                host, port, timeout=self.timeout, context=ssl_ctx,
+            )
+        return http.client.HTTPConnection(host, port, timeout=self.timeout)
+
+    def _acquire_conn(self, url: URL):
+        """P33.R2 — take a pooled connection for *url*'s origin, or
+        open a fresh one.  A pooled connection may be stale (server
+        closed the keep-alive socket); the caller treats the first
+        attempt's failure as a retry-on-fresh-connection case."""
+        key = self._pool_key(url)
+        conn = self._conn_pool.pop(key, None)
+        if conn is not None:
+            return conn
+        return self._open_conn(url)
+
+    def _release_conn(self, url: URL, conn, dead: bool = False) -> None:
+        """P33.R2 — return a healthy keep-alive connection to the pool.
+
+        A dead connection is not pooled (the server has closed the
+        socket); the pool is capped at 8 entries so a page with many
+        origins cannot grow it unboundedly.
+        """
+        if dead:
+            return
+        key = self._pool_key(url)
+        if len(self._conn_pool) >= 8:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+        self._conn_pool[key] = conn
+
+    def close_pool(self) -> None:
+        """P33.R2 — close every pooled connection (call on shutdown)."""
+        for conn in self._conn_pool.values():
+            try:
+                conn.close()
+            except OSError:
+                pass
+        self._conn_pool.clear()
 
     def _emit(self, phase: str, fraction: float, detail: str = "") -> None:
         if self.progress is not None:
@@ -328,6 +607,10 @@ class HttpClient:
         P23.2/P23.3 — when *revalidate_etag* is set the request
         carries ``If-None-Match``; a 304 response reuses *stale_body*
         and refreshes the cache entry.
+
+        P33.R2 — connections are reused from the keep-alive pool
+        (one per origin); a dead pooled socket is discarded and the
+        request is retried once on a fresh connection.
         """
         if url.scheme not in ("http", "https"):
             raise UnsupportedScheme(url.scheme)
@@ -347,74 +630,86 @@ class HttpClient:
         if revalidate_etag:
             # P23.3 — conditional GET for stale cached entries.
             hdrs["If-None-Match"] = revalidate_etag
+        # P32.3 — attach matching cookies from the jar (if any).
+        if self.cookies is not None:
+            cookie_hdr = self.cookies.cookie_header_for(url)
+            if cookie_hdr:
+                hdrs["Cookie"] = cookie_hdr
         if headers:
             hdrs.update(headers)
 
-        ssl_ctx = None
-        if url.is_https:
-            ssl_ctx = ssl.create_default_context()
-            if not self.verify_tls:
-                # P23.1 — the --insecure switch: skip hostname + cert
-                # verification (self-signed / debug servers).
-                ssl_ctx.check_hostname = False
-                ssl_ctx.verify_mode = ssl.CERT_NONE
-
         last_exc: Exception | None = None
-        for attempt in (0, 1):  # one retry on transient network errors
+        for attempt in (0, 1):
             try:
-                if url.is_https:
-                    conn = http.client.HTTPSConnection(
-                        host, port, timeout=self.timeout,
-                        context=ssl_ctx,
-                    )
-                else:
-                    conn = http.client.HTTPConnection(
-                        host, port, timeout=self.timeout,
-                    )
+                # P33.R2 — acquire a (possibly reused) connection; a
+                # first attempt on a stale socket raises
+                # ConnectionResetError / RemoteDisconnected and the
+                # retry loop opens a fresh one.
+                conn = self._acquire_conn(url)
+                conn.request("GET", path, headers=hdrs)
+                resp = conn.getresponse()
+                # P33.R2 — a connection that answered can be pooled
+                # only when the body was fully read AND the server
+                # did not ask for the connection to close.
+                connection_hdr = ""
                 try:
-                    conn.request("GET", path, headers=hdrs)
-                    resp = conn.getresponse()
-                    # P23.3 — a 304 (Not Modified) has no body; reuse
-                    # the stale cached body and refresh freshness.
-                    if resp.status == 304:
-                        body = stale_body
-                        headers_out = {
-                            k.lower(): v for k, v in resp.getheaders()
-                        }
-                        # Merge in the cached headers (the 304 body is
-                        # the cached one; keep its content-type, etc.).
-                        return HttpResponse(
-                            status=200,  # surface as a 200 for callers
-                            status_text="OK",
-                            headers=headers_out,
-                            body=body,
-                            final_url=url.to_string(),
-                            from_cache=True,
-                        )
-                    body = resp.read()
+                    connection_hdr = (resp.getheader("Connection")
+                                       or "").lower()
+                except Exception:
+                    connection_hdr = ""
+                # P23.3 — a 304 (Not Modified) has no body; reuse
+                # the stale cached body and refresh freshness.
+                if resp.status == 304:
+                    body = stale_body
                     headers_out = {
                         k.lower(): v for k, v in resp.getheaders()
                     }
-                    final = url.to_string()
-                    # P22.2 — transparent gzip decode.
-                    body = maybe_gunzip(
-                        _TransientResp(status=resp.status,
-                                       status_text=resp.reason or "",
-                                       headers=headers_out,
-                                       body=body,
-                                       final_url=final))
+                    # Merge in the cached headers (the 304 body is
+                    # the cached one; keep its content-type, etc.).
+                    self._release_conn(url, conn, dead=(
+                        "close" in connection_hdr))
                     return HttpResponse(
-                        status=resp.status,
-                        status_text=resp.reason or "",
+                        status=200,  # surface as a 200 for callers
+                        status_text="OK",
                         headers=headers_out,
                         body=body,
-                        final_url=final,
+                        final_url=url.to_string(),
+                        from_cache=True,
                     )
-                finally:
-                    conn.close()
+                body = resp.read()
+                headers_out = {
+                    k.lower(): v for k, v in resp.getheaders()
+                }
+                # P32.3 — ingest Set-Cookie into the jar before the
+                # response leaves the client.
+                if self.cookies is not None:
+                    self.cookies.ingest_response(url, headers_out)
+                final = url.to_string()
+                # P22.2 — transparent gzip decode.
+                body = maybe_gunzip(
+                    _TransientResp(status=resp.status,
+                                   status_text=resp.reason or "",
+                                   headers=headers_out,
+                                   body=body,
+                                   final_url=final))
+                self._release_conn(url, conn, dead=("close" in connection_hdr
+                                                     or resp.status >= 400
+                                                     and resp.status == 401))
+                return HttpResponse(
+                    status=resp.status,
+                    status_text=resp.reason or "",
+                    headers=headers_out,
+                    body=body,
+                    final_url=final,
+                )
             except (socket.timeout, socket.error,
-                    http.client.HTTPException, OSError) as e:
+                    http.client.HTTPException, OSError,
+                    http.client.RemoteDisconnected) as e:
                 last_exc = e
+                # P33.R2 — the pooled connection was dead; discard
+                # it so the retry opens a fresh socket.
+                key = self._pool_key(url)
+                self._conn_pool.pop(key, None)
                 continue
         raise ConnectionError(
             f"GET {url.to_string()} failed after retries: {last_exc}"
@@ -527,45 +822,36 @@ class HttpClient:
         if url.query:
             path = f"{path}?{url.query}"
 
-        ssl_ctx = None
-        if url.is_https:
-            ssl_ctx = ssl.create_default_context()
-            if not self.verify_tls:
-                ssl_ctx.check_hostname = False
-                ssl_ctx.verify_mode = ssl.CERT_NONE
-
         last_exc: Exception | None = None
         for attempt in (0, 1):
             try:
-                if url.is_https:
-                    conn = http.client.HTTPSConnection(
-                        host, port, timeout=self.timeout,
-                        context=ssl_ctx,
-                    )
-                else:
-                    conn = http.client.HTTPConnection(
-                        host, port, timeout=self.timeout,
-                    )
-                try:
-                    conn.request("POST", path, body=body_bytes,
-                                 headers=hdrs)
-                    resp = conn.getresponse()
-                    body = resp.read()
-                    headers_out = {
-                        k.lower(): v for k, v in resp.getheaders()
-                    }
-                    return HttpResponse(
-                        status=resp.status,
-                        status_text=resp.reason or "",
-                        headers=headers_out,
-                        body=body,
-                        final_url=url.to_string(),
-                    )
-                finally:
-                    conn.close()
+                # P33.R2 — acquire a (possibly reused) connection; a
+                # first attempt on a stale socket raises
+                # ConnectionResetError / RemoteDisconnected and the
+                # retry loop opens a fresh one.
+                conn = self._acquire_conn(url)
+                conn.request("POST", path, body=body_bytes,
+                             headers=hdrs)
+                resp = conn.getresponse()
+                body = resp.read()
+                headers_out = {
+                    k.lower(): v for k, v in resp.getheaders()
+                }
+                conn_hdr = (resp.getheader("Connection") or "").lower()
+                self._release_conn(url, conn, dead=("close" in conn_hdr))
+                return HttpResponse(
+                    status=resp.status,
+                    status_text=resp.reason or "",
+                    headers=headers_out,
+                    body=body,
+                    final_url=url.to_string(),
+                )
             except (socket.timeout, socket.error,
-                    http.client.HTTPException, OSError) as e:
+                    http.client.HTTPException, OSError,
+                    http.client.RemoteDisconnected) as e:
                 last_exc = e
+                key = self._pool_key(url)
+                self._conn_pool.pop(key, None)
                 continue
         raise ConnectionError(
             f"POST {url.to_string()} failed after retries: {last_exc}"
@@ -1194,6 +1480,86 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     return by_kind
 
 
+def load_subresources_parallel(dom_root, base_url,
+                               client: "HttpClient | None" = None,
+                               max_workers: int = 4,
+                               timeout: float | None = None,
+                               progress: "LoadEventSink | None" = None,
+                               ) -> dict:
+    """P33.R2 — :func:`load_subresources` with a bounded thread pool.
+
+    Identical contract to :func:`load_subresources` (kind →
+    ``{absolute_url: HttpResponse-or-None}``, failures map to
+    ``None``), but the per-resource GETs run on a
+    ``concurrent.futures.ThreadPoolExecutor`` (capped at
+    *max_workers*, default 4) sharing one :class:`HttpClient` —
+    the client's keep-alive pool (P33.R2) makes the extra
+    connections cheap (one socket per origin, reused across
+    workers).  When the spec list is short (≤ 2) the sequential
+    path is used (thread startup would cost more than it saves).
+    Progress events are emitted on the main thread as futures
+    complete, so the sink sees a monotone 0→1 fraction.
+    """
+    eff_base = base_url_from_dom(dom_root) or base_url
+    if not isinstance(eff_base, URL):
+        eff_base = parse_url(str(eff_base))
+    specs = collect_subresources(dom_root)
+    c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    if progress is not None and c.progress is None:
+        c.progress = progress
+    total = len(specs)
+    by_kind: dict = {}
+
+    # data: URIs need no network — record them up front.
+    net_specs: list = []
+    for spec in specs:
+        if spec["src"].lower().startswith("data:"):
+            by_kind.setdefault(spec["kind"], {})[spec["src"]] = None
+        else:
+            net_specs.append(spec)
+
+    done = 0
+    if len(net_specs) <= 2:
+        # Sequential fast path (matches the legacy P22.4 timing
+        # exactly, including progress fractions).
+        for spec in net_specs:
+            absu = parse_url(spec["src"], base=eff_base)
+            if progress is not None:
+                progress.emit(LoadProgress(
+                    PHASE_SUBRESOURCE, done / max(total, 1),
+                    absu.to_string()))
+            resp = fetch_resource(absu, client=c)
+            by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
+            done += 1
+    else:
+        import concurrent.futures
+        workers = max(2, min(max_workers, len(net_specs)))
+
+        def _fetch(spec):
+            absu = parse_url(spec["src"], base=eff_base)
+            try:
+                resp = fetch_resource(absu, client=c)
+            except Exception:
+                resp = None
+            return spec, absu, resp
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=workers) as pool:
+            futs = [pool.submit(_fetch, s) for s in net_specs]
+            for fut in futs:
+                spec, absu, resp = fut.result()
+                by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
+                done += 1
+                if progress is not None:
+                    progress.emit(LoadProgress(
+                        PHASE_SUBRESOURCE, done / max(total, 1),
+                        absu.to_string()))
+    if progress is not None:
+        progress.emit(LoadProgress(PHASE_DONE, 1.0,
+                                   f"{done} subresources"))
+    return by_kind
+
+
 def render_error_page(title: str, detail: str, w: int = 800, h: int = 600):
     """P21.3 — unified error page (timeout / connection / 404 / 500).
 
@@ -1211,11 +1577,90 @@ def render_error_page(title: str, detail: str, w: int = 800, h: int = 600):
     return browser.render_document(html, "", w, h)
 
 
-def error_page_html(title: str, detail: str) -> str:
-    """HTML for the unified error page (headless-testable variant)."""
+def error_page_html(title: str, detail: str, category: str = "") -> str:
+    """HTML for the unified error page (headless-testable variant).
+
+    P32.5 — *category* selects per-kind copy: one of
+    ``"dns"`` / ``"connect"`` / ``"timeout"`` / ``"bad_url"`` /
+    ``"http"`` (4xx/5xx) / ``"redirect"`` / ``""`` (generic).  Each
+    renders a distinct, human-readable headline + remediation hint so a
+    user can tell *why* a load failed.
+    """
+    category = (category or "").lower()
+    if category == "dns":
+        headline = "Server not found"
+        hint = "The host could not be resolved (DNS failure). Check the " \
+               "address or your network connection."
+    elif category == "connect":
+        headline = "Connection refused"
+        hint = "Could not connect to the server. The host may be down or " \
+               "firewalled."
+    elif category == "timeout":
+        headline = "Connection timed out"
+        hint = "The server took too long to respond. Try again or check " \
+               "your connection."
+    elif category == "bad_url":
+        headline = "Invalid URL"
+        hint = "That address is not a URL toy-browser-py understands. " \
+               "Try http:// or https://."
+    elif category == "redirect":
+        headline = "Redirect loop"
+        hint = "The server keeps redirecting to the same address. " \
+               "The redirect chain may be misconfigured."
+    elif category == "http":
+        headline = "Request failed"
+        hint = f"HTTP {title}. The server returned an error."
+    else:
+        headline = title
+        hint = detail
+    # For the http category the title carries the status line; fold it
+    # into the detail for the generic cases.
+    detail_text = detail
+    if category == "http":
+        detail_text = detail
     return (
         '<html><body>'
-        f'<h1>{title}</h1><p>{detail}</p>'
-        '<p>toy-browser-py (P21)</p>'
+        f'<h1>{headline}</h1>'
+        f'<p>{detail_text}</p>'
+        f'<p style="color:#555">{hint}</p>'
+        '<p>toy-browser-py (P32)</p>'
         '</body></html>'
     )
+
+
+def categorize_fetch_error(exc: BaseException) -> str:
+    """P32.5 — map a fetch exception to an error-page *category*.
+
+    Uses the exception type + message heuristics so the GUI/CLI can
+    call :func:`error_page_html` with the right copy:
+
+    * ``RedirectLoop`` → ``"redirect"``
+    * DNS / getaddrinfo → ``"dns"``
+    * ``ConnectionRefused`` / connection reset → ``"connect"``
+    * ``socket.timeout`` / ``TimeoutError`` → ``"timeout"``
+    * ``UnsupportedScheme`` / "invalid url" → ``"bad_url"``
+    * :class:`FetchError` with an HTTP status → ``"http"``
+    * anything else → ``""`` (generic)
+    """
+    cls_name = type(exc).__name__
+    if cls_name == "RedirectLoop":
+        return "redirect"
+    if isinstance(exc, UnsupportedScheme):
+        return "bad_url"
+    msg = str(exc).lower()
+    if "dns" in msg or "name or service not known" in msg \
+            or "getaddrinfo" in msg:
+        return "dns"
+    if "timed out" in msg or "timeout" in msg or "timed-out" in msg:
+        return "timeout"
+    if "refused" in msg or "reset" in msg or "unreachable" in msg:
+        return "connect"
+    if isinstance(exc, FetchError) and getattr(exc, "status", 0) >= 400:
+        return "http"
+    if "invalid url" in msg or "scheme" in msg or "unsupported" in msg:
+        return "bad_url"
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, (ConnectionError, OSError)):
+        return "connect"
+    return ""

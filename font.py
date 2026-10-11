@@ -268,6 +268,9 @@ def family_from_css(value) -> str:
 
 _real_font_metrics: dict = {}   # family → ttf_font.FontMetrics
 _font_search_dirs: list = []
+_cjk_fallback: object = None    # P33.R1 — CJK face for glyph fallback
+_system_dirs_registered: bool = False  # P33.R1 — guard the one-time OS-dir scan
+_cjk_fallback_resolved: bool = False  # P33.R5 — CJK scan is one-time
 
 
 def init_real_fonts(search_dirs: list = None) -> None:
@@ -276,19 +279,103 @@ def init_real_fonts(search_dirs: list = None) -> None:
     Call once at startup.  If no font files are found the built-in
     bitmap font is used (no crash).  P20.4 — remembers the search
     dirs so later weight lookups can resolve bold variants on demand.
+    P33.R1 — additionally registers a CJK fallback face (msyh/simhei/
+    simsun, via TTC when needed) so Chinese/Japanese/Korean text can be
+    rendered, and records the system font dirs for later lookups.
+    P33.R1 — idempotent: when ``search_dirs`` is None the remembered
+    search dirs are reused, so a test that clears the registry and
+    re-inits does not trigger a fresh system-wide CJK font scan
+    (the CJK face is registered once and kept).
+    P33.R5 — fast path: when no new search dirs are supplied and both
+    families are already loaded, the expensive TTF re-scan is skipped.
+    The CJK face is resolved at most once per process (tracked by
+    ``_cjk_fallback_resolved``), so repeated ``init_real_fonts(None)``
+    calls from ``text._real_metrics_for`` are cheap no-ops.
     """
     import ttf_font
-    dirs = search_dirs if search_dirs is not None else []
-    _font_search_dirs[:] = dirs
+    global _cjk_fallback, _system_dirs_registered, _cjk_fallback_resolved
+    dirs = list(search_dirs) if search_dirs else []
+    new_dirs = [d for d in dirs if d not in _font_search_dirs]
+    _font_search_dirs.extend(new_dirs)
+    # P33.R5 — fast path: both families loaded + no new dirs.
+    if (not new_dirs and
+            _real_font_metrics.get("serif") is not None and
+            _real_font_metrics.get("monospace") is not None):
+        # Ensure system dirs are registered (one-time cost).
+        if not _system_dirs_registered:
+            _font_search_dirs.extend(
+                d for d in ttf_font._system_font_dirs()
+                if d not in _font_search_dirs)
+            _system_dirs_registered = True
+        # Resolve CJK face at most once (system-wide TTF scan is
+        # expensive; the result — even None — is final).
+        if _cjk_fallback is None and not _cjk_fallback_resolved:
+            cjk_dirs = _font_search_dirs or ttf_font._system_font_dirs()
+            _cjk_fallback = ttf_font.find_cjk_font(cjk_dirs)
+            _cjk_fallback_resolved = True
+        return
     for family in ("serif", "monospace"):
-        m = ttf_font.load_font_for_family(family, 0.0, False, dirs)
+        if _real_font_metrics.get(family) is not None:
+            continue
+        m = ttf_font.load_font_for_family(family, 0.0, False,
+                                           _font_search_dirs)
         if m is not None:
             _real_font_metrics[family] = m
+    # P33.R1 — CJK fallback face (best-effort; None when the system has
+    # no CJK font, in which case CJK chars stay unreadable).
+    if _cjk_fallback is None and not _cjk_fallback_resolved:
+        cjk_dirs = _font_search_dirs or ttf_font._system_font_dirs()
+        _cjk_fallback = ttf_font.find_cjk_font(cjk_dirs)
+    # Remember the OS dirs for later weight/CJK lookups (only once —
+    # the system dirs are static on a given host).
+    if not _system_dirs_registered:
+        _font_search_dirs.extend(d for d in ttf_font._system_font_dirs()
+                                  if d not in _font_search_dirs)
+        _system_dirs_registered = True
+    # P33.R1 — if the CJK scan above ran before the OS dirs were
+    # registered (the normal first-init path: search_dirs is given,
+    # so the CJK scan only saw the caller's dirs), retry once with
+    # the full dir list so a host whose CJK face lives in the OS
+    # font dir is not left without a fallback face.
+    if _cjk_fallback is None and _system_dirs_registered:
+        _cjk_fallback = ttf_font.find_cjk_font(_font_search_dirs)
+        _cjk_fallback_resolved = True
 
 
 def get_real_metrics(family: str):
     """P17 — return the real TTF metrics for a family, or None."""
     return _real_font_metrics.get(family)
+
+
+def get_cjk_fallback():
+    """P33.R1 — the CJK fallback face (FontMetrics or None).
+
+    Register a CJK font face when the primary font has no glyph.
+    """
+    return _cjk_fallback
+
+
+def resolve_metrics_for_char(ch: str, primary):
+    """P33.R1 — the FontMetrics that can render *ch*.
+
+    Returns *primary* when it has a glyph for the character, otherwise
+    the CJK fallback face (or None when no face can render it).  This
+    is the per-character fallback chain: a Latin font + a CJK face
+    cover mixed-script pages.
+    """
+    if primary is not None:
+        # P33.R1 — has_glyph is O(1) (dict lookup in the face's cmap).
+        # A missing codepoint falls through to the CJK face; a present
+        # codepoint stays on the primary face so Latin text keeps its
+        # original metrics (ascent / advance).
+        if primary.has_glyph(ch):
+            return primary
+    if _cjk_fallback is not None:
+        # The CJK face also carries Latin glyphs (most system CJK
+        # fonts do); prefer it for Latin when the primary face lacks
+        # the codepoint so the page still renders.
+        return _cjk_fallback
+    return None
 
 
 def get_metrics_for_weight(family: str, weight: int = 400):
@@ -299,9 +386,18 @@ def get_metrics_for_weight(family: str, weight: int = 400):
     to the normal-weight font and flags the caller to apply P20.3
     synthetic bold (outline dilation) instead of a real bold glyph.
     Returns ``(metrics, use_synthetic_bold)``.
+
+    P33.R1 — if the family is not in ``_real_font_metrics`` (tests
+    that clear the registry) the loader is tried once with the
+    remembered search dirs before giving up.
     """
     import ttf_font
     base = _real_font_metrics.get(family)
+    if base is None and _font_search_dirs:
+        base = ttf_font.load_font_for_family(family, 0.0, False,
+                                              _font_search_dirs)
+        if base is not None:
+            _real_font_metrics[family] = base
     if base is None:
         return (None, False)
     if weight >= 600:

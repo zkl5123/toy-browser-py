@@ -428,6 +428,224 @@ def _full_css(tree, user_css: str) -> str:
     return "\n".join(p for p in [default_css, inline_style, user_css] if p)
 
 
+# ---------------------------------------------------------------------------
+# P32.4 — mini DevTools (DOM tree + computed style + selector provenance)
+# ---------------------------------------------------------------------------
+
+def devtools_dom_tree(root_dom, max_depth: int = 10,
+                      max_nodes: int = 400) -> str:
+    """P32.4 — print a readable DOM tree with tag, id, class, text.
+
+    Indentation = depth; text-node-only elements show their trimmed
+    text in ``[...]``.  Truncates at *max_depth* / *max_nodes*.
+    """
+    lines: list[str] = []
+    count = 0
+
+    def walk(node, depth: int) -> None:
+        nonlocal count
+        if depth > max_depth or count >= max_nodes:
+            return
+        if not node.is_element():
+            return
+        count += 1
+        tag = (node.tag or "?").lower()
+        ident = ""
+        eid = node.attr("id")
+        cls = node.attr("class")
+        if eid:
+            ident += f"#{eid}"
+        if cls:
+            ident += "." + ".".join(cls.split())
+        text = node.text_content().strip()
+        text_part = f" [{text[:40]}]" if text else ""
+        pad = "  " * depth
+        lines.append(f"{pad}<{tag}>{ident}{text_part}")
+        for c in node.children:
+            walk(c, depth + 1)
+
+    # The root of the parse tree is a synthetic document node; descend
+    # into its element children so the tree starts at <html>/<body>.
+    if root_dom.is_element() and (root_dom.tag or "").lower() in ("html", "body", "document"):
+        walk(root_dom, 0)
+    else:
+        for c in root_dom.children:
+            walk(c, 0)
+    return "\n".join(lines)
+
+
+def _fmt_css_value(v) -> str:
+    """P32.4 — human-readable form of a CSS value."""
+    if v is None:
+        return ""
+    import css as _css
+    if isinstance(v, _css.Length):
+        unit = v.unit or "px"
+        return f"{v.value:g}{unit}"
+    if isinstance(v, _css.Color):
+        return f"rgb({v.r},{v.g},{v.b})"
+    if isinstance(v, _css.EdgeList):
+        return " ".join(
+            _fmt_css_value(getattr(v, side)) for side in ("top", "right", "bottom", "left")
+        )
+    return str(v)
+
+
+def _devtools_effective_rules(css_text: str,
+                              viewport_w: float = 800.0,
+                              viewport_h: float = 600.0) -> list:
+    """P32.4 — the same at-rule-aware rule set the renderer uses.
+
+    ``css.parse_rulesheet`` drops at-rule blocks; the pipeline feeds their
+    inner rules back in via :func:`css.parse_media_queries` (matched
+    against the viewport) and :func:`css.parse_supports_blocks` (toy:
+    always supported).  DevTools must use the same set, else a selector
+    that only lives inside an at-rule would appear to match nothing.
+    """
+    rules = list(css_mod.parse_rulesheet(css_text))
+    for mq in css_mod.parse_media_queries(css_text):
+        if css_mod.media_matches(mq.condition, viewport_w, viewport_h):
+            rules.extend(mq.rules)
+    for sr in css_mod.parse_supports_blocks(css_text):
+        if css_mod.supports_matches(sr.condition):
+            rules.extend(sr.rules)
+    return rules
+
+
+def devtools_computed_style(root_dom, css_text: str,
+                            element_id: str,
+                            width: int = 800, height: int = 600) -> dict:
+    """P32.4 — computed style for the element with *element_id*.
+
+    Runs the cascade (UA + inline + author) and returns
+    ``{prop: "value"}`` for every property the element actually carries,
+    plus ``"__meta__"`` with tag / id / class.  Missing element → empty
+    dict with a ``__notfound__`` flag.
+    """
+    styled = css_mod.apply(
+        root_dom, css_text,
+        media_rules=css_mod.parse_media_queries(css_text),
+        supports_rules=css_mod.parse_supports_blocks(css_text),
+        viewport_w=float(width), viewport_h=float(height),
+    )
+    target = None
+    found_meta = None
+
+    def walk(sn):
+        nonlocal target, found_meta
+        d = sn.dom
+        if d.is_element() and d.attr("id") == element_id:
+            target = sn
+            found_meta = {"tag": (d.tag or "").lower(),
+                          "id": element_id,
+                          "class": d.attr("class") or ""}
+            return
+        for c in sn.children:
+            walk(c)
+
+    walk(styled)
+    if target is None:
+        return {"__notfound__": True, "__meta__": {"id": element_id}}
+    out: dict = {}
+    for k, v in target.props.items():
+        out[k] = _fmt_css_value(v)
+    out["__meta__"] = found_meta
+    return out
+
+
+def devtools_selector_hits(css_text: str, root_dom,
+                           selector: str,
+                           width: int = 800, height: int = 600) -> list[dict]:
+    """P32.4 — which DOM nodes a *selector* matches, and the matching
+    rule(s) that produce it.  Returns
+    ``[{"node": tag#id.cls, "selectors": [...], "rules": [...]}]``.
+
+    *selectors* = the query's own selector strings that matched the node.
+    *rules*      = author/inline rule selector texts that matched it.
+    """
+    results: list[dict] = []
+    sels = css_mod.parse_selector_list(selector)
+    # P32.4 — use the *same* at-rule-aware rule set as the renderer so a
+    # selector inside @media / @supports still reports a match (the toy
+    # treats every @supports as supported; media rules only when their
+    # query matches the default 800x600 viewport the DevTools run uses).
+    author_rules = _devtools_effective_rules(
+        css_text,
+        viewport_w=float(width), viewport_h=float(height))
+
+    def walk(node):
+        if node.is_element():
+            matched_query = []
+            for s in sels:
+                if s.matches(node):
+                    txt = s.selector_text
+                    if not txt:
+                        txt = (" " + s.combinator + " ").join(s.parts)
+                    matched_query.append(txt)
+            if matched_query:
+                rules_hit = []
+                for r in author_rules:
+                    for rs in r.selectors:
+                        if rs.matches(node):
+                            rules_hit.append(r.selector_text or "?")
+                            break
+                eid = node.attr("id")
+                cls = node.attr("class")
+                label = (node.tag or "?").lower()
+                if eid:
+                    label += f"#{eid}"
+                if cls:
+                    label += "." + ".".join(cls.split())
+                results.append({
+                    "node": label,
+                    "selectors": matched_query,
+                    "rules": rules_hit,
+                })
+        for c in node.children:
+            walk(c)
+
+    walk(root_dom)
+    return results
+
+
+def devtools_report(html: str, css_text: str = "",
+                    width: int = 800, height: int = 600,
+                    element_id: str = "", selector: str = "") -> str:
+    """P32.4 — a single human-readable DevTools report.
+
+    Includes the DOM tree, the computed style for *element_id* (when
+    given), and selector provenance for *selector* (when given).  Used
+    by the ``--devtools`` CLI flag.
+    """
+    tree = dom_mod.parse(html)
+    full_css = _full_css(tree, css_text)
+    _run_scripts(tree)  # let inline scripts mutate the DOM first
+    parts: list[str] = []
+    parts.append("=== DOM tree ===")
+    parts.append(devtools_dom_tree(tree))
+    if element_id:
+        parts.append(f"\n=== computed style: #{element_id} ===")
+        cs = devtools_computed_style(tree, full_css, element_id, width, height)
+        if cs.get("__notfound__"):
+            parts.append("(element not found)")
+        else:
+            meta = cs.pop("__meta__", {})
+            for k, v in sorted(cs.items()):
+                parts.append(f"  {k}: {v}")
+            parts.append(f"  [meta] {meta}")
+    if selector:
+        parts.append(f"\n=== selector: {selector} ===")
+        hits = devtools_selector_hits(full_css, tree, selector,
+                                      width=width, height=height)
+        if not hits:
+            parts.append("(no matches)")
+        for h in hits:
+            parts.append(f"  {h['node']}  ←  {', '.join(h['selectors'])}")
+            if h.get("rules"):
+                parts.append(f"     rules: {', '.join(h['rules'])}")
+    return "\n".join(parts)
+
+
 # P11.4 — hit-test + event coordinate APIs -------------------------------------------
 
 

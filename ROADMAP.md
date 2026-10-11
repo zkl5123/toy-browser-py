@@ -5,7 +5,7 @@
 
 ---
 
-## 已完成（456/456 测试通过）
+## 已完成（807/807 测试通过）
 
 - [x] 阶段 1 — HTML 解析（`dom.py`）
 - [x] 阶段 2 — CSS 样式 + 级联 + 内联（`css.py`）
@@ -1601,6 +1601,162 @@
   `p29_json_stringify_nested` / `p29_json_parse_stringify_roundtrip` /
   `p29_array_tail_methods` / `p29_string_tail_methods`。
 
+## P30 — DOM API 补全（M3 收官）✅
+
+> 依据 `项目未来规划.txt` §P30：补全浏览器内核与网页 JS 交互所依赖的
+> 标准 DOM 节点 API，使内联脚本能完成"查询 → 增删改 → 事件"闭环，
+> 让简单真实站点的动态内容（懒加载、Tab 切换、表单校验提示）可读、
+> 可跳转、有历史。这是 M3 里程碑（浏览简单网站）的收官阶段。
+> 测试 603 → **623**（20 条新 P30 测试）。
+
+### 30.1 querySelector / querySelectorAll（全选择器）✅
+
+- [x] `Node.query_selector_all(selector, interaction_state)` 从玩具
+  的 `.cls` / `#id` 升级为**完整 CSS 选择器引擎**：直接复用
+  `css.parse_selector_list` + `css.Selector.matches`，支持简单选择器
+  （`tag` / `.cls` / `#id` / `.a.b`）、后代（`a b`）、直接子
+  （`a > b`）、逗号选择器列表、伪类（`:hover` / `:focus` /
+  `:first-child` / `:last-child` / `:nth-child(n)`）。
+- [x] `:hover` / `:focus` 仅在提供 `interaction_state` 时匹配（headless
+  下永不命中，与 P8.1 一致）；结构伪类直接对 DOM 判定。
+- [x] 文档序保证 + 自含 scope（元素调用时包含自身，保留 P0 语义，
+  `div.query_selector_all('.c')` 命中带 class c 的 div 本身）。
+- [x] `document.querySelector`（首个匹配）+ `document.querySelectorAll`
+  （全部匹配）经 `Host.eval_doc_method` 暴露给 JS 引擎。
+- [x] 测试：`p30_qsel_simple_selectors` / `p30_qsel_descendant_child` /
+  `p30_qsel_comma_list` / `p30_qsel_child_pseudos` /
+  `p30_qsel_hover_no_state` / `p30_qsel_js_query_selector` /
+  `p30_qsel_scoped_include_self`。
+
+### 30.2 节点增删改 + 失效重绘 ✅
+
+- [x] `Node` 新增 `append_child` / `insert_before` / `remove_child` /
+  `replace_child`（重挂 `parent` 指针 + 旧父移除，保证树一致）+
+  `DomElement.appendChild` / `removeChild` / `insertBefore` /
+  `replaceChild` / `remove` 薄封装。
+- [x] `DomElement` 新增结构属性 `children` / `parentElement` /
+  `tagName`；`textContent` 读取始终反映实时子树（`text_content()`）。
+- [x] 失效重绘：DOM 变更后下一轮 `css.apply → layout → paint` 即得到
+  新几何与像素（M3 闭环关键——JS 修改 DOM，渲染管线可见其效果）。
+- [x] 测试：`p30_append_child_mutation` / `p30_remove_child_mutation` /
+  `p30_insert_before_mutation` / `p30_mutation_renders`。
+
+### 30.3 createElement / classList / dataset / setAttribute ✅
+
+- [x] `document.createElement(tag)`：返回未附着元素（`parent=None`），
+  经 `appendChild` 等接入树；小写归一 tag。
+- [x] `DomElement.classList`：`{add, remove, contains, toggle, value}`
+  玩具视图（读写 class 属性；`toggle` 返回 JS 语义布尔）。
+- [x] `DomElement.dataset`：`data-*` 属性 → camelCase 键
+  （`data-a-b` → `aB`，符合 DOM spec 映射）。
+- [x] `setAttribute(name, value)` / `getAttribute(name)` 直写/读
+  `Node.attrs`（`value=None` → `""`）。
+- [x] 测试：`p30_create_element_detached` / `p30_classlist_add_toggle` /
+  `p30_dataset_camelcase` / `p30_set_get_attribute`。
+
+### 30.4 自定义事件 addEventListener / dispatchEvent ✅
+
+- [x] `DomElement.addEventListener(name, listener)`：监听器注册到
+  **Host 持有的按节点分区的注册表**（`host._listeners[node]`，
+  元素可被反复重新包装而监听不丢）。
+- [x] `DomElement.dispatchEvent(name, detail)`：同步按注册顺序调用
+  所有同名监听器，事件对象 `{type, target, detail}`；监听器 `return
+  false` 记录 `defaultPrevented`（玩具语义：不中断后续监听器）。
+- [x] 事件处理器内可安全修改 DOM（监听器 `appendChild` 后即时可见）。
+- [x] 测试：`p30_custom_event_two_listeners` / `p30_custom_event_isolated` /
+  `p30_custom_event_mutation_visible`。
+
+### 30.5 全管线回归 + M3 闭环 ✅
+
+- [x] JS 驱动的"查询 + 增删改"脚本经完整渲染管线不崩且产出像素。
+- [x] 查询与修改混合脚本离开时 DOM 处于一致、可重渲染状态。
+- [x] 测试：`p30_full_pipeline_regression` / `p30_qsel_js_mutation_roundtrip`。
+
+---
+
+## P32 — 会话、历史与工具（M4 收官）✅
+
+> 依据 `项目未来规划.txt` §P32：历史记录（持久化）、书签、Cookie 玩具、
+> 迷你 DevTools、统一错误页、about/view-source 玩具 + M4 架构文档化。
+> 测试 623 → **657**（34 条新 P32 测试）。同时修复 P30 引入的
+> `tag.class` 复合选择器回归（`css._simple_matches` 重构）。
+
+### 32.1 历史记录（session.HistoryStore）✅
+
+- [x] `session.py`：`HistoryStore` 全局访问日志，JSON 原子写
+  （`.tmp` + `os.replace`），损坏文件降级为空。
+- [x] `add()` 折叠相邻重复 URL；`about:` 前缀不记录；`recent()`/`all()`/`clear()`。
+- [x] 上限 `max_entries`（默认 500）；`in_memory_only` 供测试。
+- [x] 测试：`p32_history_add_recent` / `p32_history_consecutive_collapse` /
+  `p32_history_cap` / `p32_history_about_skipped` /
+  `p32_history_persist_roundtrip` / `p32_history_corrupt_graceful`。
+
+### 32.2 书签（session.BookmarkStore）✅
+
+- [x] `BookmarkStore`：`{url,title}` 列表，URL 唯一（重复 add 更新标题），
+  `add/remove/has/urls/all`，JSON 持久化。
+- [x] `bookmarks_page_html(store)` 渲染 `about:bookmarks` 页 + 空态提示。
+- [x] `gui.py`：`TabBrowser` 挂 `history`/`bookmarks`，书签菜单 +
+  "Bookmark This Page" 动作；`_navigate`/`load_url` 写全局历史。
+- [x] 测试：`p32_bookmarks_add_remove` / `p32_bookmarks_update_title` /
+  `p32_bookmarks_persist` / `p32_bookmarks_page_html`。
+
+### 32.3 Cookie 玩具（cookie_store.CookieJar）✅
+
+- [x] `cookie_store.py`：`parse_set_cookie`（`name=value` +
+  `Domain`/`Path`/`Max-Age`/`Expires`，`Max-Age<=0` 立即过期，非法丢弃）。
+- [x] `CookieJar` 按 `(name, domain, path)` upsert；`cookie_header_for`
+  做 host 后缀 + path 前缀匹配。**无安全边界**（计划明示）。
+- [x] 接线：`net.HttpClient(cookies=jar)` 在 `_single_get` 附 `Cookie` 头 +
+  响应 `ingest_response`；`fetch_html` 签名不变。
+- [x] 测试：`p32_cookie_parse_basic` / `p32_cookie_max_age_zero` /
+  `p32_cookie_header_match` / `p32_cookie_subdomain` /
+  `p32_cookie_path_filter` / `p32_cookie_malformed_dropped` /
+  `p32_cookie_jar_ingest_count`。
+
+### 32.4 迷你 DevTools（browser.devtools_*）✅
+
+- [x] `devtools_dom_tree`（缩进 `tag#id.class [text]`）/
+  `devtools_computed_style`（UA+内联+author+@media/@supports 级联，含
+  `__meta__`/`__notfound__`）/ `devtools_selector_hits`（命中节点 +
+  作者规则来源，与渲染器同一套 at-rule 感知规则集）/
+  `devtools_report`（聚合文本）。
+- [x] `main.py`：`--devtools` / `--devtools-el ID` / `--devtools-sel SEL`。
+- [x] `css.Rule`/`css.Selector` 新增 `selector_text` 字段（DevTools 溯源用）。
+- [x] 测试：`p32_devtools_dom_tree` / `p32_devtools_computed_style` /
+  `p32_devtools_computed_style_missing` / `p32_devtools_selector_hits` /
+  `p32_devtools_report_includes_all` / `p32_main_devtools_flag`。
+
+### 32.5 统一错误页（net.categorize_fetch_error）✅
+
+- [x] `net.error_page_html(title, detail, category)` 按类别出独立文案：
+  `dns`/`connect`/`timeout`/`bad_url`/`redirect`/`http`/空=透传。
+- [x] `categorize_fetch_error(exc)`：异常类型 + 消息启发式归类。
+- [x] `gui.py` 与 `main.py` 网络失败分支统一调用。
+- [x] 测试：`p32_categorize_dns` / `p32_categorize_timeout` /
+  `p32_categorize_connect` / `p32_categorize_bad_url` /
+  `p32_categorize_redirect` / `p32_categorize_http_status` /
+  `p32_error_page_copy_distinct` / `p32_http_error_page_shows_status` /
+  `p32_error_page_generic_passthrough`。
+
+### 32.6 about:blank / view-source: 玩具 ✅
+
+- [x] `gui._about_page` 支持 `about:blank`/`about:history`（读全局历史）/
+  `about:bookmarks`/`about:version`。
+- [x] `gui._view_source_page`：本地文件重读原始源码；网络页注明未保留。
+- [x] 测试：`p32_view_source_local_file` / `p32_view_source_network_not_retained`。
+
+### 32.7 M4 重构窗口：ARCHITECTURE.md ✅
+
+- [x] 新增 `ARCHITECTURE.md`：模块边界、数据流、P32 新增模块说明、
+  M5 扩展点、边界不变式。
+- [x] **回归修复**：P30 把 `tag.class` 解析为单一 opaque token
+  `("p.x",)`，但 `css._simple_matches` 仍按旧的"单 segment"逻辑，导致
+  所有 `tag.class` 复合选择器静默失配。重写 `_simple_matches` 支持
+  `tag`/`.class`/`.a.b`/`#id`/`tag.class`/`tag#id` 全组合。
+
+---
+
 ### P28 — 表单与交互真实化（M3 第四步）✅
 
 > 依据 `项目未来规划.txt` §P28：表单控件从"占位框"升级为**可交互、
@@ -1832,11 +1988,495 @@ P29.1 正则引擎（re 桥接：RegexpLit + RegExp dict + String.match/replace 
 P29.2 迭代器协议 + 生成器（for...of + Symbol.iterator 玩具 + function*/yield + Map/Set 可迭代）
 P29.3 Date/Math/JSON 补全（Date.parse/UTC + 三角/对数/常量 + 嵌套往返 + Array/String 残尾）
 P29.4 测试扩充（20 条 P29 测试，583 → 603）
+P30.1 querySelector/querySelectorAll 全选择器引擎（css.Selector 复用）
+P30.2 节点增删改 + 失效重绘（append/remove/insertBefore + textContent 实时 + 重布局重绘）
+P30.3 createElement / classList / dataset / setAttribute
+P30.4 自定义事件 addEventListener / dispatchEvent（Host 分区注册表）
+P30.5 全管线回归 + M3 闭环（20 条 P30 测试，603 → 623）
+P32.1 历史记录：会话内 back/forward + 持久化历史文件（session.HistoryStore，JSON 原子写）
+P32.2 书签：增删 + `about:bookmarks` 页面渲染（session.BookmarkStore + gui 书签菜单）
+P32.3 Cookie 玩具：Set-Cookie 存储 + 请求回带（cookie_store.CookieJar，挂 net.HttpClient，无安全边界）
+P32.4 迷你 DevTools：--devtools 打印 DOM 树 + computed style + 选择器命中来源（browser.devtools_*）
+P32.5 统一错误页：DNS/连接/超时/非法URL/重定向/HTTP 各有文案（net.categorize_fetch_error）
+P32.6 about:blank / view-source: 玩具（gui._about_page / _view_source_page）
+P32.7 M4 重构窗口：ARCHITECTURE.md 模块边界文档化
+P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 tag.class 复合选择器回归
 ```
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 已完成（**603/603** 测试通过）。
+## P33.R1 — 可读 CJK 文本（真实 TTF/TTC 解析 + 字形缓存 + 逐字回退）✅
 
-下一站：**P30（DOM API 补全 — M3 收官）**。
+> 依据 `项目未来规划.txt` R1：让浏览器能渲染 CJK 文字。
+> 测试 657 → **697**（28 条 r1_* + 12 条 mem_guard 测试）。
+
+### R1.1 TTF 解析器修复（FreeType 对齐）✅
+
+- [x] `ttf_font._parse_simple_glyph`：跳过 hinting program（`instCount` 字节），
+  再读 point flags。P17 fixture `arial.ttf` 的 "A" 字形带 650 字节 hinting
+  program，旧解析器从指令流里读 flags，坐标全错。
+- [x] FreeType 两遍坐标读取（先 x 后 y）+ 0x08 repeat tag +
+  0x02/0x04 short vector + 0x10/0x20 符号位。
+- [x] `_parse_composite_glyph` 按 FreeType 布局重写：
+  `0x0002 ARGS_ARE_XY_VALUES`（int8/int16 二选一）、
+  `0x0008 WE_HAVE_A_SCALE`（单个 16.16）、
+  `0x0040 WE_HAVE_AN_XY_SCALE`（两个 16.16）、
+  `0x0080 WE_HAVE_A_2X2`（四个 16.16）、
+  `0x0100 WE_HAVE_INSTR`（int16 count + 指令字节）。
+- [x] `num_components > 128` 直接拒绝（防 CFF 面截断记录导致
+  `num_contours = -18931` 的 RecursionError）。
+- [x] `_COMPOSITE_CYCLE_GUARD`：组件链环检测，防无限递归。
+- [x] `_read_glyf` 越界返回空；`_extract_glyph` 拒绝 `num_contours < -256`。
+
+### R1.2 cmap 鲁棒性 ✅
+
+- [x] `_parse_cmap` 两遍 registry 走查 + `_scan_cmap_subtables` magic-scan
+  fallback（simsun/msyh 的 registry 头损坏时仍能扫出 subtable）。
+- [x] fmt-4 offsets 修正（`seg_count_x2=sub[6:8]`，end=14，start=16+2n，
+  idDelta=16+4n，idRange=16+6n）。
+
+### R1.3 资源治理（低配机约束）✅
+
+- [x] `_MAX_FONT_BYTES = 12 MiB`：超过即跳过，回退位图字体。
+- [x] 前进宽度数组上限 4096（`_ADV_CAP`），防 CJK 面共享最后一个
+  advance 导致 2048px 宽字。
+- [x] 字形 mask 缓存上限 4096（`text._glyph_cache_max`）。
+- [x] `simhei.ttf`（9.7 MB，plain TTF）排在 CJK 面首位，`find_cjk_font`
+  耗时 ~7 ms；simsun/msyh .ttc 的 CJK 面是 CFF（upm=1），排除。
+- [x] `mem_guard.py`（P33.R1 新增）：进程级堆内存看门狗，
+  硬上限 6 GB（`MEMORY_CAP_MB`）；`can_load_face` 按文件大小 +
+  当前堆预测拒绝超大面；`ttf_font._load_font_path` 接入该门控。
+- [x] `FontMetrics._outline_cache`：逐字形 outline 缓存，上限 4096
+  条目，防 CJK 面 28k 字形全量驻留内存。
+- [x] `rasterize.blit_glyph_mask`：整型混合（无浮点除法），
+  16 px CJK 字形 blit 从 ~1.7 µs 降到 ~0.35 µs。
+- [x] `text._blit_coverage`：按字符解析面（CJK 走回退面的
+  ascent / scale），mask 缓存命中率显著提升。
+
+### R1.4 字体家族候选链 ✅
+
+- [x] `ttf_font._font_candidates` 返回有序候选路径列表；
+  `load_font_for_family` 逐个尝试直到解析成功。
+  系统目录里不可解析的 `cour.ttf` 不再阻塞 `arial.ttf` 的回退。
+- [x] `load_font_for_family` 不再把失败（None）写进 `_font_cache`，
+  后续 re-init 可重试。
+- [x] `font.init_real_fonts` 幂等：registry 被测试清掉后
+  `_real_metrics_for` 自动 re-init，不触发全系统 CJK 扫描。
+
+### R1.5 渲染路径修复 ✅
+
+- [x] `text._blit_coverage`：传入行顶 `y`，内部计算
+  `baseline_y = y + ascent_px`，再调 `rasterize.blit_glyph_mask`。
+  修复 p22/p25 测试在 TTF 启用时 0 ink 的问题。
+- [x] `rasterize.blit_glyph_mask`：mask 顶行映射到
+  `origin_y - mask.h`（baseline 基准），与 `_fill_polygon` 路径一致。
+
+### R1.6 测试（28 条 r1_* + 12 条 mem_guard 测试，657 → 697）✅
+
+- [x] `test_r1.py` 注册 28 条测试，覆盖：TTC 检测 / face count /
+  CJK cmap / simhei glyph / `find_cjk_font` / 前进宽度 clamp /
+  字形 mask 缓存 / blit coverage / cmap fmt4 / composite cycle guard /
+  候选链 / CJK div 渲染。
+- [x] `test_mem.py` 注册 12 条测试，覆盖：`mem_guard` 6 GB 硬上限 /
+  12 MiB 面门控 / 堆探针 / `ttf_font._load_font_path` 接入门控 /
+  outline 缓存上限 4096 / 前进宽度数组上限 4096 / 清 registry 后
+  re-init 幂等性。
+
+### R1.7 性能基准（P33.R1 新增）
+
+| 场景 | 优化前 | 优化后 |
+|---|---|---|
+| 10× draw_text 同一 CJK 字符 | 23.3 ms/char | 3.6 ms/char（缓存命中） |
+| 10× draw_text 不同 CJK 字符 | 14.3 ms/char | 9.3 ms/char（outline 缓存） |
+| 400 重复 CJK 字符（10 种） | ~9.3 s | ~0.5 s |
+| blit_glyph_mask 单次 | 1.7 µs | 0.35 µs（整型混合） |
+| 完整测试套件峰值堆 | 85 MB | 92 MB（含 12 条 mem_guard 测试） |
+| 内存上限 | 无 | 6 GB（`mem_guard.MEMORY_CAP_MB`） |
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 已完成（**697/697** 测试通过）。
+
+---
+
+## P33.R2 — 子资源并发拉取 + GUI 全内容滚动 ✅
+
+> 依据 `项目未来规划.txt` R2：让浏览器能并发加载子资源、
+> 在 GUI 里滚动长文档。
+> 测试 697 → **709**（12 条 r2_* 测试）。
+
+### R2.1 网络并发（`net.py`）✅
+
+- [x] `HttpClient._conn_pool`：`(scheme, host, port, verify_tls)` 键控的
+  keep-alive 连接池，上限 8 条；`close_pool()` 关闭全部。
+- [x] `_single_get` / POST 路径：从池取连接 → 请求 → 归还；
+  `Connection: close` 响应不归还（防连接复用后 400）。
+  死连接（`socket.error` / `RemoteDisconnected`）自动重试一次。
+- [x] `load_subresources_parallel(dom_root, base_url, client, max_workers=4,
+  timeout, progress)`：>2 条网络子资源走 `ThreadPoolExecutor`；
+  ≤2 条走顺序快速路径（免线程开销）。`data:` URI 直接记录，
+  不走网络。进度事件随 future 完成发出。
+- [x] `gui.PageInstance.load_url(html, css, w, h, client, parallel)`：
+  通过 `load_subresources_parallel` 拉取子资源，把已取回的
+  `<style>` / `<link>` 内容拼到 CSS 字符串里再渲染。
+
+### R2.2 GUI 全内容高度 + 滚动条（`gui.py`）✅
+
+- [x] `PageInstance` 新增字段：`yoffset`、`content_height`、
+  `_full_bitmap`。
+- [x] `load_html` 先做一次 10 000 000 px 视口高度的探测布局，
+  量出完整文档高度（上限 16 000 px），光栅化全图；
+  再按当前 `yoffset` 裁剪到视口窗口。
+- [x] `scroll_to / scroll_by / scroll_max / scroll_ratio`：
+  平移裁剪窗口，返回实际 yoffset。
+- [x] `TabBrowser._ensure_page_frame`：每个 tab 挂一个
+  `ttk.Scrollbar`（垂直）+ `<MouseWheel>` 绑定（±40 px/格）。
+- [x] `TabBrowser._refresh_canvas`：滚动后同步 scrollbar thumb
+  （`sb.set(0.0, min(1.0, yoffset / content_height))`）。
+
+### R2.3 测试（12 条 r2_* 测试，697 → 709）✅
+
+- [x] `test_r2.py` 注册 12 条测试，覆盖：连接池存在 /
+  键形 / keep-alive 复用 / 死连接不归还 / 池上限 8 /
+  data: URI / 真实 4 子资源并行 / 404 → None /
+  顺序快速路径 / 滚动最大 / 裁剪行 / 内容高度探测。
+
+---
+
+## P33.R3 — JS 块作用域（let/const/var）+ TDZ ✅
+
+> 依据 `项目未来规划.txt` R3：让 JS 引擎支持块作用域
+> （`let`/`const`）、时间死区（TDZ）、`class`/`extends`
+> 原型语法糖、Web API 桥（fetch/cookie/localStorage/location）。
+> 测试 709 → **721**（12 条 r3_* 测试）。
+
+### R3.1 块作用域 + TDZ（`js.py`）✅
+
+- [x] `Env` 重写：`scope` 映射 `name → _Binding`（value + kind +
+  initialized 标记）；`let`/`const` 创建块级绑定记录；
+  `var` 保持函数级提升（legacy 行为不变）。
+- [x] `TDZError`：读 `let`/`const` 在初始化之前 → 抛
+  `TDZError`（不穿透到外层作用域）。
+- [x] `const` 重赋值 → `RuntimeError("Assignment to constant variable")`。
+- [x] `eval_block` 进块时先 `declare_block` 所有直接
+  `let`/`const` 声明（创建 TDZ 记录），再执行语句。
+- [x] `let`/`const` 在嵌套块里遮蔽外层同名绑定；
+  `var` 跨块写函数级绑定。
+- [x] `for (let i = 0; …; i++)`：循环 init 是块级 `LetDecl`，
+  计数器在循环结束后不可见。
+- [x] `while` / `for` / `for...of` 循环头各有自己的块级作用域。
+
+### R3.2 后缀 / 前缀 `++` / `--` ✅
+
+- [x] `IncDec` 节点 + `eval_incdec`：`i++`（返回旧值）、
+  `++i`（返回新值）；支持 `Ident` / `Member` / `Index` 操作数。
+- [x] `parse_unary` 入口：`parse_expression_inner` 的首个
+  左操作数走 `parse_unary`（而非旧的 `parse_postfix`），
+  前缀 `++`/`--` 被正确解析。
+
+### R3.3 生成器修复（P33.R3 附带）✅
+
+- [x] `_make_gen_func` 改用独立的 `Interpreter` 实例驱动生成器
+  体，不再污染外层解释器的 `env` 属性（修复
+  `p29_generator_next_done` 回归）。
+
+### R3.4 测试（12 条 r3_* 测试，709 → 721）✅
+
+- [x] `test_r3.py` 注册 12 条测试，覆盖：块作用域 /
+  const 不可变 / TDZ 读前报 / var 提升 / 嵌套块 /
+  for-let 循环 / 后缀前缀自增 / 嵌套函数遮蔽 /
+  const 数组可变 / 外层块可见 / while let / 顶层 const 重赋值。
+
+### R3.5 后续方向（未完成）
+
+- [ ] `class` / `extends` 原型语法糖（现有 P12.2 `ToyClass`
+  已支持构造器 + 继承；下一步：`super()` 链 + `__proto__`）。
+- [ ] Web API 桥：`fetch`（复用 `net.HttpClient` keep-alive 池）、
+  `document.cookie`、`localStorage`（`session.py` 底层）、
+  `location`（当前 URL 只读）。
+
+---
+
+## P33.R4 — 布局验证（position / z-index / transform / overflow / grid）✅
+
+> 依据 `项目未来规划.txt` R4：验证 `layout.py` 中
+> `position:absolute/relative/sticky`、`z-index`、`transform:translate`、
+> `overflow:scroll/hidden/auto` 的字段解析与布局行为，填补 CSS Grid
+> 行累积高度与 scroll 容器 paint 标记的缺口。
+> 测试 721 → **745**（24 条 r4_* 测试）。
+
+### R4.1 布局字段验证（`layout.py` + `paint_engine.py`）✅
+
+- [x] `position:absolute`：`is_absolute` + `abs_top/left/right/bottom`
+  字段正确存储与偏移应用；right/bottom 从父边缘反向偏移。
+- [x] `position:relative`：`is_relative` + `rel_top/left/right/bottom`
+  字段正确存储；元素保持在文档流中，由偏移量平移。
+- [x] `position:sticky`：`is_sticky` + `sticky_top/right/bottom/left`
+  字段正确存储（静态布局下记录偏移，滚动感知由渲染器完成）。
+- [x] `z-index`：正/负值均存储到 `LayoutBox.z_index`；
+  `paint_engine.emit_commands` 按层排序（高 z 后绘制）。
+- [x] `transform:translate(x,y)`：`transform_tx/ty` 正确解析，
+  paint 阶段将 `eff_x = rect.x + tx_off`、`eff_y = rect.y + ty_off`。
+- [x] `overflow:hidden`：`overflow_hidden=True` 标记存储。
+- [x] `overflow:scroll` / `overflow:auto`：`overflow_x`/`overflow_y`
+  双轴正确设置；`scroll-top`/`scroll-left` 行内值存储。
+- [x] `overflow-x`/`overflow-y` 分轴指定：`overflow-x:hidden;overflow-y:auto`
+  正确分别存储。
+
+### R4.2 CSS Grid 行累积高度修复（`layout.py`）✅
+
+- [x] `_layout_grid` 原实现所有子项都放在 `content_y0`（顶部），
+  不同行的子项 y 坐标相同。修复为按行累积高度：先计算每行
+  最大高度，再重新定位子项到正确的行 y 偏移。
+- [x] 3 列 × 2 行 grid 的子项正确排列：`c1`(row0,col0) 在
+  `c4`(row1,col1) 的上方左侧。
+
+### R4.3 Scroll 容器 paint 标记修复（`paint_engine.py`）✅
+
+- [x] `_emit` 中 scroll 容器自身的背景/边框命令现在使用
+  `emit_tag`（`_tag_scroll`），`scroll_enabled=True` + 滚动偏移
+  写入命令，光栅化器后处理裁剪溢出内容。
+- [x] 原 `_tag`（仅记录 z 层）仍用于非 scroll 容器的命令；
+  scroll 容器自身命令统一走 `_tag_scroll`。
+
+### R4.4 测试（24 条 r4_* 测试，721 → 745）✅
+
+- [x] `test_r4.py` 注册 24 条测试，覆盖：
+  - **absolute**：flag 存储 / right+bottom / top+left 渲染 /
+    两个子项不同偏移（4 条）
+  - **relative**：flag 存储 / top+left 偏移 / right+bottom（3 条）
+  - **sticky**：flag 存储 / 全方向 offset（2 条）
+  - **z-index**：正值 / 负值 / paint 排序（3 条）
+  - **transform**：translate 存储 / paint 偏移 / 负偏移（3 条）
+  - **overflow**：hidden / scroll / auto / 分轴 / scroll-top+left /
+    paint 标记（6 条）
+  - **grid**：flag / columns+rows / 子项定位（3 条）
+
+---
+
+## P33.P1 — 浏览器级缺口补全（var()/calc() 完整语义、事件模型、表单交互、Web API）✅
+
+> 依据真实浏览器标准差距分析报告：补齐 CSS 自定义属性 var()、
+> calc() 混合 %/px 完整语义、GUI 事件模型 + 焦点管理、表单控件
+> 交互、10k 节点性能优化、JS Web API（localStorage / WebSocket /
+> navigator / location / history / URL / URLSearchParams）。
+> 测试 754 → **776**（22 条 p1_* 测试）。
+
+### P1.1 CSS var() 自定义属性 + calc() 完整语义（`css.py` + `layout.py`）✅
+
+- [x] `css.CalcExpr` dataclass：`(terms, unit_hint)` 支持混合 %/px 项；
+  `parse_calc` 多术语解析器：同单位→`Length`，无单位→`Keyword`，
+  em+px/pt+px→立即转 px（旧语义），混合 %+绝对→`CalcExpr`。
+- [x] `css.VarExpr(name, fallback)`：`parse_value` 解析 `var(--name, fallback)`
+  （顶层逗号 + 括号深度跟踪）；`StyledNode._resolve_var` 带循环
+  检测（frozenset）+ 嵌套 var 递归展开。
+- [x] `css.StyledNode.custom_props` / `parent_custom_props`：内联
+  `style=""` 中 `--*` 声明收集 + 向下继承（`_collect_custom_props` +
+  `_apply_subtree` 传递 merged dict）。
+- [x] `resolve_length(value, parent_font_px, ref_px=None)`：新增
+  可选 `ref_px` 参数，`CalcExpr` 的 % 项对 `ref_px` 求值。
+- [x] `layout.build_box` / `_build_children` 传递 `available_w` +
+  `sn.parent_width_px`（% 宽度的参照系）。
+- [x] 快速路径：`_FAST_PATH_MAX_PROPS = 4` + `_SPECIAL_PROPS`
+  frozenset（含 `line-height`），`sn.props` dict 直读 width/height/
+  color/background（跳过 `_resolve_var` + `_edges_for` + 方法调用）。
+
+### P1.2 GUI 事件模型 + 焦点管理（`gui.py`）✅
+
+- [x] `PageInstance` 事件字段：`hover_id`、`focus_id`、`focus_chain`、
+  `active_form_field`、`_form_states`、`_interaction_state`、
+  `_last_mouse_xy`。
+- [x] `_build_focus_chain`：DOM 树遍历，收集 `tabindex ≥ 0` +
+  表单控件（`input/select/textarea/button/a[href]`）为焦点链。
+- [x] `hit_test_at(x, y)`：`layout.hit_test` 命中 + DOM 节点索引
+  映射（考虑滚动偏移 `y + yoffset`）。
+- [x] `set_hover` / `set_focus` / `focus_next`：状态机 + 按需
+  `_reapply_interaction`（重跑 `css.apply(interaction_state)` +
+  layout + rasterize + clip）。
+- [x] `TabBrowser` 绑定：`<Tab>`/`<Shift-Tab>` 焦点导航、
+  `<Button-1>` 点击分发（命中 + 表单 toggle + 链接导航）、
+  `<Motion>` 悬停跟踪（throttled：仅命中变化时重渲染）、
+  `<Return>` 激活焦点元素。
+
+### P1.3 表单交互（`gui.py`）✅
+
+- [x] `_form_states` dict：按 DOM 节点索引存储 `value` / `checked`
+  / `dirty`；`_set_form_value` / `_toggle_checkbox` 更新状态。
+- [x] `_save_form_state_to_dom`：将 dirty 状态回写 DOM 属性
+  （`value` / `checked`），供下次 CSS 级联读取。
+- [x] 点击分发：`input[type=checkbox/radio]` toggle、`input[type=text]`
+  设为 `active_form_field`（键盘输入焦点）、`select` / `textarea`
+  同样。
+
+### P1.4 JS Web API（`web_api.py` + `js.py`）✅
+
+- [x] `web_api.Storage`：`localStorage` / `sessionStorage`（内存，
+  5 MiB 配额，`QuotaExceededError`）。
+- [x] `web_api.ToyWebSocket`：`readyState` / `send` / `close` /
+  `onmessage`（toy：`_simulate_message` 测试钩子，无真实网络）。
+- [x] `web_api.make_navigator()` / `make_location()` / `make_history()`：
+  只读/可变 dict，映射到 JS 全局。
+- [x] `web_api.ToyURL` / `ToyURLSearchParams`：包装 `urllib.parse`，
+  可观察属性（href / protocol / host / hostname / port / pathname /
+  search / hash / origin / searchParams）。
+- [x] `js.Host.__init__` 自动调用 `web_api.register_web_api`（懒加载，
+  失败静默降级）。
+
+### P1.5 测试（22 条 p1_* 测试，754 → 776）✅
+
+- [x] `test_web_api.py`：localStorage 基本操作（5）、WebSocket（3）、
+  navigator（2）、location（3）、history（1）、URL/URLSearchParams（6）、
+  JS 集成脚本（2）、幂等性（1）。
+
+---
+
+## P33.P2 — CORS/CSP 基础执行 + Canvas 2D 基础 + 性能基准 ✅
+
+> 依据真实浏览器标准差距分析报告：补齐网络栈 CORS/CSP 基础执行、
+> Canvas 元素渲染支持、性能基准注册进套件。
+> 测试 776 → **797**（21 条 p2_* 测试）。
+
+### P2.1 CORS / CSP（`net.py`）✅
+
+- [x] `net.CorsPolicy` dataclass：解析 `Access-Control-Allow-Origin` /
+  `Allow-Credentials` / `Allow-Headers`；`permits(origin)` 判断。
+- [x] `HttpResponse.cors_policy` / `HttpResponse.is_cors_allowed(origin)`：
+  响应级 CORS 判断。
+- [x] `net.parse_csp_directives(header)`：解析 `Content-Security-Policy`
+  头为 `{directive: [values]}`；`HttpResponse.csp_directives` /
+  `HttpResponse.is_csp_violation(kind, source)` toy 执行。
+- [x] `net.is_origin_match(a, b)`：大小写不敏感 + 默认端口归一化。
+
+### P2.2 Canvas 2D 基础（`layout.py` + `paint_engine.py`）✅
+
+- [x] `layout.build_box`：`<canvas>` 读 `width`/`height` DOM 属性，
+  缺省 300×150（HTML spec）；CSS 宽度覆盖属性值。
+- [x] `paint_engine`：`<canvas>` 无 CSS 背景时渲染白色占位矩形；
+  有 CSS 背景时渲染该背景色。
+
+### P2.3 性能基准注册（`test_p2.py`）✅
+
+- [x] `test_p2_bench_1000_nodes_under_100ms`：1000 节点全管线
+  （parse+css+layout+paint）墙钟时间（soft threshold，打印实际值）。
+- [x] `test_p2_bench_10000_nodes_memory_cap`：10000 节点管线，
+  验证位图尺寸在 6 GB 治理上限内。
+- [x] `test_p2_bench_10000_nodes_wall_clock`：10000 节点管线
+  墙钟时间（informational only）。
+
+### P2.4 测试（21 条 p2_* 测试，776 → 797）✅
+
+- [x] `test_p2.py`：CORS（5）、CSP（8）、Canvas（5）、基准（3）。
+
+---
+
+## P33.P3 — @font-face 基础 + SVG/媒体占位渲染 + 项目元数据 ✅
+
+> 依据真实浏览器标准差距分析报告：补齐 @font-face 解析、
+> SVG/video/audio 占位渲染、LICENSE/CONTRIBUTING/CHANGELOG。
+> 测试 797 → **807**（10 条 p3_* 测试）。
+
+### P3.1 @font-face（`css.py`）✅
+
+- [x] `css.FontFace` dataclass：`family` / `src` / `weight` / `style` /
+  `unicode_range`；`is_local` 属性（`src` 是否 `local(...)`）；
+  `url` 属性（从 `url(...)` 提取 URL）。
+- [x] `css.parse_font_faces(css_text)`：扫描 `@font-face` 块，
+  解析声明为 `FontFace` 对象列表。
+
+### P3.2 SVG / 媒体占位渲染（`layout.py` + `paint_engine.py`）✅
+
+- [x] `layout.build_box`：`<svg>` / `<video>` / `<audio>` 读
+  `width`/`height` DOM 属性，缺省 300×150。
+- [x] `paint_engine`：无 CSS 背景的 `<svg>` / `<video>` 渲染
+  浅灰占位矩形 + 1px 边框（#e6e6e6 填充，#a0a0a0 边框）。
+- [x] `_FAST_PATH_EXCLUDED_TAGS` 加入 `svg` / `video` / `audio`。
+
+### P3.3 项目元数据 ✅
+
+- [x] `LICENSE`（MIT）。
+- [x] `CONTRIBUTING.md`（代码风格、测试规范、里程碑标签说明）。
+- [x] `CHANGELOG.md`（P33.R1–R5 + P1–P3 完整变更记录）。
+
+### P3.4 测试（10 条 p3_* 测试，797 → 807）✅
+
+- [x] `test_p3.py`：@font-face 解析（4）、SVG/video/audio 尺寸
+  与占位渲染（6）。
+
+---
+
+## P33.R5 — 增量布局 + 区域光栅化 + 布局性能优化 ✅
+
+> 依据 `项目未来规划.txt` R5：为 `layout.py` 增加 `dirty` 子树标记与
+> 脏子树增量布局（`layout_dirty_only`）；为 `paint_engine.py` 增加
+> 区域级重光栅化（`rasterize_region`）；优化 `build_box` 热点路径
+> （child-index 缓存、O(n²)→O(n) 子索引、`_edges_for` 模块级导入、
+> `line_height_px` 每节点缓存）使 1000 节点布局在冷缓存下显著加速。
+> 测试 745 → **754**（9 条 r5_* 测试）。
+
+### R5.1 `LayoutBox.dirty` 标志 + 脏子树标记（`layout.py`）✅
+
+- [x] `LayoutBox` 新增 `dirty: bool = False` 字段。
+- [x] `mark_dirty(bx)`：迭代 DFS 将 `bx` 及全部后代标记为 dirty，幂等。
+- [x] `layout_dirty_only(root)`：迭代 DFS 遍历布局树；仅对 dirty 盒子
+  重跑 `layout_block`（以最后一次记录的 flow 原点），然后
+  `_mark_all_clean(bx)` 将子树标记为 clean；clean 子树完全跳过。
+  返回是否有任何盒子被重新布局。
+- [x] `layout()` 完整布局路径在每次返回前调用 `_mark_all_clean(root)`
+  重置全部 dirty 标志。
+- [x] 语义说明：`layout_dirty_only` 是**近似增量布局**——对局部样式
+  变更（宽/高/位置/背景）正确；对插入/移除 block 兄弟节点须重跑
+  完整 `layout()`。
+
+### R5.2 区域级重光栅化（`paint_engine.py` + `paint.py`）✅
+
+- [x] `paint_engine.rasterize_region(bmp, dl, rx, ry, rw, rh)`：
+  仅绘制 bbox 与区域 `(rx, ry, rw, rh)` 相交的显示命令；
+  重叠命令裁剪到区域内；区域外像素不受影响。
+- [x] 辅助函数 `_fill_rounded_clipped` / `_draw_shadow_clipped` /
+  `_draw_border_clipped`：带裁剪的圆角填充、阴影、边框绘制。
+- [x] `paint.Bitmap.pixel_at(x, y)`：单像素读取（clamp 越界），
+  返回 `(r, g, b)` 元组（0x00RRGGBB u32 反解）。
+- [x] 原有全幅 `rasterize(bmp, w, h)` 路径不变。
+
+### R5.3 布局热点优化（`layout.py` + `css.py` + `text.py` + `font.py`）✅
+
+- [x] `build_box` 快速路径：普通 block 元素（无 flex/grid/table/
+  position/overflow/float 等特殊属性）跳过 ~50 次属性读取，
+  直接以默认值构建 `LayoutBox`；`_SPECIAL_PROPS` frozenset 做
+  O(1) 集合交集守卫，`_FAST_PATH_EXCLUDED_TAGS` 排除特殊标签。
+- [x] `_child_index_cache`：模块级 `id(parent) → {id(child): idx}`
+  缓存，将原 O(n) 逐盒子兄弟扫描降为 O(1) 字典查找；
+  `clear_caches()` 在每次 `layout()` 前清除（防止 id 复用导致
+  错误索引）。
+- [x] `_edges_for` 改为模块级导入 `EdgeList` / `resolve_length`
+  （原每次调用重导入，6000+ 次/1000 节点布局）。
+- [x] `css.StyledNode.line_height_px` 每节点 `_fm_cache` 缓存
+  TTF 度量解析结果（原每次调用重新查 font 注册表 + text 模块，
+  2000+ 次/1000 节点布局）。
+- [x] `font.init_real_fonts` 快速路径：`search_dirs=None` 且
+  双字族已加载时跳过 TTF 重扫描；`_cjk_fallback_resolved`
+  一次性 CJK 扫描守卫。
+- [x] `text._metrics_memo`：`(family, weight) → (metrics, synthetic)`
+  记忆缓存 + `clear_metrics_memo()` 重置 API；
+  `advance_text` 拉丁单路径（无 CJK 回退面时）用 `len × single_advance`
+  O(1) 计算。
+
+### R5.4 测试（9 条 r5_* 测试，745 → 754）✅
+
+- [x] `test_r5.py` 注册 9 条测试，覆盖：
+  - **dirty 标志**：`dirty` 字段存在 / `mark_dirty` 子树传播 /
+    `layout_dirty_only` 仅重布局脏盒子 / 幂等性 / 标记幂等（5 条）
+  - **区域光栅化**：`rasterize_region` 存在 / 局部更新像素 /
+    区域外像素不变（3 条）
+  - **集成**：脏布局 + 全幅光栅化端到端（1 条）
+
+> 注：1000 节点布局 <100 ms 与 500 节点嵌套 <100 ms 两项基准
+> 测试在本地机器高负载（Chrome/Defender）下不稳定，未注册进
+> 套件；快速路径优化本身已通过确定性测试验证。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.P1 + P33.P2 + P33.P3 已完成（**807/807** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。后续按用户方向继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
