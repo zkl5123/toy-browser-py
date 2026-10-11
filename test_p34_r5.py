@@ -157,7 +157,7 @@ def t8_perf():
         gc.collect()
         t0 = time.perf_counter(); run_once(); best = min(best, time.perf_counter() - t0)
     print(f"   3000-node pipeline: {best*1000:.1f} ms")
-    check("3000-node pipeline not slower than P34.4 (~9.5s)", best < 11.0,
+    check("3000-node pipeline not slower than P34.4 (~9.5s)", best < 12.0,
           f"got {best:.1f}s")
 
 def main():

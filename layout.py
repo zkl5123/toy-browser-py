@@ -505,7 +505,14 @@ def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, 
     child's StyledNode so that ``width: calc(100% - 20px)`` and
     ``height: calc(100% - 20px)`` resolve against the containing
     block's actual dimensions (CSS2.1 §10.6.5).
+    P34.6c — leaf fast path: a box with zero children (the common case
+    for the 10k-node benchmark where ~50 % of boxes are leaves) pays
+    no iteration cost at all; the legacy code still entered the
+    function body, computed parent_w/parent_h, and looped over an
+    empty sn.children.
     """
+    if not sn.children:
+        return
     # P33.P1 — parent content dimensions for %/calc resolution.
     # build_box runs before layout_block sets the rect, so use
     # explicit_w (the parent's declared width) when available,

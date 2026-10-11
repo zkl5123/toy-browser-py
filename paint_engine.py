@@ -223,6 +223,33 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     eff_y = r.y + ty_off
     # P1.1 — apply opacity to the box's own background colour.
     op = bx.opacity
+
+    # P34.6 — pure-container fast path: a box that carries no
+    # paintable content of its own (no background, no border, no text,
+    # no shadow, no outline, no gradient, no clip, no image, no
+    # control, not an img/iframe/canvas/svg/video element, no active
+    # filter, not a scroll container, no transform) emits ZERO
+    # commands on its own — it merely recurses into its children.  The
+    # legacy code still paid for ~30 local alias hoists, the filter-
+    # fields dict build, the _dc / _cmds_append / _emit_one closure
+    # definitions, and ~15 condition checks for these no-op
+    # containers; on the 10k-node benchmark a large fraction of the
+    # 21k boxes are such pure wrappers, so skipping the per-box
+    # setup entirely is a measurable win.  The guard conservatively
+    # checks every paint-source flag; if any is set the legacy full
+    # path runs unchanged.
+    if (bx.background is None and bx.border.left == 0
+            and not bx.text_content and not bx.shadow_enabled
+            and not bx.outline_width and not bx.gradient_enabled
+            and not bx.clip_enabled and bx.img_pixels is None
+            and not bx.control_type
+            and not is_img and not is_iframe and not is_canvas
+            and not is_svg and not is_video
+            and not bx.filter_enabled and not is_scroll_container
+            and tx_off == 0 and ty_off == 0):
+        for c in bx.children:
+            _emit(c, dl)
+        return
     # P34.3 — a fast-path guard for the overwhelmingly common case where
     # the box has no opacity AND no background: skip the eff_bg
     # computation entirely (the legacy code still did the `if ... and
