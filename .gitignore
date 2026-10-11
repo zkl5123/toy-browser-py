@@ -15,6 +15,10 @@ anim_test/
 *.log
 *.tmp
 
+# 外部报告（临时存档，不属于源码发布包）
+改进建议来自ChatGPT.txt
+实测评估报告来自GLM.md
+
 # 编辑器与系统
 .idea/
 .vscode/
