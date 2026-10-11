@@ -1,6 +1,7 @@
 """P33.R1 — memory governor for low-spec hosts.
 
-Hard cap: process must not exceed 6 GB of Python-heap memory.  The
+Hard cap: process must not exceed 4 GB of Python-heap memory
+(user requirement: every Python runtime stays under 4 GB).  The
 TTF parser already enforces a 12 MiB font-file cap and a 4096-entry
 advance array; this module adds a *runtime* watchdog that tracks
 Python's own heap growth (via ``tracemalloc``) and refuses to load
@@ -11,23 +12,26 @@ Design
 - A single module-level ``tracemalloc`` domain is started lazily on
   the first :func:`can_load_face` call.
 - :func:`heap_mb` returns the current process heap in MiB.
-- :func:`can_load_face(face_bytes, max_mb=6000) -> bool` is the
+- :func:`can_load_face(face_bytes, max_mb=4000) -> bool` is the
   per-face gate used by :mod:`ttf_font`.  A face whose file is
   larger than ``MAX_FACE_MB`` is rejected; a face whose parse would
   push the process past the cap is also rejected (the caller falls
   back to the bitmap font).
 
-The 6 GB cap is chosen for the project's target hardware.  The
-governor is pure stdlib and adds no external dependency.
+The 4 GB cap is the user-specified ceiling for all Python runtimes
+of this project.  The governor is pure stdlib and adds no external
+dependency.
 """
 from __future__ import annotations
 
 import threading
 
-# 6 GB hard cap (user requirement: never exceed 8 GB; 6 GB is the
-# working ceiling that leaves 2 GB headroom for the OS + Tk + other
-# processes on the target host).
-MEMORY_CAP_MB = 6000
+# 4 GB hard cap (user requirement: every Python runtime must stay under
+# 4 GB).  The TTF parser already enforces a 12 MiB font-file cap and a
+# 4096-entry advance array; this module adds a *runtime* watchdog that
+# tracks Python's own heap growth (via ``tracemalloc``) and refuses to
+# load additional font faces when the process is near the cap.
+MEMORY_CAP_MB = 4000
 
 # Per-face parse gate: a single TTF/TTC file may be at most this many
 # MiB before we refuse to parse it.  12 MiB covers simhei (9.7 MB)

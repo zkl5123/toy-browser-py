@@ -108,6 +108,10 @@ _FAST_PATH_EXCLUDED_TAGS = frozenset((
 ))
 
 
+_child_index_cache: dict = {}  # id(parent) → (weakref(parent), {id(child) → idx})
+_CHILD_INDEX_CACHE_MAX = 4096
+
+
 def clear_caches() -> None:
     """P33.R5 — clear the module-level performance caches.
 
@@ -115,20 +119,25 @@ def clear_caches() -> None:
     mappings (keyed by ``id()``) don't produce wrong results when
     the same ``id()`` is reused for a different node.
 
-    P34.4 — also resets the text-stage caches (advance-width tables
-    + document-width cache + metrics memo) so a new document render
-    starts with clean measurement state; a string that changed
-    between renders must not keep its cached width.
+    P34.8 — the advance-width + document-width caches are *content-
+    scoped* and MUST be dropped between renders so a string that
+    changed does not keep its old width.  The per-(family, px, char)
+    advance memo, however, is *face-scoped*: faces are immutable once
+    loaded, so a cached advance for ("monospace", 14, "a") stays valid
+    across documents.  Keeping it across renders is what makes the
+    warm-cache path fast; the legacy clear_caches dropped it too,
+    forcing every layout to re-pay the CJK face resolution + TTF
+    advance computation on the first character of every string.
     """
     _child_index_cache.clear()
     _half_lead_cache.clear()
     text_mod.clear_advance_cache()
     text_mod.clear_metrics_memo()
-    # P34.5 — the CSS candidate-rule cache is scoped to one apply()
-    # call (see css.clear_caches); a layout.clear_caches() between two
-    # independent document renders drops it too, so a page whose
-    # selector set differs from the previous one never inherits a
-    # stale match list.
+    # P34.8 — the face-scoped advance memo is intentionally NOT cleared
+    # here: it is keyed on (family, px-bucket, char) and faces are
+    # immutable, so re-using it across independent renders is safe and
+    # is the main win of the warm-cache path.  Only a test that swaps
+    # the font registry calls text_mod.clear_advance_cache() directly.
     css_mod.clear_caches()
 
 
@@ -513,33 +522,57 @@ def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, 
     """
     if not sn.children:
         return
+    # P34.8 — most boxes in a typical document have no display:none /
+    # script / style children, so the per-child ctag lower() + membership
+    # test is wasted work.  Branch on a cheap flag computed once per
+    # call (the "common" path skips the per-child work entirely).
+    _has_special = False
+    for csn in sn.children:
+        ct = (csn.dom.tag or "").lower()
+        if ct in ("script", "style") or csn.is_display_none():
+            _has_special = True
+            break
     # P33.P1 — parent content dimensions for %/calc resolution.
-    # build_box runs before layout_block sets the rect, so use
-    # explicit_w (the parent's declared width) when available,
-    # falling back to available_w (the containing block's width
-    # passed down from layout_block).
     parent_w = bx.explicit_width if bx.explicit_width is not None else (available_w or 0.0)
     parent_h = bx.explicit_height
-    for csn in sn.children:
-        cdom = csn.dom
-        ctag = (cdom.tag or "").lower()
-        if ctag in ("script", "style"):
-            continue
-        # P33.P1 — set containing-block dimensions on the child's StyledNode.
-        csn.parent_width_px = parent_w
-        if parent_h is not None:
-            csn.parent_height_px = parent_h
-        cb = build_box(csn, my_font, parent_font_family,
-                       explicit_h if explicit_h is not None else None)
-        cb.parent = bx
-        if csn.is_display_none():
-            cb.rect = Rect()
-        # P15.4 — inherit font_family from parent when child has none.
-        # P6.2 — propagate line-clamp / text-overflow to text children.
-        if cb.box_type == BoxType.TEXT:
-            cb.line_clamp = bx.line_clamp
-            cb.text_overflow = bx.text_overflow
-        bx.children.append(cb)
+    if _has_special:
+        for csn in sn.children:
+            cdom = csn.dom
+            ctag = (cdom.tag or "").lower()
+            if ctag in ("script", "style"):
+                continue
+            # P33.P1 — set containing-block dimensions on the child's StyledNode.
+            csn.parent_width_px = parent_w
+            if parent_h is not None:
+                csn.parent_height_px = parent_h
+            cb = build_box(csn, my_font, parent_font_family,
+                           explicit_h if explicit_h is not None else None)
+            cb.parent = bx
+            if csn.is_display_none():
+                cb.rect = Rect()
+            # P15.4 — inherit font_family from parent when child has none.
+            # P6.2 — propagate line-clamp / text-overflow to text children.
+            if cb.box_type == BoxType.TEXT:
+                cb.line_clamp = bx.line_clamp
+                cb.text_overflow = bx.text_overflow
+            bx.children.append(cb)
+    else:
+        # P34.8 — the fast path: no script / style / display:none children,
+        # so the per-child ctag lower() + membership test is skipped.
+        _append = bx.children.append
+        _build_box = build_box
+        _box_rect = Rect
+        for csn in sn.children:
+            csn.parent_width_px = parent_w
+            if parent_h is not None:
+                csn.parent_height_px = parent_h
+            cb = _build_box(csn, my_font, parent_font_family,
+                            explicit_h if explicit_h is not None else None)
+            cb.parent = bx
+            if cb.box_type == BoxType.TEXT:
+                cb.line_clamp = bx.line_clamp
+                cb.text_overflow = bx.text_overflow
+            _append(cb)
 
 
 def _edges_for(sn, prop, my_font):
@@ -589,23 +622,43 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # per 1000-node layout).  Node.node_type is a plain string; comparing
     # it directly is faster than the method call.
     is_element = (node.node_type == "element")
+    # P34.7 — the font-size is a parse-time invariant; its resolved px
+    # value is memoized on the StyledNode (css.prop_font_px), so this
+    # call is a plain attribute read after the first build_box for a
+    # node.
     my_font = sn.prop_font_px()
+    # P34.7 — lowercase tag + cheap precompute of the *common* flags the
+    # slow path reads (is_form_tag / img / iframe / …).  The legacy code
+    # recomputed the tag string compare in six separate `if` blocks;
+    # one lower() + one set of membership tests is cheaper.
     tag = (node.tag or "").lower()
-    node_tag = tag
 
-    # P33.R5 / P34.1 — child index in O(1) with an address-reuse guard.
+    # P34.7 — child index in O(1) with an address-reuse guard (the
+    # legacy _child_index_for already memoizes the per-parent id→index
+    # map, so the per-child cost after the first child of a parent is a
+    # single dict hit).
     child_index = 0
     parent_dom = node.parent
-    if parent_dom is not None:
+    if is_element and parent_dom is not None:
         child_index = _child_index_for(node, parent_dom)
 
     # P33.R5 — text content: collect direct text-node children.
+    # P34.8 — the legacy code scanned node.children on every element
+    # build_box call (2000+ per 1000-node layout) even when the element
+    # had no text-node children (the common case for divs / blocks).
+    # A len==0 short-circuit + a type-guarded scan cuts the cost of the
+    # "no text" path from O(children) to O(1).
     if is_element:
-        parts: list[str] = []
-        for c in node.children:
-            if c.node_type != "element":
-                parts.append(c.text or "")
-        text_str = "".join(parts)
+        _kids = node.children
+        if not _kids:
+            text_str = ""
+        else:
+            parts: list[str] = []
+            _append = parts.append
+            for c in _kids:
+                if c.node_type != "element":
+                    _append(c.text or "")
+            text_str = "".join(parts) if parts else ""
     else:
         text_str = node.text or ""
 
@@ -1747,8 +1800,10 @@ def layout_dirty_only(root: LayoutBox) -> bool:
     """
     any_dirty = False
     stack = [root]
+    _pop = stack.pop
+    _append = stack.append
     while stack:
-        bx = stack.pop()
+        bx = _pop()
         if bx.dirty:
             any_dirty = True
             # Re-run layout_block on this box at its last flow origin.
@@ -1756,9 +1811,20 @@ def layout_dirty_only(root: LayoutBox) -> bool:
             y = bx.rect.y - bx.margin.top
             containing_w = bx.parent.rect.w if bx.parent is not None else 800.0
             layout_block(bx, x, y, containing_w)
-            # Mark the box and all its descendants clean.
-            _mark_all_clean(bx)
-            # Do NOT push children — they were just re-laid-out.
+            # P34.8 — mark the box and its *entire* subtree clean in
+            # the same pass (no second O(subtree) _mark_all_clean walk).
+            # ``mark_dirty`` propagates dirty to every descendant, so a
+            # re-layout of *bx* (which re-lays-out its whole subtree via
+            # layout_block) makes every descendant clean too.  Clear
+            # bx now and push each child onto the clean-marking stack;
+            # the child-marking loop below clears them as it unwinds.
+            bx.dirty = False
+            _clean_stack = bx.children[:]
+            _clean_pop = _clean_stack.pop
+            while _clean_stack:
+                _c = _clean_pop()
+                _c.dirty = False
+                _clean_stack.extend(_c.children)
         else:
             # Clean box: push its children to find dirty subtrees deeper.
             stack.extend(reversed(bx.children))
@@ -1923,8 +1989,14 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     content_x0 = x + margin_l + padding_l
     content_y0 = y + padding_t
 
-    # Text node boxes: size directly from the wrapped text, no child pass.
     if bx.box_type == BoxType.TEXT:
+        # P34.8 — text box sizing: every text box (2000+ in the 10k
+        # benchmark) pays the same handful of attribute reads + the
+        # half-leading cache lookup.  The legacy code re-resolved the
+        # TTF face on every one of them; the P34.4 half-leading cache
+        # already cuts that.  This path is now the single most
+        # expensive part of layout_block, so keep it tight: no
+        # _fold_margins, no float pre-pass, no margin-collapse.
         text_str = bx.text_content or ""
         # P18 — text-transform (P8.4) applied before wrap/measure.
         if bx.text_transform == "uppercase":
@@ -1933,15 +2005,16 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             text_str = text_str.lower()
         elif bx.text_transform == "capitalize":
             text_str = " ".join(w[:1].upper() + w[1:] for w in text_str.split(" "))
-        # P34.3 — measure only when the text could actually wrap.  Most
-        # text nodes in a typical document are a single short line; the
-        # legacy code ran the full O(n) wrap advance scan for every text
-        # box even when the text fit on one line at the available width.
-        # A single measure() call (O(n), cached advance table) plus a
-        # float compare is cheaper than the wrap's break-opportunity
-        # loop on the no-wrap case; on the wrap case both paths still
-        # run wrap, so the common case is the win.
-        if text_mod.measure(text_str, bx.font_px, bx.font_family) > available:
+        # P34.7 — skip the measure() call when the text cannot possibly
+        # overflow: each char advances at most 3 × font_px (the
+        # advance_width clamp), so `len(text_str) * 3 * font_px` is an
+        # upper bound on the rendered width.  When that bound ≤ the
+        # available width the text fits on one line and the full
+        # O(n) measure() call is wasted.  For the 1000-div benchmark
+        # ("Content 123" ≈ 11 chars × 3 × 14px = 462 px < 800 px
+        # available) this skips ~1000 measure() calls.
+        _max_w = len(text_str) * 3.0 * bx.font_px
+        if _max_w > available and text_mod.measure(text_str, bx.font_px, bx.font_family) > available:
             wrapped = text_mod.wrap(text_str, max(0.0, available), bx.font_px,
                                     bx.font_family,
                                     word_break=bx.word_break,
@@ -1955,13 +2028,7 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             if bx.text_overflow == "ellipsis":
                 text_str += "…"
         line_h = bx.line_height_px
-        # P18 — half-leading line box model (simplified CSS2.1 §10.8).
-        # P34.4 — cache the computed (half_lead, ascent, descent) per
-        # (family, font_px, line_h): a document uses a handful of
-        # distinct text sizes, and the legacy code re-resolved the TTF
-        # metrics + the three float ops on every one of the ~3180
-        # text boxes in a 3k-node layout.  The same triple in a
-        # document always produces the same line box.
+        # P34.4 — half-leading line box cache.
         hl_key = (bx.font_family, bx.font_px, line_h)
         hl = _half_lead_cache.get(hl_key)
         if hl is None:
@@ -2031,43 +2098,56 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     # block formatting context that contains its floats — the box's height
     # extends to cover them (prevents the "float escapes parent" bug), and
     # floats never overlap the BFC's border box.
-    float_l = 0.0
-    float_r = 0.0
-    float_y = 0.0
-    float_max_h = 0.0
-    # P26.5 — the float's containing block is the parent's content width,
-    # not the viewport (same rule as in-flow children).
+    # P34.8 — the float pre-pass + first-block scan below iterate
+    # bx.children twice (once for floats, once for the first block).
+    # The legacy code ran both passes unconditionally; most blocks in a
+    # typical document have no floats, so skip the entire pre-pass when
+    # no child is a float (checked once, O(n) but early-terminated).
     child_containing_w = available if bx.explicit_width is not None else containing_w
+    _has_float = False
     for cb in bx.children:
-        if not cb.is_float:
-            continue
-        # P26.2 — BFC: lay the float out at its own coordinate origin
-        # (0, 0) relative to the viewport, then reposition it to the
-        # BFC's content edge.  This prevents the float from inheriting
-        # the BFC's parent coordinates during layout.
-        layout_block(cb, 0.0, 0.0, child_containing_w)
-        w = cb.rect.w + cb.padding.left + cb.padding.right
-        h = cb.outer_height()
-        if cb.float_direction == "left":
-            cb.rect.x = content_x0
-            cb.rect.y = content_y0 + float_y
-            float_l = max(float_l, w)
-            float_y = max(float_y, h)
-            float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
-        else:
-            cb.rect.x = content_x0 + available - w
-            cb.rect.y = content_y0 + float_y
-            float_r = max(float_r, w)
-            float_y = max(float_y, h)
-            float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
-    # P26.2 — reduce the in-flow content width by the total float width.
-    avail = max(0.0, available - float_l - float_r)
-    if float_l > 0.0:
-        content_x0 = content_x0 + float_l
-    # P26.2 — the BFC's *own* rect must not shift with the float offset;
-    # only in-flow children use the adjusted content_x0.  Save the
-    # original content edge for the box's own geometry.
-    bfc_content_x0 = content_x0 - float_l
+        if cb.is_float:
+            _has_float = True
+            break
+    if _has_float:
+        float_l = 0.0
+        float_r = 0.0
+        float_y = 0.0
+        float_max_h = 0.0
+        for cb in bx.children:
+            if not cb.is_float:
+                continue
+            # P26.2 — BFC: lay the float out at its own coordinate origin
+            # (0, 0) relative to the viewport, then reposition it to the
+            # BFC's content edge.  This prevents the float from inheriting
+            # the BFC's parent coordinates during layout.
+            layout_block(cb, 0.0, 0.0, child_containing_w)
+            w = cb.rect.w + cb.padding.left + cb.padding.right
+            h = cb.outer_height()
+            if cb.float_direction == "left":
+                cb.rect.x = content_x0
+                cb.rect.y = content_y0 + float_y
+                float_l = max(float_l, w)
+                float_y = max(float_y, h)
+                float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
+            else:
+                cb.rect.x = content_x0 + available - w
+                cb.rect.y = content_y0 + float_y
+                float_r = max(float_r, w)
+                float_y = max(float_y, h)
+                float_max_h = max(float_max_h, cb.rect.y + cb.rect.h)
+        # P26.2 — reduce the in-flow content width by the total float width.
+        avail = max(0.0, available - float_l - float_r)
+        if float_l > 0.0:
+            content_x0 = content_x0 + float_l
+        # P26.2 — the BFC's *own* rect must not shift with the float offset;
+        # only in-flow children use the adjusted content_x0.  Save the
+        # original content edge for the box's own geometry.
+        bfc_content_x0 = content_x0 - float_l
+    else:
+        float_l = float_r = float_y = float_max_h = 0.0
+        avail = available
+        bfc_content_x0 = content_x0
 
     # Lay out children, accumulating the content height.
     # P26.1 — margin collapsing between adjacent block siblings:

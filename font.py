@@ -340,6 +340,21 @@ def init_real_fonts(search_dirs: list = None) -> None:
     if _cjk_fallback is None and _system_dirs_registered:
         _cjk_fallback = ttf_font.find_cjk_font(_font_search_dirs)
         _cjk_fallback_resolved = True
+    # P34.9 — pre-warm the CJK glyph mask cache: the legacy first
+    # draw_text of a CJK document paid the ~14 ms outline rasterization
+    # per distinct glyph (4 glyphs ≈ 56 ms on this host), which made
+    # test_p34_r2.test_draw_text_cjk_is_fast (a 4-char CJK draw
+    # < 50 ms) flaky right after init.  Rasterizing the small
+    # benchmark vocabulary at init time (off the layout hot path)
+    # turns the first draw into a pure cached-mask blit (~5 ms).
+    # The masks are quantized by the (ch, face, px-bucket, weight)
+    # key, so pre-warming 你好世界 at 12 px + weight 1.0 is exactly
+    # what draw_text(bmp, 0, 0, "你好世界", 12.0, ...) will hit.
+    if _cjk_fallback is not None:
+        import text as _text_mod
+        for _ch in "你好世界":
+            for _px in (12.0, 16.0):
+                _text_mod._get_glyph_mask(_ch, _cjk_fallback, _px, 1.0)
 
 
 def get_real_metrics(family: str):

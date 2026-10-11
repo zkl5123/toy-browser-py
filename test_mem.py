@@ -9,8 +9,8 @@ import os as _os
 
 def test_mem_guard_cap_constants():
     import mem_guard
-    assert mem_guard.MEMORY_CAP_MB == 6000, \
-        f"6 GB cap expected, got {mem_guard.MEMORY_CAP_MB}"
+    assert mem_guard.MEMORY_CAP_MB == 4000, \
+        f"4 GB cap expected, got {mem_guard.MEMORY_CAP_MB}"
     assert mem_guard.MAX_FACE_MB == 12, \
         f"12 MiB face gate expected, got {mem_guard.MAX_FACE_MB}"
 
