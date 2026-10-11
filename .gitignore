@@ -25,3 +25,4 @@ anim_test/
 .DS_Store
 Thumbs.db
 desktop.ini
+.git_commit_msg.txt
