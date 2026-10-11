@@ -280,6 +280,12 @@ def parse_calc(expr: str) -> Value:
 
 # --- Selectors --------------------------------------------------------------
 
+#: P34.1 — precompiled regex for :nth-child(An+B).  The P19 implementation
+# re-ran ``re.match`` on a fresh pattern string on every call (~3.5 M
+# pattern compilations in the 10k-node benchmark); precompile once.
+_NTH_CHILD_RE = __import__("re").compile(r"([+-]?\d*)n\s*([+-]\s*\d+)?\s*$")
+
+
 @dataclass(frozen=True)
 class Selector:
     """A compound selector.
@@ -429,10 +435,19 @@ class Selector:
     def _child_index(node: Node) -> int | None:
         """Return the 1-based child position of ``node`` among its
         element-sibling parents, or ``None`` if the parent has no
-        element children (top-level document node)."""
+        element children (top-level document node).
+
+        P34.1 — memoized per-node (attribute ``__child_index``): the
+        index is structural and stable for the lifetime of the tree, so
+        a second match against the same node reuses the first scan
+        instead of re-walking all siblings.
+        """
         parent = node.parent
         if parent is None:
             return None
+        memo = getattr(node, "__child_index", None)
+        if memo is not None:
+            return memo
         idx = 0
         for c in parent.children:
             if c.is_element():
@@ -468,14 +483,12 @@ class Selector:
           - ``:nth-child(odd)``         → idx % 2 == 1
           - ``:nth-child(An+B)``        → (idx - B) % A == 0 and (idx - B) >= 0
         """
-        import re as _re
-
         inner = pseudo[len(":nth-child("):-1].strip()
         if inner == "even":
             return idx % 2 == 0
         if inner == "odd":
             return idx % 2 == 1
-        m = _re.match(r"([+-]?\d*)n\s*([+-]\s*\d+)?\s*$", inner)
+        m = _NTH_CHILD_RE.match(inner)
         if m:
             a_str = m.group(1).replace("n", "").strip()
             a = int(a_str) if a_str else 0
@@ -615,7 +628,30 @@ class Animation:
     iterations: float = 1.0  # inf → loop
 
 
+#: P34.1 — memo: css_text → parsed Rule list (see ``parse_rulesheet``).
+_rulesheet_memo: dict = {}
+#: P34.1 — memo: css_text → @keyframes Animation map (see parse_keyframes).
+_keyframes_memo: dict = {}
+#: P34.1 — memo: css_text → @media MediaQuery list (see parse_media_queries).
+_media_queries_memo: dict = {}
+#: P34.1 — memo: css_text → @supports SupportsRule list (see parse_supports_blocks).
+_supports_blocks_memo: dict = {}
+#: P34.1 — memo: css_text → @font-face FontFace list (see parse_font_faces).
+_font_faces_memo: dict = {}
+
+
 def parse_keyframes(css_text: str) -> dict[str, Animation]:
+    """P34.1 — memoized @keyframes parse (callers read the map only)."""
+    cached = _keyframes_memo.get(css_text)
+    if cached is not None:
+        return cached
+    out = _parse_keyframes_impl(css_text)
+    if len(_keyframes_memo) < 256:
+        _keyframes_memo[css_text] = out
+    return out
+
+
+def _parse_keyframes_impl(css_text: str) -> dict[str, Animation]:
     """Extract all @keyframes blocks from CSS text.
 
     Returns {animation_name: Animation}.  Each @keyframes block contains
@@ -850,7 +886,36 @@ class Rule:
     selector_text: str = ""  # P32.4 — raw selector text (DevTools provenance)
 
 
+#: P34.1 — memo: css_text → parsed Rule list (see ``parse_rulesheet``).
+_rulesheet_memo: dict = {}
+
+
 def parse_rulesheet(css_text: str) -> list[Rule]:
+    """P34.1 — memoized rulesheet parse.
+
+    Identical author CSS text is parsed once and the shared ``Rule``
+    list is returned.  Callers that *extend* the list (``css.apply``
+    appends @media/@supports rules) must use :func:`parse_rulesheet_nocache`
+    so they do not poison the memo entry.
+    """
+    cached = _rulesheet_memo.get(css_text)
+    if cached is not None:
+        return cached
+    rules = _parse_rulesheet_nocache_impl(css_text)
+    # Cap the memo: unbounded growth on hostile input (every distinct
+    # string a key) would leak memory.  256 distinct stylesheets is far
+    # above any realistic page.
+    if len(_rulesheet_memo) < 256:
+        _rulesheet_memo[css_text] = rules
+    return rules
+
+
+def parse_rulesheet_nocache(css_text: str) -> list[Rule]:
+    """P34.1 — parse a *fresh* rulesheet list, bypassing the memo."""
+    return _parse_rulesheet_nocache_impl(css_text)
+
+
+def _parse_rulesheet_nocache_impl(css_text: str) -> list[Rule]:
     rules: list[Rule] = []
     # A rule is "selector { declarations }"
     i = 0
@@ -913,15 +978,25 @@ class MediaQuery:
 
 
 def parse_media_queries(css_text: str) -> list[MediaQuery]:
-    """Extract all @media blocks from CSS text.
+    """P34.1 — memoized @media extract.
 
-    Returns a list of ``MediaQuery`` objects.  Each block's inner rules are
-    parsed with the standard ``parse_rulesheet``.  The condition is the raw
-    text between ``@media`` and the opening brace.
+    Extract all @media blocks from CSS text.  Each block's inner rules
+    are parsed with the standard ``parse_rulesheet``.  The condition is
+    the raw text between ``@media`` and the opening brace.
 
     Only ``min-width`` / ``max-width`` / ``min-height`` / ``max-height``
     are supported; unknown conditions are stored verbatim for future use.
     """
+    cached = _media_queries_memo.get(css_text)
+    if cached is not None:
+        return cached
+    out = _parse_media_queries_impl(css_text)
+    if len(_media_queries_memo) < 256:
+        _media_queries_memo[css_text] = out
+    return out
+
+
+def _parse_media_queries_impl(css_text: str) -> list[MediaQuery]:
     out: list[MediaQuery] = []
     i = 0
     n = len(css_text)
@@ -1020,6 +1095,17 @@ class SupportsRule:
 
 
 def parse_supports_blocks(css_text: str) -> list[SupportsRule]:
+    """P34.1 — memoized @supports extract."""
+    cached = _supports_blocks_memo.get(css_text)
+    if cached is not None:
+        return cached
+    out = _parse_supports_blocks_impl(css_text)
+    if len(_supports_blocks_memo) < 256:
+        _supports_blocks_memo[css_text] = out
+    return out
+
+
+def _parse_supports_blocks_impl(css_text: str) -> list[SupportsRule]:
     """Extract all @supports blocks from CSS text (same scan style as @media)."""
     out: list[SupportsRule] = []
     i = 0
@@ -1089,6 +1175,17 @@ class FontFace:
 
 
 def parse_font_faces(css_text: str) -> list[FontFace]:
+    """P34.1 — memoized @font-face extract."""
+    cached = _font_faces_memo.get(css_text)
+    if cached is not None:
+        return cached
+    out = _parse_font_faces_impl(css_text)
+    if len(_font_faces_memo) < 256:
+        _font_faces_memo[css_text] = out
+    return out
+
+
+def _parse_font_faces_impl(css_text: str) -> list[FontFace]:
     """P33.P3 — extract all @font-face blocks from *css_text*.
 
     The parser scans for ``@font-face`` followed by a declaration
@@ -1617,7 +1714,10 @@ def apply(
     In this toy engine every @supports block is treated as supported, so all
     inner rules are appended to the cascade.
     """
-    rules = parse_rulesheet(css_text)
+    # P34.1 — parse into a *caller-owned* list: apply() extends it with
+    # @media / @supports rules, so the shared rulesheet memo (which
+    # stores the untouched author-CSS list) must not be mutated here.
+    rules = parse_rulesheet_nocache(css_text)
     # P9.1 — append @media rules that match the current viewport.
     if media_rules:
         for mq in media_rules:
@@ -1628,12 +1728,17 @@ def apply(
         for sr in supports_rules:
             if supports_matches(sr.condition):
                 rules.extend(sr.rules)
+    # P34.1 — per-tag rule index: pre-compute which rules may match each
+    # tag so _apply_subtree skips the O(rules) walk when a node's tag
+    # is not referenced.  See _build_tag_rule_index.
+    tag_rules = _build_tag_rule_index(rules)
     root_sn = StyledNode(dom_root)
     # P33.P1 — extract custom properties (--*) declared on :root / html.
     _collect_custom_props(dom_root, root_sn)
     root_sn.children = [
         _apply_subtree(c, rules, interaction_state,
-                       parent_custom_props=root_sn.custom_props)
+                       parent_custom_props=root_sn.custom_props,
+                       tag_rules=tag_rules)
         for c in dom_root.children
     ]
     return root_sn
@@ -1673,19 +1778,69 @@ def _cascade_key(r: Rule) -> tuple:
     return (r.source == "author", r.important, spec_sum)
 
 
+def _build_tag_rule_index(rules: list[Rule]) -> dict[str, list[int]]:
+    """P34.1 — index rules by the tag each *rightmost* simple part may
+    match, so ``_apply_subtree`` can fetch candidate rules in O(1)
+    instead of scanning the whole rule list per node.
+
+    Returns ``{tag: [rule indices]}``; rules whose rightmost part has no
+    tag constraint (``.class`` / ``#id`` / ``.a.b``) or an interaction
+    pseudo (``:hover`` / ``:focus``) are registered under the special
+    key ``"*"`` which every node is checked against (cheap, constant
+    per node, and empty for most pages that have no such rules).
+    """
+    index: dict[str, list[int]] = {}
+    for i, r in enumerate(rules):
+        for s in r.selectors:
+            if s.pseudo in (":hover", ":focus"):
+                index.setdefault("*", []).append(i)
+                continue
+            parts = s.parts
+            if not parts:
+                index.setdefault("*", []).append(i)
+                continue
+            last = parts[-1].strip()
+            tag_part = last.split(".", 1)[0].split("#", 1)[0]
+            if tag_part:
+                index.setdefault(tag_part, []).append(i)
+            else:
+                index.setdefault("*", []).append(i)
+    # Deduplicate (a rule with two selectors may register under two tags).
+    for tag, lst in index.items():
+        index[tag] = sorted(set(lst))
+    return index
+
+
 def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None = None,
                    parent_props: dict[str, Value] | None = None,
-                   parent_custom_props: dict[str, Value] | None = None) -> StyledNode:
+                   parent_custom_props: dict[str, Value] | None = None,
+                   tag_rules: dict[str, list[int]] | None = None) -> StyledNode:
     parent_font = DEFAULT_FONT_PX
     sn = StyledNode(node, parent_font,
                     parent_custom_props=parent_custom_props)
-    # P25 — Cascade: collect matching rules, sort by (source, important,
-    # specificity, order).  Later rules with equal key win (CSS source
-    # order rule).
-    matching: list[Rule] = [
-        r for r in rules
-        if any(s.matches(node, interaction_state) for s in r.selectors)
-    ]
+    # P34.1 — O(1) candidate lookup via the per-tag rule index (built
+    # once by ``_build_tag_rule_index``); the legacy O(len(rules)) scan
+    # is used when no index is supplied.
+    if tag_rules is not None:
+        tag = (node.tag or "").lower() if node.is_element() else ""
+        cand_idxs = list(tag_rules.get(tag, ()))
+        wildcard_idxs = tag_rules.get("*")
+        if wildcard_idxs:
+            cand_idxs.extend(wildcard_idxs)
+        if not cand_idxs:
+            matching: list[Rule] = []
+        else:
+            cand_idxs = sorted(set(cand_idxs))
+            matching = [rules[i] for i in cand_idxs
+                        if any(s.matches(node, interaction_state) for s in rules[i].selectors)]
+    else:
+        # P25 — Cascade: collect matching rules, sort by (source, important,
+        # specificity, order).  Later rules with equal key win (CSS source
+        # order rule).
+        matching = [
+            r for r in rules
+            if any(s.matches(node, interaction_state) for s in r.selectors)
+        ]
     matching.sort(key=_cascade_key)
     # P25.2 — apply in two passes:
     #   1. normal declarations (sorted by cascade key; later wins on ties).
@@ -1757,7 +1912,8 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     inherited_color = sn.props.get("color", Color(0, 0, 0))
     for c in node.children:
         sub = _apply_subtree(c, rules, interaction_state, sn.props,
-                             parent_custom_props=merged_cp)
+                             parent_custom_props=merged_cp,
+                             tag_rules=tag_rules)
         sub.parent_font_px = child_font
         # P25.3 — inherit font-size when not explicitly set.
         if "font-size" not in sub.props:

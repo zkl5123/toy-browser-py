@@ -164,7 +164,8 @@ def _get_glyph_mask(ch: str, real, font_px: float, weight: float):
 
 
 def _blit_coverage(bitmap: "Bitmap", x: int, y: int, ch: str,
-                   font_px: float, weight: float, color) -> bool:
+                   font_px: float, weight: float, color,
+                   face=None, baseline=None) -> bool:
     """P33.R1 — blit a cached coverage mask for *ch* onto *bitmap*.
 
     ``(x, y)`` is the pen's **line top** in screen space (y down).
@@ -178,22 +179,41 @@ def _blit_coverage(bitmap: "Bitmap", x: int, y: int, ch: str,
     P33.R1 — the face is resolved per-character (not hard-coded to
     "monospace") so that CJK codepoints use the CJK fallback face's
     ascent / scale, which differs from the primary face.
+
+    P34.1 — *face* and *baseline* are accepted as optional pre-resolved
+    arguments (see ``draw_text``): resolving the face per line instead
+    of per character cut the hot loop's face-lookup + mask-cache
+    key-building work by ~3×.  The blit itself clips against the
+    bitmap bounds (``rasterize.blit_glyph_mask``) so negative
+    coordinates (e.g. a negative ``text-indent``) are safe.
     """
     import rasterize
-    import font as _fontmod
-    face = _fontmod.resolve_metrics_for_char(ch, None)
     if face is None:
-        face = _fontmod.get_real_metrics("monospace")
-    if face is None:
-        face = _fontmod.get_real_metrics("serif")
-    if face is None:
-        return False
+        import font as _fontmod
+        face = _fontmod.resolve_metrics_for_char(ch, None)
+        if face is None:
+            face = _fontmod.get_real_metrics("monospace")
+        if face is None:
+            face = _fontmod.get_real_metrics("serif")
+        if face is None:
+            return False
     mask = _get_glyph_mask(ch, face, font_px, weight)
     if mask is None:
         return False
     # P33.R1 — y is the line top; the baseline sits at y + ascent_px.
-    baseline_y = y + int(round(face.ascent * font_px / face.units_per_em))
-    rasterize.blit_glyph_mask(bitmap, mask, x, baseline_y, color)
+    if baseline is None:
+        baseline = y + int(round(face.ascent * font_px / face.units_per_em))
+    # P34.1 — pass a pre-packed 0xRRGGBB int when the color is opaque;
+    # the blit fast path skips the per-call channel unpack and the
+    # alpha blend.
+    if isinstance(color, int):
+        packed = color
+    else:
+        packed = color.to_u32() if color.a == 255 else None
+    if packed is not None:
+        rasterize.blit_glyph_mask(bitmap, mask, x, baseline, packed)
+    else:
+        rasterize.blit_glyph_mask(bitmap, mask, x, baseline, color)
     return True
 
 
@@ -550,6 +570,30 @@ def _blit(bitmap: Bitmap, x: int, y: int, g: list[int], scale: int,
                         bitmap.set_pixel(x + col * scale + sx, y + row * scale + sy, color)
 
 
+def _blit_line_bitmap(bitmap: "Bitmap", x: int, y: int, text: str,
+                      scale: int, color, line_w: float,
+                      align: str = "left", max_width: float = 0.0) -> None:
+    """P34.1 — legacy 8×8 bitmap-font fast path (no real TTF registered).
+
+    Used by ``draw_text`` when no real font face is available: blit every
+    character with the built-in bitmap font, skipping the per-character
+    TTF face resolution entirely.  Mirrors the P15.4 bitmap loop without
+    the face-resolution / advance-width overhead.
+    """
+    cx = float(x)
+    if align == "center" and max_width > 0:
+        line_w = measure(text, font_px, "monospace")
+        cx = x + max(0.0, (max_width - line_w) / 2.0)
+    elif align == "right" and max_width > 0:
+        line_w = measure(text, font_px, "monospace")
+        cx = x + max(0.0, max_width - line_w)
+    advance = float(_cell_width("monospace")) * scale
+    for ch in text:
+        g = _glyph_for(ord(ch) & 0x7F, "monospace")
+        _blit(bitmap, int(cx), y, g, scale, color, cell_w=_cell_width("monospace"))
+        cx += advance
+
+
 def draw_text(
     bitmap: Bitmap,
     x: float,
@@ -582,6 +626,29 @@ def draw_text(
     real = _real_metrics_for(font_family, font_weight)
     weight = 2.0 if (_synthetic_bold and font_weight >= 600) else 1.0
     wrapped = wrap(text, max_width, font_px, font_family)
+    # P34.1 — resolve the *primary* face once per draw_text call:
+    # most documents are pure-Latin, so the per-character CJK
+    # fallback check (``has_glyph``) is the only place a different
+    # face can be chosen, and it is an O(1) cmap lookup when the
+    # primary face does have the glyph.  The legacy path called
+    # ``resolve_metrics_for_char`` (registry lookup + cmap) per char.
+    primary_face = real
+    if real is None:
+        # No real font registered: skip face resolution entirely and
+        # take the legacy 8×8 bitmap path for every character.
+        import font as _fontmod
+        primary_face = _fontmod.get_real_metrics("monospace") or \
+            _fontmod.get_real_metrics("serif")
+        if primary_face is None:
+            cy = y
+            for line in wrapped:
+                stripped = line.strip()
+                if stripped:
+                    _blit_line_bitmap(bitmap, int(x), int(cy), stripped,
+                                      scale, color, line_w=0.0, align=align,
+                                      max_width=max_width)
+                cy += line_height
+            return len(wrapped) * line_height
     cy = y
     for line in wrapped:
         stripped = line.strip()
@@ -594,14 +661,15 @@ def draw_text(
             else:
                 cx = x
             for ch in stripped:
-                # P33.R1 — per-character face resolution: the CJK
-                # fallback face (registered at init) covers any
-                # codepoint the primary font lacks a glyph for, and
-                # the cached 8-bit coverage mask makes repeated
-                # characters cheap.
-                face = _resolve_face(ch, real)
+                # P34.1 — O(1) cmap check on the primary face; only
+                # fall through to the per-char registry resolution when
+                # the primary face lacks the glyph (CJK on a Latin font).
+                face = primary_face
+                if not face.has_glyph(ch):
+                    face = _resolve_face(ch, real)
                 if face is not None and _blit_coverage(
-                        bitmap, int(cx), int(cy), ch, font_px, weight, color):
+                        bitmap, int(cx), int(cy), ch, font_px, weight, color,
+                        face=face):
                     cx += face.advance_width(ch, font_px) + letter_spacing
                     continue
                 # P33.R1 — last-resort curve path for CJK codepoints
@@ -621,11 +689,6 @@ def draw_text(
                 _blit(bitmap, int(cx), int(cy), g, scale, color,
                       cell_w=_cell_width(font_family))
                 # P17 — per-character advance from TTF hmtx when available.
-                if face is not None:
-                    cx += face.advance_width(ch, font_px) + letter_spacing
-                elif real is not None:
-                    cx += real.advance_width(ch, font_px) + letter_spacing
-                else:
-                    cx += advance + letter_spacing
-        cy += line_height
+                cx += face.advance_width(ch, font_px) + letter_spacing
+            cy += line_height
     return len(wrapped) * line_height

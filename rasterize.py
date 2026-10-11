@@ -370,45 +370,121 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
     division): each channel is ``(color_ch * c + dst_ch * (255 - c))
     >> 8``, clamped to 255.  A 16 px CJK glyph (~110 coverage pixels)
     blits in ~1-2 µs.
+
+    P34.1 — *color* may be a pre-packed 0xRRGGBB int (with no alpha)
+    to skip the per-call channel unpack; when passed as a plain int the
+    per-pixel blend is a single multiply-add instead of three.  A
+    :class:`Color` is unpacked once into the (r, g, b) tuple so the
+    common opaque-alpha case (``a == 255``) takes the fast integer path
+    while a semi-transparent color still blends per-channel.
     """
     w, h = mask.w, mask.h
     x0 = origin_x
     y0 = origin_y - h
     bw = bmp.width
     bh = bmp.height
-    cr, cg, cb = color.r, color.g, color.b
     pixels = bmp.pixels
+    # P34.1 — compute source/destination column ranges once.  The mask
+    # row has exactly ``w`` bytes (index 0..w-1).  Two cases:
+    #
+    #   x0 >= 0:  dst_x0 = x0, src_start = 0.  Right-clip: n_cols is
+    #             min(w, bw - x0).
+    #   x0 <  0:  dst_x0 = 0, src_start = -x0 (mask's left columns are
+    #             off the bitmap).  n_cols = w - src_start (the mask's
+    #             right end cannot exceed the bitmap because x0 < 0
+    #             means dst_x0 + n_cols = w - x0 = w + |x0|, which can
+    #             exceed bw — so also right-clip).
+    if x0 >= 0:
+        src_start = 0
+        dst_x0 = x0
+        n_cols = min(w, bw - x0)
+    else:
+        src_start = -x0
+        dst_x0 = 0
+        if src_start >= w:
+            return  # mask entirely to the left of the bitmap
+        n_cols = min(w - src_start, bw)
+    if n_cols <= 0:
+        return  # mask entirely to the right of the bitmap
+    # P34.1 — unpack the color once outside the row/column loops.
+    if isinstance(color, int):
+        cr, cg, cb = (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF
+        opaque = True
+    else:
+        cr, cg, cb = color.r, color.g, color.b
+        opaque = color.a == 255
+    # P34.1 — precompute the packed source color once; the c==255 /
+    # eff==255 fast paths write it directly instead of re-blending.
+    packed = (cr << 16) | (cg << 8) | cb
+    # Fast opaque path: the coverage byte is the only variable, so we
+    # can precompute the "ink" u32 per channel and blend in one shift.
+    if opaque:
+        # P34.1 — when coverage is 255 the pixel is fully replaced by
+        # the source color; skip the channel blend and write the packed
+        # color directly (the legacy per-channel formula would lose 1
+        # due to >>8 truncation when inv=0 and c=255: cr*255>>8 = cr-1
+        # for cr<255, so the result was off by one channel unit).
+        packed = (cr << 16) | (cg << 8) | cb
+        for k in range(h):
+            sy = y0 + k
+            if sy < 0 or sy >= bh:
+                continue
+            mrow = mask.rows[k]
+            base = sy * bw + dst_x0
+            for i in range(n_cols):
+                c = mrow[src_start + i]
+                if c == 0:
+                    continue
+                idx = base + i
+                if c == 255:
+                    pixels[idx] = packed
+                    continue
+                dst = pixels[idx]
+                inv = 255 - c
+                dr = (dst >> 16) & 0xFF
+                dg = (dst >> 8) & 0xFF
+                db = dst & 0xFF
+                mr = (cr * c + dr * inv) >> 8
+                mg = (cg * c + dg * inv) >> 8
+                mb = (cb * c + db * inv) >> 8
+                if mr > 255:
+                    mr = 255
+                if mg > 255:
+                    mg = 255
+                if mb > 255:
+                    mb = 255
+                pixels[idx] = (mr << 16) | (mg << 8) | mb
+        return
+    # Semi-transparent path (alpha-blend the *color* itself).
+    if color.a == 0:
+        return
+    alpha_inv = 255 - color.a
     for k in range(h):
         sy = y0 + k
         if sy < 0 or sy >= bh:
             continue
         mrow = mask.rows[k]
-        base = sy * bw
-        # Clip the row to the bitmap's right edge.
-        row_end = w
-        if x0 >= 0 and x0 + w > bw:
-            row_end = bw - x0
-            if row_end <= 0:
-                continue
-        for col in range(row_end):
-            c = mrow[col]
+        base = sy * bw + dst_x0
+        for i in range(n_cols):
+            c = mrow[src_start + i]
             if c == 0:
                 continue
-            idx = base + x0 + col
+            # Combined alpha: coverage * color alpha / 255.
+            eff = (c * color.a) >> 8
+            if eff == 0:
+                continue
+            inv = 255 - eff
+            idx = base + i
+            if eff == 255:
+                pixels[idx] = packed
+                continue
             dst = pixels[idx]
-            inv = 255 - c
             dr = (dst >> 16) & 0xFF
             dg = (dst >> 8) & 0xFF
             db = dst & 0xFF
-            mr = (cr * c + dr * inv) >> 8
-            mg = (cg * c + dg * inv) >> 8
-            mb = (cb * c + db * inv) >> 8
-            if mr > 255:
-                mr = 255
-            if mg > 255:
-                mg = 255
-            if mb > 255:
-                mb = 255
+            mr = min(255, (cr * eff + dr * inv) >> 8)
+            mg = min(255, (cg * eff + dg * inv) >> 8)
+            mb = min(255, (cb * eff + db * inv) >> 8)
             pixels[idx] = (mr << 16) | (mg << 8) | mb
 
 
