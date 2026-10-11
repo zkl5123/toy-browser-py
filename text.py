@@ -200,11 +200,19 @@ def _blit_coverage(bitmap: "Bitmap", x: int, y: int, ch: str,
     import rasterize
     if face is None:
         import font as _fontmod
-        face = _fontmod.resolve_metrics_for_char(ch, None)
-        if face is None:
-            face = _fontmod.get_real_metrics("monospace")
+        # P0 — resolve with the monospace primary first, not None.
+        # The legacy face=None call path returned the CJK fallback
+        # face for Latin codepoints (CJK fonts typically carry Latin
+        # glyphs; the CJK face's has_glyph("A") was False because the
+        # CJK font's cmap lacked A, but resolve_metrics_for_char
+        # returned the CJK face anyway when the primary was None),
+        # and the CJK face had no glyph outline for "A", so the mask
+        # was None and the caller fell back to the bitmap font.
+        face = _fontmod.get_real_metrics("monospace")
         if face is None:
             face = _fontmod.get_real_metrics("serif")
+        if face is None:
+            face = _fontmod.get_cjk_fallback()
         if face is None:
             return False
     mask = _get_glyph_mask(ch, face, font_px, weight)
@@ -572,7 +580,12 @@ def wrap(
             a = advance_text(ch, font_px, font_family)
             if len(_adv) < 8192:
                 _adv[ch] = a
-        return a
+        # P0 (GPT report) — advance_text must return a float; a string
+        # return would poison every width accumulator in wrap() and
+        # crash the first ``trial_w > width`` compare with a
+        # TypeError.  Coerce defensively so a buggy caller can never
+        # take down text layout.
+        return float(a) if isinstance(a, (int, float)) else 0.0
 
     # P19 — track the start of the current "word" (maximal run of
     # non-space, non-shy, AL-class chars) so we can detect when a
@@ -846,6 +859,10 @@ def draw_text(
     elif color.a == 255:
         color_packed = color.to_u32()
     # face → baseline offset (ascent * font_px / upm), keyed by id(face).
+    # P0 (GPT report) — a missing CJK fallback face can leave the
+    # per-char resolution returning None; guard the baseline for
+    # every face we actually use so a NoneType never reaches the
+    # hot loop.
     _baseline_offsets: dict = {}
     primary_baseline = int(round(primary_face.ascent * font_px / primary_face.units_per_em))
     _baseline_offsets[id(primary_face)] = primary_baseline
@@ -854,7 +871,14 @@ def draw_text(
         key = id(f)
         off = _baseline_offsets.get(key)
         if off is None:
-            off = int(round(f.ascent * font_px / f.units_per_em))
+            # P0 — `f` may be a fallback face that failed to load
+            # (units_per_em = 0).  Fall back to the primary face's
+            # baseline instead of dividing by zero / reading ascent
+            # off a NoneType.
+            if f is None or not getattr(f, "units_per_em", 0):
+                off = primary_baseline
+            else:
+                off = int(round(f.ascent * font_px / f.units_per_em))
             _baseline_offsets[key] = off
         return off
 
@@ -876,39 +900,63 @@ def draw_text(
                 face = primary_face
                 baseline_off = primary_baseline
                 if not face.has_glyph(ch):
-                    face = _resolve_face(ch, real)
-                    if face is not primary_face:
-                        baseline_off = _face_baseline(face)
+                    # P0 (GPT report) — _resolve_face may return None
+                    # when no fallback face is registered for the
+                    # character; the legacy code called _face_baseline
+                    # on that None and then face.advance_width,
+                    # crashing the whole render.  A missing fallback
+                    # must not take down the page: fall through to
+                    # the .notdef / bitmap paths below instead.
+                    fb = _resolve_face(ch, real)
+                    if fb is not None:
+                        face = fb
+                        if face is not primary_face:
+                            baseline_off = _face_baseline(face)
+                    else:
+                        face = None
                 # P34.2 — inline the blit (mask lookup + blit) to skip
                 # the per-char function-call overhead of _blit_coverage;
                 # the packed color is already resolved above.
-                mask = _get_glyph_mask(ch, face, font_px, weight)
-                if mask is not None:
-                    if color_packed is not None:
-                        _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
-                                                   iy + baseline_off, color_packed)
-                    else:
-                        _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
-                                                   iy + baseline_off, color)
-                    cx += face.advance_width(ch, font_px) + letter_spacing
-                    continue
-                # P33.R1 — last-resort curve path for CJK codepoints
-                # whose coverage mask failed (empty / malformed outline):
-                # a drawn .notdef box is still better than a meaningless
-                # ASCII cell.  ASCII content keeps the 8×8 bitmap path.
-                if _is_cjk(ch) and face is not None:
-                    _outline = face.glyph_outline(ch)
-                    if _outline is not None and _outline_valid(_outline):
-                        _draw_curve_glyph(bitmap, int(cx), int(cy), ch,
-                                          font_px, color, face,
-                                          text_rendering=text_rendering,
-                                          weight=weight)
+                if face is not None:
+                    mask = _get_glyph_mask(ch, face, font_px, weight)
+                    if mask is not None:
+                        if color_packed is not None:
+                            _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
+                                                       iy + baseline_off, color_packed)
+                        else:
+                            _rasterize.blit_glyph_mask(bitmap, mask, int(cx),
+                                                       iy + baseline_off, color)
                         cx += face.advance_width(ch, font_px) + letter_spacing
                         continue
-                g = _glyph_for(ord(ch) & 0x7F, font_family)
-                _blit(bitmap, int(cx), int(cy), g, scale, color,
-                      cell_w=_cell_width(font_family))
-                # P17 — per-character advance from TTF hmtx when available.
-                cx += face.advance_width(ch, font_px) + letter_spacing
+                    # P33.R1 — last-resort curve path for CJK codepoints
+                    # whose coverage mask failed (empty / malformed outline):
+                    # a drawn .notdef box is still better than a meaningless
+                    # ASCII cell.  ASCII content keeps the 8×8 bitmap path.
+                    if _is_cjk(ch):
+                        _outline = face.glyph_outline(ch)
+                        if _outline is not None and _outline_valid(_outline):
+                            _draw_curve_glyph(bitmap, int(cx), int(cy), ch,
+                                              font_px, color, face,
+                                              text_rendering=text_rendering,
+                                              weight=weight)
+                            cx += face.advance_width(ch, font_px) + letter_spacing
+                            continue
+                    g = _glyph_for(ord(ch) & 0x7F, font_family)
+                    _blit(bitmap, int(cx), int(cy), g, scale, color,
+                          cell_w=_cell_width(font_family))
+                    # P17 — per-character advance from TTF hmtx when available.
+                    cx += face.advance_width(ch, font_px) + letter_spacing
+                else:
+                    # P0 — no face at all can render this character
+                    # (no fallback registered).  Draw a .notdef cell
+                    # and advance by the primary face's fallback
+                    # advance (or 1 cell) so the layout stays stable
+                    # instead of crashing the render.
+                    g = _glyph_for(ord(ch) & 0x7F, font_family)
+                    _blit(bitmap, int(cx), int(cy), g, scale, color,
+                          cell_w=_cell_width(font_family))
+                    cx += (primary_face.advance_width(ch, font_px)
+                          if primary_face is not None
+                          else _cell_width(font_family)) + letter_spacing
             cy += line_height
     return len(wrapped) * line_height

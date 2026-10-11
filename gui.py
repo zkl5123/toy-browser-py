@@ -183,10 +183,10 @@ class PageInstance:
         self._dom_tree = tree  # P33.P1 — store for hit-test / focus
         self._last_html = html  # P33.P1 — for _reapply_interaction
         self._last_css = css
-        full_css = browser._full_css(tree, css)
-        media = _css_mod.parse_media_queries(full_css)
-        supports = _css_mod.parse_supports_blocks(full_css)
-        styled = _css_mod.apply(tree, full_css,
+        author_css, ua_css = browser._full_css(tree, css)
+        media = _css_mod.parse_media_queries(author_css)
+        supports = _css_mod.parse_supports_blocks(author_css)
+        styled = _css_mod.apply(tree, author_css, ua_css=ua_css,
                                 interaction_state=interaction_state or None,
                                 media_rules=media, supports_rules=supports,
                                 viewport_w=float(w), viewport_h=float(h))
@@ -345,9 +345,9 @@ class PageInstance:
             return
         tree = _dom_mod.parse(html)
         self._dom_tree = tree
-        full_css = _browser_mod._full_css(tree, css_text)
-        media = _css_mod.parse_media_queries(full_css)
-        supports = _css_mod.parse_supports_blocks(full_css)
+        author_css, ua_css = _browser_mod._full_css(tree, css_text)
+        media = _css_mod.parse_media_queries(author_css)
+        supports = _css_mod.parse_supports_blocks(author_css)
         state: dict = {}
         # Convert DOM node indices back to ids for the css.apply call.
         # The css engine matches :hover/:focus against element *ids*.
@@ -359,7 +359,7 @@ class PageInstance:
             node = self._node_index_to_dom(tree, self.focus_id)
             if node is not None and node.is_element():
                 state["focus"] = node.attr("id")
-        styled = _css_mod.apply(tree, full_css,
+        styled = _css_mod.apply(tree, author_css, ua_css=ua_css,
                                 interaction_state=state or None,
                                 media_rules=media, supports_rules=supports,
                                 viewport_w=float(self.width),

@@ -163,8 +163,8 @@ def test_p2_canvas_box_is_rendered():
     bmp = browser.render_document(html, "", 400, 300)
     # The canvas box should exist in the layout tree.
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     cv = _find_canvas_box(root, "cv")
     assert cv is not None, "canvas box must exist in the layout tree"
@@ -177,8 +177,8 @@ def test_p2_canvas_size_from_attrs():
     pixel area in the layout tree."""
     html = '<html><body><canvas id="cv" width="200" height="150"></canvas></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     cv = _find_canvas_box(root, "cv")
     assert cv is not None
@@ -192,8 +192,8 @@ def test_p2_canvas_default_size_when_no_attrs():
     300×150 (the HTML spec default)."""
     html = '<html><body><canvas id="cv"></canvas></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     cv = _find_canvas_box(root, "cv")
     assert cv is not None
@@ -209,8 +209,8 @@ def test_p2_canvas_css_width_override():
             '<canvas id="cv" width="200" height="150"></canvas>'
             '</body></html>')
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     cv = _find_canvas_box(root, "cv")
     assert cv is not None

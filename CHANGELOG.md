@@ -7,6 +7,88 @@ roadmap milestones).
 
 ---
 
+## P0 — GPT/GLM 报告 P0 专项整改
+
+*字体渲染崩溃、JS 执行预算、网络与 Cookie 安全边界、级联源优先级、
+head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小上限。
+全部 P0/P1 项目已修复，主测试套件 807/807 通过。*
+
+### Added
+
+- **`text.py` — 字体渲染崩溃修复（GLM P0-1）**：`_face_baseline(None)`
+  现在对 None face 做 `.notdef` 回退而不是崩溃；`wrap()` 中的
+  `float()` 类型转换防止 int/float 混用时的 TypeError。
+- **`js.py` — JS 执行预算（GPT P0-1 / GLM P0-2）**：
+  `Interpreter._steps`/`_budget` 计数每个 eval 步骤；
+  `_BudgetExceeded` 异常在超限时抛出；`Host.execute` 捕获并记录日志
+  而不崩溃。新增 `Ternary` 节点、`typeof` 一元运算符、零除→
+  `inf`/`nan`、JS 风格 `%`、宽松 `==`、`Math.round` 半入 `_js_round`、
+  IIFE `return` 拼接、`execute_event` 预算捕获。
+  递归守卫：`_make_func`/`_make_arrow` 中的 `_recursion_depth`
+  计数器 + `RecursionError`→`_BudgetExceeded` 转换（Python 原生
+  栈溢出在 JS 守卫的 256 层上限附近触发，需统一 API）。
+  `eval_block` 的 `_Return` 捕获仅在非函数帧时生效（函数体直接
+  遍历语句，`return` 正常传播到函数级捕获）。
+- **`net.py` — 网络默认超时 + 响应大小上限（GLM P0-3 / GPT P0-5）**：
+  `DEFAULT_TIMEOUT = 10.0`；所有 `fetch_*` 函数在 `timeout is None`
+  时替换为 `DEFAULT_TIMEOUT`。`MAX_RESPONSE_BYTES = 256 MB`；
+  `ResponseTooLarge` 异常；`HttpClient.max_response_bytes` 参数；
+  `_single_get` 原始响应体和 gunzip 解压体均受上限约束。
+- **`cookie_store.py` — Cookie 安全边界（GPT P0-3）**：
+  `Cookie.secure`/`http_only`/`same_site` 标志；
+  `parse_set_cookie` 解析 `Secure`/`HttpOnly`/`SameSite` 属性，
+  拒绝无 `Secure` 的 `SameSite=None`，通过 `_domain_matches()`
+  校验 Domain 后缀匹配（RFC 6265 §5.1.3）；
+  `CookieJar.cookie_header_for(url, is_cross_site, method,
+  is_top_level)` 强制 Secure + SameSite 过滤；
+  `for_url` 同步过滤器。
+- **`css.py` — 级联源优先级（GLM P1-1）**：
+  `Rule.source`（"author"/"ua"）；`parse_rulesheet_nocache` 现在
+  接受 `source` 参数并传播到每个 Rule；
+  `css.apply(..., ua_css="")` 将 UA 表以 `source="ua"` 解析并
+  前置到 author 规则之前；`_cascade_key` 已正确实现
+  `(source == "author", important, spec_sum)`。
+  `Selector._simple_matches` 中 `*` 通配符现在匹配所有元素
+  （`node.is_element()`），修复了 `* { margin: 0 }` 永远不生效的
+  问题。
+- **`browser.py` — head/meta/style display:none（GLM P1-2）**：
+  `_default_css()` 首行添加
+  `head, meta, link, style, script, title { display: none; }`。
+  `render_document_from_url`：`timeout is None` 时使用
+  `net.DEFAULT_TIMEOUT`（10 s），不再无限阻塞。
+  `devtools_computed_style` 新增 `ua_css` 参数。
+- **`layout.py` — 行内盒子宽度（GLM P1-4）**：
+  `layout_block` 行内 run 循环中，当行内盒子无显式宽度且所有
+  子节点为 TEXT 时，通过 `text_mod.measure` 计算文本内容宽度
+  + padding，作为 `containing_w` 传入子盒子布局。
+- **`ttf_font.py` — CJK 字体发现（GLM P0-1 配套）**：
+  `find_cjk_font` 改用基于 token 的 stem 匹配
+  （`_cjk_stem_match`：noto, droid, wqy, wenquanyi, sourcehan,
+  cjk, simsun 等），不再依赖字面 basename，修复
+  `NotoSerifSC-Black.ttf` 等变体未被发现的问题。
+
+### Changed
+
+- `browser._full_css` 现在返回 `(author_css, ua_css)` 元组；
+  所有 24 个调用点（`browser.py` 13、`gui.py` 2、`test_p2.py` 4、
+  `test_p3.py` 5）已更新为解包。
+- `net._single_get` / `post` 新增 `cookie_context` 参数，用于
+  SameSite 元数据。
+- `js.py` 的 `CallSpread` 拼接：空数组 `[]` 现在拼接零个参数
+  （旧代码会把 `null` 值本身追加为参数）；`null`/`undefined`
+  展开也拼接零个参数。
+
+### Tests
+
+- 主测试套件：**807/807 通过**（修复前 805/807，
+  `js_call_spread_zero_args` 和 `r1_blit_coverage_render` 已修复）。
+- P0 JS 预算测试（`test_p0_js_budget.py`）：12/12 通过。
+- P34 R1–R6 回归测试：全部通过（P34 R2 中
+  `get_glyph_mask_uses_resolved_face` 在本机因 CJK 字体环境
+  跳过，非代码回归）。
+
+---
+
 ## P34.6 — css 继承传播短路 + _emit 纯容器快路径 + _build_children 叶子快路径
 
 *10k 节点压测文档：P34.5 ~28.5s → P34.6 ~27.5s（-3.5%）。emit 阶段

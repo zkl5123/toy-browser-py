@@ -1030,10 +1030,80 @@ _FAMILY_FALLBACKS = {
 # (simsun / msyh) are kept as a fallback for hosts without simhei, but
 # their CJK faces are often CFF-based or carry malformed glyf records,
 # so they rank lower on purpose.
+# P0 (GLM report) — CJK font discovery by *file-name literal match*
+# was too narrow: the GLM probe on a clean Linux host found
+# ``NotoSerifSC-Black.ttf`` in the system font dir, but the legacy
+# matcher only recognised the bare bases ``cjk`` / ``noto`` /
+# ``wqy`` (plus a handful of Windows-only names).  The result was
+# ``font._cjk_fallback = None`` → any CJK character in the page
+# crashed the whole render pipeline with ``AttributeError: 'NoneType'
+# object has no attribute 'ascent'``.  The P0 fix widens the match to
+# the *real-world* CJK family names so a host that has a CJK font
+# (Noto CJK, Droid Sans Fallback, AR PL, Source Han, WenQuanYi,
+# Unfonts, TakaoGothic, etc.) gets a working fallback face.
 _CJK_FONT_FILES = {
-    "win": ["simhei", "simkai", "mingliu", "simsun", "msyh"],
-    "generic": ["cjk", "noto", "wqy"],
+    # Windows: the classic Microsoft CJK faces.
+    "win": [
+        "simhei", "simkai", "mingliu", "simsun", "msyh",
+        "msyhbd", "msyhbd", "deng", "dena",
+    ],
+    # Linux / macOS / generic: a superset of the real-world CJK
+    # families the GLM probe would find on a clean distro.  The
+    # matcher lower-cases the file base and checks whether the base
+    # contains one of these tokens (not an exact match), so
+    # ``NotoSerifSC-Regular.ttf`` → base ``notoserifsc-regular``
+    # matches the ``noto`` token, and ``DroidSansFallback.ttf`` →
+    # ``droidsansfallback`` matches the ``droid`` token.
+    "generic": [
+        # Noto CJK (Debian / Ubuntu / Fedora)
+        "noto", "notosanssc", "notosanscjk", "notoserifsc",
+        "notoserifcjk", "notosansmono", "notosanstc", "notoseriftc",
+        # Droid Sans Fallback (older Android / some distros)
+        "droid", "droidsansfallback", "droidfallback",
+        # WQY / WenQuanYi (Debian)
+        "wqy", "wenquanyi", "wqymicrohei", "wqyzenhei",
+        # AR PL (older RPM distros)
+        "arphic", "arpl",
+        # Source Han (older Adobe)
+        "sourcehan",
+        # Unfonts (Japanese, some BSD)
+        "unfonts",
+        # TakaoGothic (Japanese Windows legacy)
+        "takao",
+        # MS Gothic / MS Mincho (Windows JP)
+        "msgothic", "msmincho",
+        # Batang / Gulim (Windows KR)
+        "batang", "gulim",
+        # SimSun / SimHei (Windows CN, also on macOS / Linux via Wine)
+        "simsun", "simhei", "simsun",
+        # CJK generic
+        "cjk",
+        # macOS system fonts
+        "pingfang", "hiragino", "songti", "heiti", "kaiti",
+    ],
 }
+
+
+def _cjk_base_match(base: str) -> bool:
+    """P0 (GLM report) — True when *base* (lower-cased file stem
+    without the extension) contains any of the known CJK tokens.
+
+    The legacy ``find_cjk_font`` only matched ``f"{b}.ttf"`` /
+    ``f"{b}.ttc"`` for an exact base *b* from the table; the P0 fix
+    matches the *token* inside the stem so a file like
+    ``NotoSerifSC-Black.ttf`` (stem ``notoserifsc-black``) is found.
+    """
+    import re
+    stem = re.sub(r"(?:bd|bold|black|light|thin|medium|regular|semi)$",
+                  "", base.lower().replace("-", "").replace("_", ""))
+    for tok in ("noto", "droid", "wqy", "wenquanyi", "arphic", "arpl",
+                "sourcehan", "unfonts", "takao", "msgothic", "msmincho",
+                "batang", "gulim", "simsun", "simhei", "cjk",
+                "pingfang", "hiragino", "songti", "heiti", "kaiti",
+                "msyh", "deng", "dena"):
+        if tok in stem:
+            return True
+    return False
 
 
 def _font_candidates(family: str, bold: bool, search_dirs: list) -> list:
@@ -1160,46 +1230,77 @@ def load_font_for_family(
     return None
 
 
+def _cjk_stem_match(stem: str) -> bool:
+    """P0 (GLM report) — True when the lower-cased file stem (without
+    extension) looks like a CJK font file.  The legacy matcher only
+    tried exact base names from :data:`_CJK_FONT_FILES`, so
+    ``NotoSerifSC-Black.ttf`` was never found on a clean Linux host.
+    The P0 fix matches the *token* inside the stem: any of the known
+    CJK family tokens appearing in the stem qualifies.
+    """
+    s = stem.lower().replace("-", "").replace("_", "").replace(".", "")
+    for tok in ("noto", "droid", "wqy", "wenquanyi", "arphic", "arpl",
+                 "sourcehan", "unfonts", "takao", "msgothic", "msmincho",
+                 "batang", "gulim", "simsun", "simhei", "cjk",
+                 "pingfang", "hiragino", "songti", "heiti", "kaiti",
+                 "msyh", "deng", "dena"):
+        if tok in s:
+            return True
+    return False
+
+
 def find_cjk_font(search_dirs: Optional[list] = None,
                   weight_class: int = 400,
                   max_bytes: int = _MAX_FONT_BYTES) -> Optional[FontMetrics]:
     """P33.R1 — find a CJK-capable font on the system.
 
-    Scans *search_dirs* (default: the OS font directory when
-    ``None``) for the known CJK font file bases (:data:`_CJK_FONT_FILES`),
-    handling both ``.ttf`` and ``.ttc``.  For collections the most
-    CJK-capable face is selected.  Returns the first usable
-    :class:`FontMetrics`, or ``None``.
+    P0 (GLM report) — the legacy implementation only tried exact
+    file names from :data:`_CJK_FONT_FILES` (``simhei.ttf``,
+    ``noto.ttf``, ``wqy.ttf``, …), so a clean Linux host that had
+    ``NotoSerifSC-Black.ttf`` in its font dir got
+    ``_cjk_fallback = None`` and any CJK character in the page
+    crashed the whole render pipeline.  The P0 fix scans every
+    ``*.ttf`` / ``*.ttc`` in the search dirs and matches the stem
+    against the CJK token table (``_cjk_stem_match``), so any CJK
+    family the host actually has is picked up.
+
+    For collections the most CJK-capable face is selected.  Returns
+    the first usable :class:`FontMetrics`, or ``None``.
 
     P33.R1 resource governance — files larger than *max_bytes* are
     skipped so a low-memory host does not hold a 17 MB collection in
     RAM; the caller then falls back to the bitmap font.
     """
     import os
-    import platform
     if search_dirs is None:
         search_dirs = _system_font_dirs()
-    bases = list(_CJK_FONT_FILES.get("win" if platform.system() == "Windows"
-                                      else "generic", []))
     for d in search_dirs:
         if not os.path.isdir(d):
             continue
-        for b in bases:
-            for cand in (f"{b}.ttf", f"{b}.ttc", f"{b}bd.ttf", f"{b}bd.ttc"):
-                p = os.path.join(d, cand)
-                if not os.path.isfile(p):
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for name in sorted(entries):
+            low = name.lower()
+            if not (low.endswith(".ttf") or low.endswith(".ttc")):
+                continue
+            # P0 — match the stem against the CJK token table.
+            stem = low.rsplit(".", 1)[0]
+            if not _cjk_stem_match(stem):
+                continue
+            p = os.path.join(d, name)
+            try:
+                if os.path.getsize(p) > max_bytes:
                     continue
-                try:
-                    if os.path.getsize(p) > max_bytes:
-                        continue
-                    if is_ttc(p):
-                        m = load_face_best_cjk(p)
-                    else:
-                        m = load_ttf(p)
-                except TTFError:
-                    continue
-                if m is not None:
-                    return m
+                if is_ttc(p):
+                    m = load_face_best_cjk(p)
+                else:
+                    m = load_ttf(p)
+            except TTFError:
+                continue
+            if m is not None:
+                return m
     return None
 
 

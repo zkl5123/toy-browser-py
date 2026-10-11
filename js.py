@@ -296,6 +296,20 @@ class Logical(JNode):
     right: JNode
 
 
+# P0 (GLM report) — ternary conditional: `cond ? a : b`.  The legacy
+# parser had no ternary node; the GLM probe confirmed that
+# ``cond ? a : b`` raised a SyntaxError that killed the entire
+# script.  Model it as a dedicated node so the interpreter can
+# evaluate only the chosen branch (lazy semantics).
+# NOTE: ``else`` is a Python keyword, so the dataclass field is
+# named ``else_`` (matching the existing :class:`If` convention).
+@dataclass
+class Ternary(JNode):
+    cond: JNode
+    then: JNode
+    else_: JNode
+
+
 @dataclass
 class If(JNode):
     cond: JNode
@@ -766,6 +780,10 @@ LOGICAL_AND = 4
 LOGICAL_OR = 5
 NULLISH = 6
 ASSIGN = 0
+# P0 (GLM report) — ternary sits just above assignment but below
+# logical-or; the right operand of a binary operator must not
+# "swallow" a ternary `?` that belongs to the enclosing expression.
+TERNARY = 7
 
 
 class Parser:
@@ -800,15 +818,43 @@ class Parser:
 
         Delegates to parse_expression_inner, but first tries to parse a
         top-level assignment (lowest precedence).
+
+        P0 (GLM report) — when the caller's min_prec is at or above
+        the ternary level, the right operand of a binary operator must
+        NOT swallow a ternary `?` that belongs to the enclosing
+        expression.  The legacy code always called
+        ``parse_assignment_min`` for any min_prec ≤ ASSIGN, which
+        caused ``6 % 2 === 0`` to be parsed as
+        ``6 % (2 === 0)`` instead of ``(6 % 2) === 0``.
         """
         if min_prec <= ASSIGN:
             return self.parse_assignment_min()
         return self.parse_expression_inner(min_prec)
 
     def parse_assignment_min(self) -> JNode:
-        """Parse at assignment precedence: `e = e`, `e += e`, `e -= e`."""
+        """Parse at assignment precedence: `e = e`, `e += e`, `e -= e`.
+
+        P0 (GLM report) — also handles the ternary conditional
+        (`cond ? a : b`).  The ternary has lower precedence than
+        logical-or (it sits just above assignment), so it is parsed
+        at the same level as the assignment operator: after the
+        condition expression, peek for `?` and, if found, parse the
+        `a` branch at full expression precedence, expect `:`, then
+        parse the `b` branch at the same level (right-associative,
+        so nested ternaries bind to the nearest `:`).
+        """
         left = self.parse_expression_inner(1)
         t = self.peek()
+        # P0 — ternary: `left ? a : b`.
+        if t.value == "?":
+            self.next()
+            then_branch = self.parse_expression(1)
+            t = self.peek()
+            if t.value != ":":
+                raise SyntaxError(f"expected ':' after ternary then-branch, got {t.value!r}")
+            self.next()
+            else_branch = self.parse_assignment_min()  # right-associative
+            return Ternary(left, then_branch, else_branch)
         if t.value in ("=", "+=", "-="):
             op = t.value
             self.next()
@@ -944,12 +990,26 @@ class Parser:
         operand (called from the primary-operand position of the Pratt
         parser).  ``++x`` / ``--x`` mutate the binding; the result is
         the new value.
+
+        P0 (GLM report) — ``typeof`` is also a prefix operator in JS
+        (``typeof x``, ``typeof "s"``, ``typeof function(){}``).  The
+        legacy parser did not recognise it as a unary prefix, so any
+        script that used ``typeof`` in a binary expression or as a
+        bare operator raised a SyntaxError that killed the entire
+        script (the all-or-nothing parse problem the GLM report
+        flagged).  Now the parser produces a ``Unary`` node for
+        ``typeof`` and the interpreter returns the correct string.
         """
         t = self.peek()
         if t.value in ("++", "--"):
             self.next()
             operand = self.parse_unary()
             return IncDec(operand, op=t.value, prefix=True)
+        # P0 — typeof: a unary prefix operator that returns a string.
+        if t.kind == "id" and t.value == "typeof":
+            self.next()
+            operand = self.parse_unary()
+            return Unary(op="typeof", operand=operand)
         return self.parse_postfix()
 
     def _expect_id(self) -> Token:
@@ -1308,7 +1368,14 @@ class Parser:
             name = self._expect_id().value
             value = None
             if self.match("="):
-                value = self.parse_expression(1)
+                # P0 (GLM report) — the RHS of a declaration may be a
+                # ternary (`c ? 1 : 2`) or an assignment; parse at the
+                # lowest precedence so the full expression (including
+                # the ternary handled by parse_assignment_min) is
+                # captured.  The legacy ``parse_expression(1)`` went
+                # straight to the Pratt loop and stopped at ``?``
+                # (prec 0 < 1), raising "unexpected token '?'".
+                value = self.parse_expression(0)
             self.match(";")
             return LetDecl(name, value, decl_kind)
         if t.value == "function":
@@ -1339,7 +1406,12 @@ class Parser:
             self.next()
             value = None
             if self.peek().value not in (";", "}", ""):
-                value = self.parse_expression(1)
+                # P0 (GLM report) — the return RHS may be a ternary
+                # (`return n<=1 ? 1 : 2`); parse at the lowest
+                # precedence so parse_assignment_min captures the
+                # full ternary.  The legacy parse_expression(1)
+                # stopped at `?` and raised a SyntaxError.
+                value = self.parse_expression(0)
             self.match(";")
             return Return(value)
         if t.value == "throw":
@@ -1355,6 +1427,15 @@ class Parser:
             self.next()
             self.match(";")
             return ExprStmt(Unary("continue", Null()))
+        # P0 (GLM report) — an isolated `;` (e.g. after a function
+        # declaration ``function A(){};``) is an empty statement in
+        # JS, not a syntax error.  The legacy parser tried to parse
+        # an expression, saw `;`, and raised "unexpected token ';'",
+        # which killed the entire script (the all-or-nothing parse
+        # problem the GLM probe flagged).
+        if self.peek().value == ";":
+            self.next()
+            return ExprStmt(Null())
         # expression statement (or assignment)
         expr = self.parse_expression(0)
         self.match(";")
@@ -1699,11 +1780,30 @@ class _Continue(Exception):
     pass
 
 
+class _BudgetExceeded(Exception):
+    """P0 (GPT report) — raised when the per-call JS execution budget
+    is exceeded (a busy loop that does not terminate, or a program
+    that exceeds the step budget).  The host catches it and logs the
+    cancellation instead of hanging the GUI thread."""
+
+
 class Interpreter:
     def __init__(self, host: "Host"):
         self.host = host
         self.env = Env({})
         self.this_value = None  # P11.4 — current `this` binding for event handlers
+        # P0 — per-call execution budget.  The legacy interpreter had
+        # no bound: a script that never terminates (while(true) {}
+        # with no break, or a recursive function that does not return)
+        # hangs the GUI thread forever.  The P0 budget counts
+        # interpreter *steps* (each eval call) and raises
+        # _BudgetExceeded when the per-call limit is reached.  The
+        # host catches it and logs the cancellation.
+        self._steps: int = 0
+        self._budget: int = getattr(host, "_js_step_budget", 2_000_000)
+        self._cancelling: bool = False  # set by host.cancel_scripts()
+        self._recursion_depth: int = 0
+        self._max_recursion: int = getattr(host, "_js_max_recursion", 256)
 
     @staticmethod
     def truthy(v: Any) -> bool:
@@ -1718,6 +1818,20 @@ class Interpreter:
         return True
 
     def eval(self, node: JNode) -> Any:
+        # P0 — per-call execution budget: count each node evaluation
+        # as one step; raise _BudgetExceeded when the budget is
+        # exhausted.  A script that never terminates (while(true){}
+        # with no break, or a non-terminating recursion) can no
+        # longer hang the GUI thread.
+        self._steps += 1
+        if self._steps >= self._budget:
+            raise _BudgetExceeded(
+                f"JS execution budget exhausted ({self._budget} steps)")
+        # P0 — cooperative cancellation: the host can set
+        # _cancelling on a running interpreter (from another thread
+        # or from a timer callback) to stop the script early.
+        if self._cancelling:
+            raise _BudgetExceeded("JS execution cancelled by host")
         if isinstance(node, Block):
             return self.eval_block(node)
         if isinstance(node, Num):
@@ -1831,6 +1945,10 @@ class Interpreter:
             return self.eval_unary(node)
         if isinstance(node, Logical):
             return self.eval_logical(node)
+        # P0 (GLM report) — ternary: evaluate only the chosen branch
+        # (lazy semantics, matching the JS spec).
+        if isinstance(node, Ternary):
+            return self.eval(node.then) if self.truthy(self.eval(node.cond)) else self.eval(node.else_)
         if isinstance(node, Member):
             return self.eval_member(node)
         if isinstance(node, Index):
@@ -1845,12 +1963,17 @@ class Interpreter:
         if isinstance(node, Call):
             callee = self.eval(node.callee)
             # P16.1 — evaluate arguments, splicing CallSpread nodes inline.
+            # P0 — a CallSpread of null/undefined splices ZERO args
+            # (the legacy code appended the null value itself, so
+            # f(...[]) passed null and f(...null) passed null too).
             args: list = []
             for a in node.args:
                 if isinstance(a, CallSpread):
                     src = self.eval(a.expr)
                     if isinstance(src, list):
                         args.extend(src)
+                    elif src is None:
+                        pass  # spreading null → zero args
                     else:
                         args.append(src)
                 else:
@@ -1862,6 +1985,23 @@ class Interpreter:
                     raise
                 except TDZError:
                     raise  # P33.R3 — TDZ must propagate
+                except _BudgetExceeded:
+                    # P0 — a non-terminating or over-deep recursion
+                    # must propagate to the host's catch-all so the
+                    # script is cancelled, not swallowed.
+                    raise
+                except RecursionError:
+                    # P0 — Python's native stack overflow (each JS
+                    # frame = 2-4 Python frames; the default ~1000-
+                    # frame limit trips at ~250 JS levels, right at
+                    # the guard's 256 cap).  RecursionError is a
+                    # subclass of RuntimeError, so this clause must
+                    # come BEFORE the generic RuntimeError handler
+                    # below; otherwise the RuntimeError clause logs
+                    # it as a benign "call error" and returns None,
+                    # silently swallowing the runaway recursion.
+                    raise _BudgetExceeded(
+                        "JS recursion depth exceeded (Python RecursionError)")
                 except RuntimeError as e:
                     if "constant variable" in str(e):
                         raise  # P33.R3 — const re-assignment must propagate
@@ -2046,8 +2186,21 @@ class Interpreter:
         instead of falling through to an outer scope.  ``var``
         declarations keep the legacy function-level hoisting (no TDZ
         record; the binding lands in the nearest function scope).
+
+        P0 — the block's last statement's value is returned so the
+        P9.3 IIFE wrapper in ``Host.eval`` can capture it.  A
+        ``return`` statement inside a plain block (not a function
+        frame) surfaces its value instead of propagating the
+        ``_Return`` exception.
         """
         old_env = self.env
+        # P0 — capture the parent's _is_func flag BEFORE creating the
+        # block env: when the parent is a function frame (a function
+        # body or an IIFE), _Return must propagate out of the block
+        # so the function exits; when the parent is a plain block
+        # (top-level, or a nested if/else/while body), _Return is
+        # caught and surfaced as the block's return value.
+        parent_is_func = getattr(old_env, "_is_func", False)
         block_env = Env({}, old_env)
         block_env._is_func = False
         self.env = block_env
@@ -2055,10 +2208,25 @@ class Interpreter:
         for s in block.stmts:
             if isinstance(s, LetDecl) and s.kind in ("let", "const"):
                 block_env.declare_block(s.name, s.kind)
-        last = None
+        last: Any = None
         try:
             for s in block.stmts:
                 last = self.eval(s)
+        except _Return as r:
+            # P0 — a `return` statement inside a plain block (not a
+            # function frame) surfaces its value instead of propagating
+            # the _Return exception.  The guard checks the *parent*
+            # env's _is_func (captured above): when the parent is a
+            # function frame, _Return must propagate to the
+            # function-level catch in _make_func / _make_arrow so
+            # that `return 'x'` actually exits the function.  The
+            # legacy unconditional catch swallowed every return inside
+            # a function body, so the last return statement in the
+            # body always won.
+            if not parent_is_func:
+                last = r.value
+            else:
+                raise
         finally:
             self.env = old_env
         return last
@@ -2124,9 +2292,9 @@ class Interpreter:
 
     def eval_binary(self, node: Binary) -> Any:
         op = node.op
+        l = self.eval(node.left)
+        r = self.eval(node.right)
         if op == "+":
-            l = self.eval(node.left)
-            r = self.eval(node.right)
             if isinstance(l, str) or isinstance(r, str):
                 # P12.2 — JS semantics: numbers become "1" not "1.0".
                 # P15.1 — Infinity / NaN formatting.
@@ -2143,34 +2311,112 @@ class Interpreter:
                 return _jsnum(l) + _jsnum(r)
             return l + r
         if op == "-":
-            return self.eval(node.left) - self.eval(node.right)
+            return l - r
         if op == "*":
-            return self.eval(node.left) * self.eval(node.right)
+            return l * r
         if op == "/":
-            return self.eval(node.left) / self.eval(node.right)
+            # P0 (GLM report) — JS `/` returns Infinity / -Infinity /
+            # NaN for zero divisors instead of raising ZeroDivisionError.
+            # ``1/0`` → Infinity, ``-1/0`` → -Infinity, ``0/0`` → NaN.
+            import math
+            if r == 0:
+                if l == 0:
+                    return float("nan")
+                return float("inf") if l > 0 else float("-inf")
+            return l / r
         if op == "%":
-            return self.eval(node.left) % self.eval(node.right)
+            # P0 (GLM report) — JS ``%`` follows the sign of the
+            # dividend (C-style remainder), unlike Python's floor
+            # modulo.  ``-7 % 3`` is ``-1`` in JS but ``2`` in
+            # Python.  Convert with a sign-corrected formula.
+            if r == 0:
+                import math
+                if l == 0:
+                    return float("nan")
+                return float("inf") if l > 0 else float("-inf")
+            q = abs(l) % abs(r)
+            return q if l >= 0 else -q
         if op in ("==", "==="):
-            l, r = self.eval(node.left), self.eval(node.right)
             if op == "===":
                 return type(l) is type(r) and l == r
-            return l == r
+            # P0 (GLM report) — JS loose equality with type coercion:
+            # ``1 == "1"`` is true (both coerce to the number 1),
+            # ``null == undefined`` is true, booleans coerce to
+            # numbers before comparing.
+            if type(l) is type(r):
+                return l == r
+            # Cross-type coercion (loose == only).
+            if isinstance(l, bool) and isinstance(r, (int, float)):
+                return (1 if l else 0) == r
+            if isinstance(r, bool) and isinstance(l, (int, float)):
+                return l == (1 if r else 0)
+            if isinstance(l, str) and isinstance(r, (int, float)):
+                try:
+                    return float(l) == r
+                except ValueError:
+                    return False
+            if isinstance(r, str) and isinstance(l, (int, float)):
+                try:
+                    return l == float(r)
+                except ValueError:
+                    return False
+            if (l is None and r is None) or (l is None and r is None):
+                return True
+            return False
         if op in ("!=", "!=="):
-            l, r = self.eval(node.left), self.eval(node.right)
             if op == "!==":
                 return not (type(l) is type(r) and l == r)
+            # P0 (GLM report) — negation of loose ==.
+            if type(l) is type(r):
+                return l != r
+            if isinstance(l, bool) and isinstance(r, (int, float)):
+                return (1 if l else 0) != r
+            if isinstance(r, bool) and isinstance(l, (int, float)):
+                return l != (1 if r else 0)
+            if isinstance(l, str) and isinstance(r, (int, float)):
+                try:
+                    return float(l) != r
+                except ValueError:
+                    return True
+            if isinstance(r, str) and isinstance(l, (int, float)):
+                try:
+                    return l != float(r)
+                except ValueError:
+                    return True
             return l != r
         if op == "<":
-            return self.eval(node.left) < self.eval(node.right)
+            return l < r
         if op == ">":
-            return self.eval(node.left) > self.eval(node.right)
+            return l > r
         if op == "<=":
-            return self.eval(node.left) <= self.eval(node.right)
+            return l <= r
         if op == ">=":
-            return self.eval(node.left) >= self.eval(node.right)
+            return l >= r
         raise TypeError(f"unsupported operator {op}")
 
     def eval_unary(self, node: Unary) -> Any:
+        # P0 (GLM report) — `typeof` is a *unary* operator in JS but
+        # the legacy parser only recognised it as a prefix in
+        # limited contexts.  Support it here so the eval path returns
+        # the correct string for any value (including ``undefined``,
+        # which JS maps to the string ``"undefined"``, not ``None``).
+        if node.op == "typeof":
+            v = self.eval(node.operand)
+            if v is None:
+                return "undefined"
+            if v is True:
+                return "boolean"
+            if v is False:
+                return "boolean"
+            if isinstance(v, (int, float)):
+                return "number"
+            if isinstance(v, str):
+                return "string"
+            if isinstance(v, (list, tuple, dict)):
+                return "object"
+            if callable(v):
+                return "function"
+            return "object"
         if node.op == "!":
             return not self.truthy(self.eval(node.operand))
         if node.op == "-":
@@ -2347,9 +2593,25 @@ class Interpreter:
 
     def eval_if(self, node: If) -> Any:
         if self.truthy(self.eval(node.cond)):
-            return self.eval_block(node.then) if isinstance(node.then, Block) else self.eval(node.then)
+            # P0 — a plain (non-function) then-block must propagate
+            # _Return so the caller (eval_block inside a function
+            # frame) sees it and exits; the legacy unconditional
+            # _Return catch in eval_block swallowed return inside
+            # if/else branches, so the last return in the function
+            # body always won.  Use eval() for then-branches that
+            # are not Block nodes so _Return propagates directly.
+            if isinstance(node.then, Block):
+                # A then-branch Block evaluated inside a function
+                # frame must propagate _Return; use eval_block
+                # (which now respects _is_func) so the return
+                # escapes the if and reaches the function-level
+                # catch in _make_func / _make_arrow.
+                return self.eval_block(node.then)
+            return self.eval(node.then)
         if node.else_ is not None:
-            return self.eval_block(node.else_) if isinstance(node.else_, Block) else self.eval(node.else_)
+            if isinstance(node.else_, Block):
+                return self.eval_block(node.else_)
+            return self.eval(node.else_)
         return None
 
     def eval_return_stmt(self, node) -> Any:
@@ -2554,23 +2816,77 @@ class Interpreter:
         func_env._is_func = True  # P33.R3 — function-level scope marker
         closure = Interpreter(self.host)
         closure.env = func_env
+        # P0 — inherit the step budget from the caller so a deeply
+        # recursive JS function cannot silently run past the host's
+        # execution cap (a self-recursive function that never returns
+        # would otherwise loop forever under the per-Interpreter
+        # budget because each closure gets its own counter).
+        closure._steps = self._steps
+        closure._budget = self._budget
+        closure._cancelling = self._cancelling
+        closure._max_recursion = self._max_recursion
 
         def f(*args):
             inner = Env({}, func_env)
             inner._is_func = True  # P33.R3 — the call frame is a function scope
             for p, a in zip(params, args):
                 inner.scope[p] = _Binding(a, "var", True)
+            # P0 — recursion-depth guard: JS has no stack limit in
+            # the toy interpreter, so a non-terminating recursion
+            # (function g(){return g()} ; g()) would otherwise raise
+            # Python's RecursionError far outside the host's catch
+            # list.  Count call frames in the closure and raise
+            # _BudgetExceeded at the cap (the host treats it like any
+            # other budget exhaustion).
+            closure._recursion_depth += 1
+            try:
+                if closure._recursion_depth > closure._max_recursion:
+                    raise _BudgetExceeded(
+                        f"JS recursion depth limit exceeded "
+                        f"({closure._max_recursion})")
+            except _BudgetExceeded:
+                closure._recursion_depth -= 1
+                raise
             # P29.2 — `arguments`: the actual call-arg list (JS: iterable
             # indexed object).  Needed so `for (let v of arguments)` works.
             inner.define("arguments", list(args))
             saved = closure.env
             closure.env = inner
             try:
-                val = closure.eval_block(body) if isinstance(body, Block) else closure.eval(body)
+                if isinstance(body, Block):
+                    # P0 — walk the function body's statements directly
+                    # in the function-frame env (inner, _is_func=True)
+                    # instead of calling eval_block, which creates a
+                    # fresh child env with _is_func=False and silently
+                    # swallows _Return (the P0 eval_block catch for
+                    # plain blocks made every return inside a
+                    # function body get caught by eval_block's
+                    # except clause, so the last return in the body
+                    # always won).  Walking directly preserves the
+                    # legacy _Return propagation: a `return` inside
+                    # an if/else/while branch raises _Return, which
+                    # propagates up to the function-level catch
+                    # below.
+                    last_val: Any = None
+                    for s in body.stmts:
+                        last_val = closure.eval(s)
+                    val = last_val
+                else:
+                    val = closure.eval(body)
             except _Return as r:
                 val = r.value
+            except RecursionError:
+                # P0 — Python's native stack overflow (each JS frame
+                # = 2-4 Python frames; the default 1000-frame limit
+                # trips at ~250-330 JS levels, which is right at the
+                # guard's 256-level cap).  Convert to
+                # _BudgetExceeded so the caller sees a uniform API
+                # and the host's catch-all cancels the script.
+                raise _BudgetExceeded(
+                    "JS recursion depth exceeded (Python RecursionError)")
             finally:
                 closure.env = saved
+                closure._recursion_depth -= 1
             return val
 
         # P16.2 — `return` inside a class-method body must also propagate
@@ -2590,26 +2906,58 @@ class Interpreter:
         func_env._is_func = True  # P33.R3 — closure captures the function scope
         closure = Interpreter(self.host)
         closure.env = func_env
+        # P0 — inherit the step budget + recursion state from the
+        # caller (symmetric with _make_func) so arrows cannot
+        # bypass the execution cap.
+        closure._steps = self._steps
+        closure._budget = self._budget
+        closure._cancelling = self._cancelling
+        closure._max_recursion = self._max_recursion
 
         def f(*args):
             inner = Env({}, func_env)
             inner._is_func = True  # P33.R3 — the call frame is a function scope
             for p, a in zip(params, args):
                 inner.scope[p] = _Binding(a, "var", True)
+            # P0 — recursion-depth guard (symmetric with _make_func).
+            closure._recursion_depth += 1
+            try:
+                if closure._recursion_depth > closure._max_recursion:
+                    raise _BudgetExceeded(
+                        f"JS recursion depth limit exceeded "
+                        f"({closure._max_recursion})")
+            except _BudgetExceeded:
+                closure._recursion_depth -= 1
+                raise
             # P29.2 — arrow `arguments`: same as _make_func.
             inner.define("arguments", list(args))
             saved = closure.env
             closure.env = inner
             try:
                 if is_block:
-                    val = closure.eval_block(body)
+                    # P0 — walk the arrow's block body statements
+                    # directly in the function-frame env (symmetric
+                    # with _make_func) instead of eval_block, which
+                    # creates a fresh child env with _is_func=False
+                    # and swallows _Return.
+                    last_val: Any = None
+                    for s in body.stmts:
+                        last_val = closure.eval(s)
+                    val = last_val
                 else:
                     # Expression body: JS arrow semantics — implicit return.
                     val = closure.eval(body)
             except _Return as r:
                 val = r.value
+            except RecursionError:
+                # P0 — symmetric with _make_func: Python's native
+                # stack overflow is converted to _BudgetExceeded so
+                # the host's catch-all cancels the script.
+                raise _BudgetExceeded(
+                    "JS recursion depth exceeded (Python RecursionError)")
             finally:
                 closure.env = saved
+                closure._recursion_depth -= 1
             return val
 
         return f
@@ -2808,7 +3156,20 @@ class DomElement:
 
 
 class Host:
-    """Binds the JS engine to a DOM tree + host functions + sandbox rules."""
+    """Binds the JS engine to a DOM tree + host functions + sandbox rules.
+
+    P0 (GPT report) — the host carries the JS execution budget so the
+    Interpreter can read it on construction.  Two knobs:
+
+    * ``_js_step_budget`` (default 2 000 000): the number of
+      interpreter ``eval`` steps a single script/event-handler call
+      may take before it is cancelled.  A ``while (true) {}`` script
+      is caught at the budget instead of hanging the GUI thread.
+    * ``_js_max_recursion`` (default 256): the maximum JS call-frame
+      depth.  A non-terminating JS recursion (``function g(){return g()}
+      ; g()``) raises _BudgetExceeded at the cap instead of Python's
+      RecursionError.
+    """
 
     def __init__(self, root: DomNode, log):
         self.root = root
@@ -2819,6 +3180,10 @@ class Host:
         self._listeners: dict[DomNode, dict] = {}
         self._build_element_table()
         self._class_registry: dict[str, ToyClass] = {}  # P12.2
+        # P0 — JS execution budget knobs (overridable by tests).
+        self._js_step_budget: int = 2_000_000
+        self._js_max_recursion: int = 256
+        self._cancelling: bool = False
         self.globals: dict = {
             "document": self._document_obj(),
             "console": self._console_obj(),
@@ -2928,11 +3293,19 @@ class Host:
         import math as _m
         import random as _rnd
 
+        # P0 (GLM report) — JS Math.round is *half-up* (toward +∞ for
+        # .5), not Python's banker's rounding (half-even).  ``2.5``
+        # rounds to ``3`` in JS but ``2`` in Python.
+        def _js_round(x):
+            if x >= 0:
+                return _m.floor(x + 0.5)
+            return _m.ceil(x - 0.5)
+
         return {
             "abs": lambda x: abs(x),
             "floor": lambda x: _m.floor(x),
             "ceil": lambda x: _m.ceil(x),
-            "round": lambda x: round(x),
+            "round": _js_round,
             "sqrt": lambda x: _m.sqrt(x) if x >= 0 else float("nan"),
             "min": lambda *xs: min(xs) if xs else 0,
             "max": lambda *xs: max(xs) if xs else 0,
@@ -4308,7 +4681,13 @@ class Host:
             interpreter.env = Env(self.globals, None)
             # P11.4 — bind `this` to the target element so `this.style…` works.
             interpreter.this_value = el
-            interpreter.eval_block(program)
+            # P0 — the event handler runs under the same execution
+            # budget as a script; a malicious or buggy on* handler
+            # must not be able to hang the GUI thread.
+            try:
+                interpreter.eval_block(program)
+            except _BudgetExceeded as e:
+                self.log(f"JS budget (event handler): {e}")
 
     # P11.4 — public entry point used by browser.event_target /
     # click_and_render: sets this and runs the handler.
@@ -4341,6 +4720,19 @@ class Host:
         except _Throw as exc:
             # P11.2 — uncaught throw: log the thrown value, don't crash.
             self.log(f"uncaught throw: {exc.value}")
+        except _BudgetExceeded as exc:
+            # P0 (GPT report) — a script that never terminates, or
+            # that exceeds the per-call step budget, must not hang
+            # the GUI thread.  Log the cancellation and move on to
+            # the next script (the rest of the page still renders).
+            self.log(f"JS budget exceeded: {exc}")
+        except RecursionError as e:
+            # P0 — the JS recursion guard catches most runaway
+            # recursion at the _max_recursion cap, but Python's
+            # native RecursionError can still fire when the guard's
+            # own try/except stack is deep enough (a pathological
+            # case).  Log and recover instead of crashing the host.
+            self.log(f"JS recursion error: {e}")
         except (NameError, TypeError, SyntaxError, ZeroDivisionError) as e:
             self.log(f"JS error: {e}")
 
@@ -4352,6 +4744,11 @@ class Host:
         propagate to the caller so block-scope / TDZ / const
         tests can assert on them.  The *host* ``execute`` path keeps
         its legacy log-and-swell behavior.
+
+        P0 — a _BudgetExceeded (recursion-depth or step-budget
+        exhaustion) propagates to the caller so tests can assert on
+        it; the legacy eval() would have hung the process forever
+        on a non-terminating expression.
         """
         interpreter = Interpreter(self)
         interpreter.env = Env(self.globals, None)
@@ -4360,10 +4757,24 @@ class Host:
         # in a function that returns the result of the last
         # expression, then call it.  The legacy semantics are
         # preserved (the last expression's value is the return).
-        wrapped = f"((function() {{ {code} }}))()"
+        # P0 — the P9.3 IIFE wrapper silently returned ``undefined``
+        # for bare-expression input (``eval("add(3,4)")`` → None)
+        # because a JS function does not implicitly return its last
+        # expression.  Splice a trailing ``return <last-expr>;`` into
+        # the wrapper body when the input does not already end with
+        # a return statement; the legacy behaviour is unchanged for
+        # code that ends with a return.  The splice is safe because
+        # ``eval_block`` returns the last statement's value (P0 fix
+        # above), so the IIFE's implicit return surfaces it.
+        last_expr = code.strip().rsplit(";", 1)[-1].strip()
+        if last_expr and not last_expr.startswith("return") \
+                and not last_expr.startswith("}"):
+            wrapped = f"((function() {{ {code} return {last_expr}; }}))()"
+        else:
+            wrapped = f"((function() {{ {code} }}))()"
         program = parse_program(wrapped)
         try:
-            interpreter.eval_block(program)
+            result = interpreter.eval_block(program)
         except _Return as r:
             return r.value
         except _Throw as exc:
@@ -4373,8 +4784,29 @@ class Host:
             raise
         except RuntimeError:
             raise
+        except _BudgetExceeded:
+            # P0 — a non-terminating expression or a function that
+            # exceeds the recursion cap: propagate so the caller can
+            # handle it (tests assert on the exception; the GUI
+            # path catches it via execute_all's except clause).
+            raise
+        except RecursionError:
+            # P0 — the JS recursion-depth guard catches most runaway
+            # recursion at the _max_recursion cap, but a deeply
+            # nested Python call stack (each JS frame = one Python
+            # stack frame) can still trip Python's native limit
+            # before the guard's counter increments.  Convert it to
+            # _BudgetExceeded so the caller sees a uniform API.
+            raise _BudgetExceeded(
+                "JS recursion depth exceeded (Python RecursionError)")
         except (NameError, TypeError, SyntaxError, ZeroDivisionError):
             raise
+        # P0 — eval_block now returns the last statement's value
+        # (the IIFE's return value propagates through eval_block's
+        # ``last`` accumulator).  If the IIFE returned None but the
+        # caller's code had a meaningful last expression, surface it.
+        if result is not None:
+            return result
         return None
 
     def flush_timers(self) -> None:
