@@ -222,3 +222,16 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_get_glyph_mask_uses_resolved_face", test_get_glyph_mask_uses_resolved_face))
+TESTS.append(("test_draw_text_cjk_is_fast", test_draw_text_cjk_is_fast))
+TESTS.append(("test_advance_text_is_linear", test_advance_text_is_linear))
+TESTS.append(("test_wrap_is_linear", test_wrap_is_linear))
+TESTS.append(("test_adv_width_table_is_bounded", test_adv_width_table_is_bounded))
+TESTS.append(("test_blit_glyph_mask_negative_origin_clips", test_blit_glyph_mask_negative_origin_clips))
+TESTS.append(("test_blit_glyph_mask_fully_clipped_left", test_blit_glyph_mask_fully_clipped_left))
+TESTS.append(("test_blit_glyph_mask_c255_fast_path", test_blit_glyph_mask_c255_fast_path))
+TESTS.append(("test_child_index_guard_rebuilds_on_reuse", test_child_index_guard_rebuilds_on_reuse))

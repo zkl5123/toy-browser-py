@@ -137,3 +137,19 @@ def test_r3_const_reassign_top_level():
         assert False, "top-level const reassign must raise"
     except RuntimeError as e:
         assert "constant variable" in str(e)
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_r3_let_block_scope", test_r3_let_block_scope))
+TESTS.append(("test_r3_const_immutable", test_r3_const_immutable))
+TESTS.append(("test_r3_tdz_read_before_init", test_r3_tdz_read_before_init))
+TESTS.append(("test_r3_var_hoisting", test_r3_var_hoisting))
+TESTS.append(("test_r3_nested_blocks", test_r3_nested_blocks))
+TESTS.append(("test_r3_for_let_loop_scope", test_r3_for_let_loop_scope))
+TESTS.append(("test_r3_postfix_prefix_increment", test_r3_postfix_prefix_increment))
+TESTS.append(("test_r3_shadow_in_nested_func", test_r3_shadow_in_nested_func))
+TESTS.append(("test_r3_const_array_mutable", test_r3_const_array_mutable))
+TESTS.append(("test_r3_outer_visible_from_inner_block", test_r3_outer_visible_from_inner_block))
+TESTS.append(("test_r3_let_in_while_loop_body", test_r3_let_in_while_loop_body))
+TESTS.append(("test_r3_const_reassign_top_level", test_r3_const_reassign_top_level))

@@ -235,3 +235,16 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("t1_cache_agrees_with_advance", t1_cache_agrees_with_advance))
+TESTS.append(("t2_measure_edge_cases", t2_measure_edge_cases))
+TESTS.append(("t3_clear_advances_cache", t3_clear_advances_cache))
+TESTS.append(("t4_layout_clear_caches_clears_text", t4_layout_clear_caches_clears_text))
+TESTS.append(("t5_half_lead_cache", t5_half_lead_cache))
+TESTS.append(("t6_scroll_container_tagging", t6_scroll_container_tagging))
+TESTS.append(("t7_non_scroll_emits_commands", t7_non_scroll_emits_commands))
+TESTS.append(("t8_measure_perf", t8_measure_perf))
+TESTS.append(("t9_pipeline_perf", t9_pipeline_perf))

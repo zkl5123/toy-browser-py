@@ -264,3 +264,29 @@ def test_p1_register_web_api_idempotent():
     web_api.register_web_api(host)
     assert "localStorage" in host.globals
     assert "WebSocket" in host.globals
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_p1_localstorage_set_get", test_p1_localstorage_set_get))
+TESTS.append(("test_p1_localstorage_remove_clear", test_p1_localstorage_remove_clear))
+TESTS.append(("test_p1_localstorage_key_index", test_p1_localstorage_key_index))
+TESTS.append(("test_p1_localstorage_quota", test_p1_localstorage_quota))
+TESTS.append(("test_p1_sessionstorage_separate_from_local", test_p1_sessionstorage_separate_from_local))
+TESTS.append(("test_p1_websocket_send_and_state", test_p1_websocket_send_and_state))
+TESTS.append(("test_p1_websocket_simulate_message", test_p1_websocket_simulate_message))
+TESTS.append(("test_p1_websocket_send_after_close_raises", test_p1_websocket_send_after_close_raises))
+TESTS.append(("test_p1_navigator_readonly", test_p1_navigator_readonly))
+TESTS.append(("test_p1_navigator_hardware_concurrency", test_p1_navigator_hardware_concurrency))
+TESTS.append(("test_p1_location_default_about_blank", test_p1_location_default_about_blank))
+TESTS.append(("test_p1_location_make_location_helper", test_p1_location_make_location_helper))
+TESTS.append(("test_p1_location_origin_http", test_p1_location_origin_http))
+TESTS.append(("test_p1_history_initial", test_p1_history_initial))
+TESTS.append(("test_p1_url_basic_properties", test_p1_url_basic_properties))
+TESTS.append(("test_p1_url_relative_with_base", test_p1_url_relative_with_base))
+TESTS.append(("test_p1_url_searchparams", test_p1_url_searchparams))
+TESTS.append(("test_p1_url_searchparams_constructor_from_string", test_p1_url_searchparams_constructor_from_string))
+TESTS.append(("test_p1_urlsearchparams_standalone", test_p1_urlsearchparams_standalone))
+TESTS.append(("test_p1_js_localstorage_script", test_p1_js_localstorage_script))
+TESTS.append(("test_p1_js_websocket_script", test_p1_js_websocket_script))
+TESTS.append(("test_p1_register_web_api_idempotent", test_p1_register_web_api_idempotent))

@@ -360,3 +360,31 @@ def test_r4_grid_children_positioned():
     # c1 should be at the top-left cell; c4 at the bottom-right cell.
     assert c1.rect.y < c4.rect.y, f"c1 must be above c4 (y {c1.rect.y} vs {c4.rect.y})"
     assert c1.rect.x < c4.rect.x, f"c1 must be left of c4 (x {c1.rect.x} vs {c4.rect.x})"
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_r4_abs_position_flag", test_r4_abs_position_flag))
+TESTS.append(("test_r4_abs_position_right_bottom", test_r4_abs_position_right_bottom))
+TESTS.append(("test_r4_abs_position_render", test_r4_abs_position_render))
+TESTS.append(("test_r4_abs_two_children_different_offsets", test_r4_abs_two_children_different_offsets))
+TESTS.append(("test_r4_relative_position_flag", test_r4_relative_position_flag))
+TESTS.append(("test_r4_relative_position_offsets", test_r4_relative_position_offsets))
+TESTS.append(("test_r4_relative_position_right_bottom", test_r4_relative_position_right_bottom))
+TESTS.append(("test_r4_sticky_position_flag", test_r4_sticky_position_flag))
+TESTS.append(("test_r4_sticky_position_full_direction", test_r4_sticky_position_full_direction))
+TESTS.append(("test_r4_z_index_positive_stored", test_r4_z_index_positive_stored))
+TESTS.append(("test_r4_z_index_negative_stored", test_r4_z_index_negative_stored))
+TESTS.append(("test_r4_z_index_paint_sort", test_r4_z_index_paint_sort))
+TESTS.append(("test_r4_transform_translate_stored", test_r4_transform_translate_stored))
+TESTS.append(("test_r4_transform_translate_paint_offset", test_r4_transform_translate_paint_offset))
+TESTS.append(("test_r4_transform_negative_translate", test_r4_transform_negative_translate))
+TESTS.append(("test_r4_overflow_hidden_flag", test_r4_overflow_hidden_flag))
+TESTS.append(("test_r4_overflow_scroll_sets_axes", test_r4_overflow_scroll_sets_axes))
+TESTS.append(("test_r4_overflow_auto_sets_axes", test_r4_overflow_auto_sets_axes))
+TESTS.append(("test_r4_overflow_x_only", test_r4_overflow_x_only))
+TESTS.append(("test_r4_scroll_top_left_stored", test_r4_scroll_top_left_stored))
+TESTS.append(("test_r4_scroll_container_paint_tags", test_r4_scroll_container_paint_tags))
+TESTS.append(("test_r4_grid_layout_flag", test_r4_grid_layout_flag))
+TESTS.append(("test_r4_grid_columns_rows_stored", test_r4_grid_columns_rows_stored))
+TESTS.append(("test_r4_grid_children_positioned", test_r4_grid_children_positioned))

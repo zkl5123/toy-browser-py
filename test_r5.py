@@ -324,3 +324,19 @@ def test_r5_dirty_layout_then_region_rasterize():
     assert b1 > 200 and r1 < 50, f"a must be blue, got ({r1},{g1},{b1})"
     r2, g2, b2 = bmp.pixel_at(50, 75)
     assert r2 > 200 and b2 < 50, f"b must be red, got ({r2},{g2},{b2})"
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_r5_dirty_flag_exists", test_r5_dirty_flag_exists))
+TESTS.append(("test_r5_mark_dirty_subtree", test_r5_mark_dirty_subtree))
+TESTS.append(("test_r5_dirty_layout_only_dirty_boxes", test_r5_dirty_layout_only_dirty_boxes))
+TESTS.append(("test_r5_dirty_layout_idempotent", test_r5_dirty_layout_idempotent))
+TESTS.append(("test_r5_mark_dirty_idempotent", test_r5_mark_dirty_idempotent))
+TESTS.append(("test_r5_region_rasterize_exists", test_r5_region_rasterize_exists))
+TESTS.append(("test_r5_region_rasterize_partial_update", test_r5_region_rasterize_partial_update))
+TESTS.append(("test_r5_region_rasterize_no_full_repaint", test_r5_region_rasterize_no_full_repaint))
+TESTS.append(("test_r5_layout_1000_flat_nodes_under_100ms", test_r5_layout_1000_flat_nodes_under_100ms))
+TESTS.append(("test_r5_layout_500_nested_nodes_under_100ms", test_r5_layout_500_nested_nodes_under_100ms))
+TESTS.append(("test_r5_dirty_layout_1000_nodes_under_10ms", test_r5_dirty_layout_1000_nodes_under_10ms))
+TESTS.append(("test_r5_dirty_layout_then_region_rasterize", test_r5_dirty_layout_then_region_rasterize))

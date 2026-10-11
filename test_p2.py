@@ -294,3 +294,28 @@ def test_p2_bench_10000_nodes_wall_clock():
     elapsed_s = t1 - t0
     print(f"  [bench] 10000-node pipeline: {elapsed_s:.3f} s (informational)")
     assert bmp is not None
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_p2_cors_policy_wildcard_permits_any_origin", test_p2_cors_policy_wildcard_permits_any_origin))
+TESTS.append(("test_p2_cors_policy_specific_origin", test_p2_cors_policy_specific_origin))
+TESTS.append(("test_p2_cors_policy_from_headers", test_p2_cors_policy_from_headers))
+TESTS.append(("test_p2_http_response_cors_properties", test_p2_http_response_cors_properties))
+TESTS.append(("test_p2_http_response_cors_denied_for_specific_origin", test_p2_http_response_cors_denied_for_specific_origin))
+TESTS.append(("test_p2_parse_csp_directives_basic", test_p2_parse_csp_directives_basic))
+TESTS.append(("test_p2_parse_csp_directives_empty", test_p2_parse_csp_directives_empty))
+TESTS.append(("test_p2_parse_csp_directives_no_semicolon", test_p2_parse_csp_directives_no_semicolon))
+TESTS.append(("test_p2_http_response_csp_directives", test_p2_http_response_csp_directives))
+TESTS.append(("test_p2_csp_violation_blocked_script", test_p2_csp_violation_blocked_script))
+TESTS.append(("test_p2_csp_violation_permitted_by_default_src", test_p2_csp_violation_permitted_by_default_src))
+TESTS.append(("test_p2_csp_no_header_permits_everything", test_p2_csp_no_header_permits_everything))
+TESTS.append(("test_p2_is_origin_match", test_p2_is_origin_match))
+TESTS.append(("test_p2_canvas_box_is_rendered", test_p2_canvas_box_is_rendered))
+TESTS.append(("test_p2_canvas_size_from_attrs", test_p2_canvas_size_from_attrs))
+TESTS.append(("test_p2_canvas_default_size_when_no_attrs", test_p2_canvas_default_size_when_no_attrs))
+TESTS.append(("test_p2_canvas_css_width_override", test_p2_canvas_css_width_override))
+TESTS.append(("test_p2_canvas_paint_background_visible", test_p2_canvas_paint_background_visible))
+TESTS.append(("test_p2_bench_1000_nodes_under_100ms", test_p2_bench_1000_nodes_under_100ms))
+TESTS.append(("test_p2_bench_10000_nodes_memory_cap", test_p2_bench_10000_nodes_memory_cap))
+TESTS.append(("test_p2_bench_10000_nodes_wall_clock", test_p2_bench_10000_nodes_wall_clock))

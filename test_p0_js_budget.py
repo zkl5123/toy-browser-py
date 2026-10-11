@@ -134,3 +134,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("t1_host_knobs", t1_host_knobs))
+TESTS.append(("t2_recursion_cap", t2_recursion_cap))
+TESTS.append(("t3_bounded_loop", t3_bounded_loop))
+TESTS.append(("t4_while_loop", t4_while_loop))
+TESTS.append(("t5_execute_infinite_loop", t5_execute_infinite_loop))
+TESTS.append(("t6_reduced_recursion_cap", t6_reduced_recursion_cap))
+TESTS.append(("t7_arrow_recursion_guard", t7_arrow_recursion_guard))
+TESTS.append(("t8_normal_function", t8_normal_function))

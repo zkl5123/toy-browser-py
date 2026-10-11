@@ -266,3 +266,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# GPT P1-2 — TESTS list (auto-generated)
+TESTS: list = []
+TESTS.append(("test_culling_offscreen_right", test_culling_offscreen_right))
+TESTS.append(("test_culling_offscreen_bottom", test_culling_offscreen_bottom))
+TESTS.append(("test_culling_negative_left", test_culling_negative_left))
+TESTS.append(("test_culling_text_at_origin_zero_size", test_culling_text_at_origin_zero_size))
+TESTS.append(("test_text_node_fast_path_box", test_text_node_fast_path_box))
+TESTS.append(("test_text_node_fast_path_color", test_text_node_fast_path_color))
+TESTS.append(("test_text_node_special_prop_goes_slow_path", test_text_node_special_prop_goes_slow_path))
+TESTS.append(("test_wrap_decision_single_line", test_wrap_decision_single_line))
+TESTS.append(("test_wrap_decision_overflow", test_wrap_decision_overflow))
+TESTS.append(("test_layout_block_no_wrap_short_text", test_layout_block_no_wrap_short_text))
+TESTS.append(("test_emit_layer_field_default", test_emit_layer_field_default))
+TESTS.append(("test_emit_commands_sorts_by_layer", test_emit_commands_sorts_by_layer))
+TESTS.append(("test_emit_commands_empty_tree", test_emit_commands_empty_tree))
