@@ -26,14 +26,14 @@ def render_document(
 ) -> Bitmap:
     """Render an HTML string to a bitmap (runs inline scripts first)."""
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
+    author_css, ua_css = _full_css(tree, css_text)
     host = _run_scripts(tree)
     # P9.1 — extract @media rules and evaluate against the viewport.
-    media_rules = css_mod.parse_media_queries(full_css)
+    media_rules = css_mod.parse_media_queries(author_css)
     # P11.3 — extract @supports blocks (toy: always supported).
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -87,8 +87,19 @@ def render_document_from_url(
     import net
     eff_client = client
     if eff_client is None:
+        # P0 (GLM report) — the legacy ``timeout=None`` default
+        # propagated straight into ``HttpClient(timeout=None)``,
+        # which set ``self.timeout = None`` on the underlying
+        # ``http.client.HTTPConnection``.  A ``None`` timeout means
+        # the socket blocks forever: an unreachable host (blackholed
+        # IP, dropped packets) hangs the render pipeline with no
+        # feedback and no way to cancel.  The P0 fix substitutes
+        # ``net.DEFAULT_TIMEOUT`` (10 s) when the caller did not
+        # supply an explicit timeout, matching the behaviour of every
+        # other entry point in :mod:`net`.
+        eff_timeout = timeout if timeout is not None else net.DEFAULT_TIMEOUT
         eff_client = net.HttpClient(
-            timeout=timeout,
+            timeout=eff_timeout,
             cache=(net.CacheStore(use_cache if isinstance(use_cache, str)
                                   else ".toy_cache")
                    if use_cache else None),
@@ -102,7 +113,7 @@ def render_document_from_url(
         follow_redirects=True,
     )
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
+    author_css, ua_css = _full_css(tree, css_text)
 
     # P22.4/P22.5 — load subresources against the document base.
     if load_subresources:
@@ -116,17 +127,17 @@ def render_document_from_url(
             # Append any successfully fetched stylesheets.
             for _u, r in (loaded.get("stylesheet") or {}).items():
                 if r is not None and r.ok:
-                    full_css += "\n" + r.body.decode("utf-8",
+                    author_css += "\n" + r.body.decode("utf-8",
                                                      errors="replace")
         except Exception:
             # Subresource loading must never break page rendering (P22.4).
             pass
 
     host = _run_scripts(tree)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -176,15 +187,15 @@ def render_document_with_event(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     host = js_mod.Host(tree, log_sink or (lambda _s: None))
     host.execute_all()
     host.execute_event(element_id)
     # Re-render after the DOM mutation.
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -215,11 +226,11 @@ def render_document_with_hover_at(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -231,7 +242,7 @@ def render_document_with_hover_at(
     if hit is not None and hit.dom is not None and hit.dom.is_element():
         hover_id = hit.dom.attr("id")
     styled2 = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         interaction_state={"hover": hover_id} if hover_id else None,
         media_rules=media_rules,
         supports_rules=supports_rules,
@@ -270,9 +281,9 @@ def render_document_with_mouse(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     host = js_mod.Host(tree, log_sink or (lambda _s: None))
     host.execute_all()
 
@@ -284,7 +295,7 @@ def render_document_with_mouse(
             x, y = float(ev["x"]), float(ev["y"])
             state["mouse"] = (x, y)
             styled = css_mod.apply(
-                tree, full_css,
+                tree, author_css, ua_css=ua_css,
                 media_rules=media_rules,
                 supports_rules=supports_rules,
                 viewport_w=float(width),
@@ -301,7 +312,7 @@ def render_document_with_mouse(
         elif etype == "click":
             x, y = float(ev["x"]), float(ev["y"])
             styled = css_mod.apply(
-                tree, full_css,
+                tree, author_css, ua_css=ua_css,
                 media_rules=media_rules,
                 supports_rules=supports_rules,
                 viewport_w=float(width),
@@ -331,7 +342,7 @@ def render_document_with_mouse(
         if on_before_render is not None:
             on_before_render(dict(state), idx)
         styled = css_mod.apply(
-            tree, full_css,
+            tree, author_css, ua_css=ua_css,
             interaction_state={"hover": state["hover"]} if state["hover"] else None,
             media_rules=media_rules,
             supports_rules=supports_rules,
@@ -359,12 +370,12 @@ def render_document_with_hover(
     rendering in headless mode.
     """
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     host = _run_scripts(tree)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         interaction_state={"hover": hover_id},
         media_rules=media_rules,
         supports_rules=supports_rules,
@@ -391,11 +402,11 @@ def render_document_with_click(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -410,7 +421,7 @@ def render_document_with_click(
         if eid:
             host.execute_event(eid)
     styled2 = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -421,11 +432,25 @@ def render_document_with_click(
     return paint_engine.rasterize(dl, width, height)
 
 
-def _full_css(tree, user_css: str) -> str:
+def _full_css(tree, user_css: str) -> tuple[str, str]:
+    """Return ``(author_css, ua_css)`` for the cascade.
+
+    P0 (GLM report) — the legacy implementation returned a single
+    concatenated string that :func:`css.parse_rulesheet` parsed with
+    every rule tagged ``source="author"``, so the UA
+    ``body { margin: 8px }`` cascaded on the same specificity tie as
+    an author ``* { margin: 0 }`` reset and (depending on
+    concatenation order) beat it.  The P0 fix returns the two layers
+    separately; :func:`css.apply` parses the UA sheet with
+    ``source="ua"`` and the author sheet with ``source="author"``,
+    and the cascade key puts every author rule ahead of every UA rule
+    in the normal layer (the CSS spec's origin precedence).
+    """
     default_css = _default_css()
     style_tags = [n for n in _all_text_nodes(tree) if (n.tag or "").lower() == "style"]
     inline_style = "\n".join(n.text_content() for n in style_tags)
-    return "\n".join(p for p in [default_css, inline_style, user_css] if p)
+    author_css = "\n".join(p for p in [inline_style, user_css] if p)
+    return author_css, default_css
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +539,8 @@ def _devtools_effective_rules(css_text: str,
 
 def devtools_computed_style(root_dom, css_text: str,
                             element_id: str,
-                            width: int = 800, height: int = 600) -> dict:
+                             width: int = 800, height: int = 600,
+                             ua_css: str = "") -> dict:
     """P32.4 — computed style for the element with *element_id*.
 
     Runs the cascade (UA + inline + author) and returns
@@ -527,6 +553,7 @@ def devtools_computed_style(root_dom, css_text: str,
         media_rules=css_mod.parse_media_queries(css_text),
         supports_rules=css_mod.parse_supports_blocks(css_text),
         viewport_w=float(width), viewport_h=float(height),
+        ua_css=ua_css,
     )
     target = None
     found_meta = None
@@ -618,14 +645,15 @@ def devtools_report(html: str, css_text: str = "",
     by the ``--devtools`` CLI flag.
     """
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
+    author_css, ua_css = _full_css(tree, css_text)
     _run_scripts(tree)  # let inline scripts mutate the DOM first
     parts: list[str] = []
     parts.append("=== DOM tree ===")
     parts.append(devtools_dom_tree(tree))
     if element_id:
         parts.append(f"\n=== computed style: #{element_id} ===")
-        cs = devtools_computed_style(tree, full_css, element_id, width, height)
+        cs = devtools_computed_style(tree, author_css, element_id, width, height,
+                                     ua_css=ua_css)
         if cs.get("__notfound__"):
             parts.append("(element not found)")
         else:
@@ -635,7 +663,7 @@ def devtools_report(html: str, css_text: str = "",
             parts.append(f"  [meta] {meta}")
     if selector:
         parts.append(f"\n=== selector: {selector} ===")
-        hits = devtools_selector_hits(full_css, tree, selector,
+        hits = devtools_selector_hits(author_css, tree, selector,
                                       width=width, height=height)
         if not hits:
             parts.append("(no matches)")
@@ -663,11 +691,11 @@ def element_at(
     matched DOM element, or ``None`` if no element contains the point.
     """
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -702,11 +730,11 @@ def event_target(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -744,13 +772,13 @@ def click_and_render(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
-    media_rules = css_mod.parse_media_queries(full_css)
-    supports_rules = css_mod.parse_supports_blocks(full_css)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
     host = js_mod.Host(tree, log_sink or (lambda _s: None))
     host.execute_all()
     styled = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -765,7 +793,7 @@ def click_and_render(
             hit_id = eid
             host.execute_event(eid)
     styled2 = css_mod.apply(
-        tree, full_css,
+        tree, author_css, ua_css=ua_css,
         media_rules=media_rules,
         supports_rules=supports_rules,
         viewport_w=float(width),
@@ -795,6 +823,7 @@ def _default_css() -> str:
     form controls (button/input/textarea/select), and emphasis tags.
     """
     return """
+    head, meta, link, style, script, title { display: none; }
     html, body { font-size: 16px; }
     body { margin: 8px; }
     h1 { font-size: 28px; margin: 8px 0; }
@@ -1462,7 +1491,7 @@ def run_transition(
     from paint import Color
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
+    author_css, ua_css = _full_css(tree, css_text)
     host = js_mod.Host(tree, log_sink or (lambda _s: None))
     host.execute_all()
 
@@ -1483,7 +1512,7 @@ def run_transition(
     for f in range(frames + 1):
         engine.frame = f
         override = engine.frame_overrides()
-        styled = css_mod.apply(tree, full_css)
+        styled = css_mod.apply(tree, author_css, ua_css=ua_css)
         # Apply the interpolated value to the target element.
         _apply_override(styled, element_id, property_name, override.get(property_name))
         root = layout_mod.layout(styled, float(width), float(height))
@@ -1517,11 +1546,11 @@ def animate_keyframes(
     import js as js_mod
 
     tree = dom_mod.parse(html)
-    full_css = _full_css(tree, css_text)
+    author_css, ua_css = _full_css(tree, css_text)
     host = js_mod.Host(tree, log_sink or (lambda _s: None))
     host.execute_all()
 
-    anims = css_mod.parse_keyframes(full_css)
+    anims = css_mod.parse_keyframes(author_css)
     if animation_name not in anims:
         raise ValueError(f"@keyframes '{animation_name}' not found in CSS")
     anim = anims[animation_name]
@@ -1529,7 +1558,7 @@ def animate_keyframes(
     results: list[Bitmap] = []
     for f in range(total_frames + 1):
         t = f / total_frames if total_frames > 0 else 0.0
-        styled = css_mod.apply(tree, full_css)
+        styled = css_mod.apply(tree, author_css, ua_css=ua_css)
         css_mod.apply_animation_frame(styled, element_id, anim, t)
         root = layout_mod.layout(styled, float(width), float(height))
         dl = paint_engine.emit_commands(root)

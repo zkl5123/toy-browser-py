@@ -2140,7 +2140,33 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                     i += 1
                     continue
                 run_w = max(0.0, avail - (cx - content_x0))
-                layout_block(cb, cx, run_y, max(run_w, avail))
+                # P0 (GLM report) — P1-4: an inline box that only
+                # contains TEXT children (e.g. <span>short text</span>)
+                # should be sized to its text content, not to the full
+                # container width.  The legacy implementation laid it
+                # out with the full available width (max(run_w, avail)),
+                # so every inline element's background/border stretched
+                # to the container edge regardless of its text length.
+                # The P0 fix: when the box has no explicit width and all
+                # its children are TEXT boxes, lay it out with the text
+                # content width (sum of child text advances) instead of
+                # the container width.
+                inline_text_w = None
+                if (ck == BoxType.INLINE
+                        and cb.explicit_width is None
+                        and cb.max_width <= 0
+                        and cb.children
+                        and all(grandchild.box_type == BoxType.TEXT
+                               for grandchild in cb.children)):
+                    tw = 0.0
+                    for grandchild in cb.children:
+                        t = grandchild.text_content or ""
+                        tw += text_mod.measure(t, grandchild.font_px)
+                    inline_text_w = tw + cb.padding.left + cb.padding.right
+                if inline_text_w is not None:
+                    layout_block(cb, cx, run_y, inline_text_w)
+                else:
+                    layout_block(cb, cx, run_y, max(run_w, avail))
                 w = cb.rect.w + cb.padding.left + cb.padding.right
                 # P18.3 — vertical-align shift (toy: baseline / top / middle).
                 # The line box baseline is approximated as run_y + line_height_px * 0.75

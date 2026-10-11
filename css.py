@@ -394,14 +394,28 @@ class Selector:
         * ``tag.class``     — tag + class (e.g. ``p.x``)
         * ``tag.id``        — tag + id   (e.g. ``div#box``)
         * ``tag.id.class``  — full compound
+        * ``*``            — universal: matches every element
 
         The tag portion (leading identifier without ``.``/``#``) is
         optional; when present it must match the node's tag.  Each
         ``.`` / ``#`` segment after the tag is matched independently.
+
+        P0 (GLM report) — the universal selector ``*`` must match
+        every element node.  The legacy regex
+        ``^(?P<tag>[a-zA-Z][a-zA-Z0-9-]*)?(?P<tail>...)`` does not
+        match ``*`` (it is not a letter-starting identifier), so the
+        ``m is None`` fallback compared ``node.tag_name() == "*"``
+        and returned False for every real element.  An author
+        universal reset ``* { margin: 0 }`` therefore never cascaded,
+        and the GLM probe's "所有使用通配符 reset 的真实网页整体偏移
+        8px" was the direct consequence.
         """
         simple = simple.strip()
         if not simple:
             return False
+        # P0 — universal selector: matches every element node.
+        if simple == "*":
+            return node.is_element()
 
         # Split into segments: a leading bare tag name, then ``.class``
         # and ``#id`` segments.  ``p.x`` → ("p", ".x"); ``div#box`` →
@@ -942,32 +956,58 @@ class Rule:
 _rulesheet_memo: dict = {}
 
 
-def parse_rulesheet(css_text: str) -> list[Rule]:
+def parse_rulesheet(css_text: str,
+                    source: str = "author") -> list[Rule]:
     """P34.1 — memoized rulesheet parse.
+
+    P0 (GLM report) — *source* tags the cascade origin ("author" or
+    "ua"); the memo key now includes the source so an author and a
+    UA sheet with the same text do not share a cached Rule list.
 
     Identical author CSS text is parsed once and the shared ``Rule``
     list is returned.  Callers that *extend* the list (``css.apply``
     appends @media/@supports rules) must use :func:`parse_rulesheet_nocache`
     so they do not poison the memo entry.
     """
-    cached = _rulesheet_memo.get(css_text)
+    key = (css_text, source)
+    cached = _rulesheet_memo.get(key)
     if cached is not None:
         return cached
-    rules = _parse_rulesheet_nocache_impl(css_text)
+    rules = _parse_rulesheet_nocache_impl(css_text, source=source)
     # Cap the memo: unbounded growth on hostile input (every distinct
     # string a key) would leak memory.  256 distinct stylesheets is far
     # above any realistic page.
     if len(_rulesheet_memo) < 256:
-        _rulesheet_memo[css_text] = rules
+        _rulesheet_memo[key] = rules
     return rules
 
 
-def parse_rulesheet_nocache(css_text: str) -> list[Rule]:
-    """P34.1 — parse a *fresh* rulesheet list, bypassing the memo."""
-    return _parse_rulesheet_nocache_impl(css_text)
+def parse_rulesheet_nocache(css_text: str,
+                            source: str = "author") -> list[Rule]:
+    """P34.1 — parse a *fresh* rulesheet list, bypassing the memo.
+
+    P0 (GLM report) — *source* tags every parsed Rule with its cascade
+    origin ("author" or "ua").  The legacy parser hard-coded
+    ``source="author"`` on every rule, so the browser's UA stylesheet
+    (body { margin: 8px }, …) cascaded *as if* it were author CSS,
+    and an author universal reset ``* { margin: 0 }`` (specificity 0)
+    lost to the UA ``body { margin: 8px }`` (specificity 0, source
+    both "author") on a specificity tie.  The P0 fix: the browser
+    parses the UA sheet with ``source="ua"`` and the author sheet
+    with ``source="author"``, so the cascade key puts every author
+    rule ahead of every UA rule (the CSS spec's origin precedence).
+    """
+    return _parse_rulesheet_nocache_impl(css_text, source=source)
 
 
-def _parse_rulesheet_nocache_impl(css_text: str) -> list[Rule]:
+def _parse_rulesheet_nocache_impl(css_text: str,
+                                  source: str = "author") -> list[Rule]:
+    """Parse *css_text* into a fresh Rule list.
+
+    P0 (GLM report) — *source* is propagated to every parsed Rule so
+    the cascade key can distinguish author vs. UA origins.  The
+    legacy implementation hard-coded ``"author"`` on every rule.
+    """
     rules: list[Rule] = []
     # A rule is "selector { declarations }"
     i = 0
@@ -1010,7 +1050,9 @@ def _parse_rulesheet_nocache_impl(css_text: str) -> list[Rule]:
         # Re-parse declarations (parse_declaration_pairs returns a fresh
         # dict each call; the double-parse is cheap for the toy).
         decls = parse_declaration_pairs(decl_src)
-        rules.append(Rule(sels, decls, max_spec, "author", rule_important,
+        # P0 (GLM report) — propagate the cascade origin so the
+        # browser's UA sheet (source="ua") loses to author rules.
+        rules.append(Rule(sels, decls, max_spec, source, rule_important,
                           selector_text=selector_text))
     return rules
 
@@ -1765,6 +1807,7 @@ def apply(
     viewport_w: float = 800.0,
     viewport_h: float = 600.0,
     supports_rules: list[SupportsRule] | None = None,
+    ua_css: str = "",
 ) -> StyledNode:
     """Build the styled tree. Returns the styled root (synthetic document).
 
@@ -1780,11 +1823,36 @@ def apply(
     ``supports_rules`` (P11.3) is an optional list of ``SupportsRule`` objects.
     In this toy engine every @supports block is treated as supported, so all
     inner rules are appended to the cascade.
+
+    P0 (GLM report) — ``ua_css`` is the User-Agent stylesheet text,
+    parsed separately with ``source="ua"`` so the cascade key puts
+    every author rule ahead of every UA rule in the normal layer
+    (the CSS spec's origin precedence).  The legacy implementation
+    concatenated the UA sheet into ``css_text`` and parsed it all
+    with ``source="author"``, so an author universal reset
+    ``* { margin: 0 }`` (specificity 0) lost to the UA
+    ``body { margin: 8px }`` (specificity 0, same source) on a
+    tie.  The P0 fix: the browser passes the UA sheet via
+    ``ua_css`` and the author/inline CSS via ``css_text``; the two
+    are parsed into separate Rule lists with their correct source
+    tags, then merged for the cascade.
     """
     # P34.1 — parse into a *caller-owned* list: apply() extends it with
     # @media / @supports rules, so the shared rulesheet memo (which
     # stores the untouched author-CSS list) must not be mutated here.
-    rules = parse_rulesheet_nocache(css_text)
+    # P0 (GLM report) — parse the UA sheet separately with source="ua"
+    # so the cascade key puts every author rule ahead of every UA rule
+    # in the normal layer (CSS spec origin precedence).  The legacy
+    # implementation concatenated the UA sheet into css_text and
+    # parsed it all with source="author", so an author universal
+    # reset ``* { margin: 0 }`` lost to the UA ``body { margin: 8px }``
+    # on a specificity tie.
+    rules = parse_rulesheet_nocache(css_text, source="author")
+    if ua_css:
+        ua_rules = parse_rulesheet_nocache(ua_css, source="ua")
+        # UA rules come first in the cascade (they are the base layer);
+        # author rules are appended after so they win on ties.
+        rules = ua_rules + rules
     # P9.1 — append @media rules that match the current viewport.
     if media_rules:
         for mq in media_rules:
@@ -1870,8 +1938,28 @@ def _unimportant(v: Value) -> Value:
 
 def _cascade_key(r: Rule) -> tuple:
     """P25.1/2 — sort key: source (author > ua), !important flag, 4-tuple
-    specificity (summed), rule order (stable)."""
+    specificity (summed), rule order (stable).
+
+    P0 (GLM report) — the legacy key compared only
+    ``(source == "author", important, spec_sum)``, so an author
+    universal rule ``* { margin: 0 }`` (specificity 0) lost to a UA
+    ``body { margin: 8px }`` rule (specificity 0, but the source flag
+    was ``True`` for both when the UA rules were parsed without a
+    ``source="ua"`` marker).  The P0 fix: parse_rulesheet accepts a
+    ``source`` parameter so the browser can tag the UA stylesheet
+    with ``source="ua"``, and the cascade key now puts every author
+    rule (regardless of specificity) ahead of every UA rule
+    (except !important, which still wins over author normal).
+    """
     spec_sum = sum(r.specificity)
+    # P0 — author rules (specificity >= 0) always beat UA rules
+    # (specificity >= 0) in the normal layer.  The legacy key's
+    # first element was ``r.source == "author"`` which is True for
+    # author and False for UA, so the sort was correct *when* the
+    # source flag was set.  The real bug was that the browser
+    # concatenated UA CSS into the author CSS text before parsing,
+    # so every rule got ``source="author"``.  The P0 fix in
+    # browser.py parses the UA sheet separately with source="ua".
     return (r.source == "author", r.important, spec_sum)
 
 

@@ -244,6 +244,20 @@ def normalize_url(url: URL) -> URL:
 
 DEFAULT_TIMEOUT = 10.0
 
+# P0 (GPT report) — network response size cap.  A decompression-bomb
+# or a malicious server that streams an unbounded body must not
+# exhaust the host's RAM.  The legacy reader had no cap.  The P0
+# fix caps the decompressed body at this value and raises
+# :class:`ResponseTooLarge` when it is exceeded.
+MAX_RESPONSE_BYTES = 256 * 1024 * 1024  # 256 MiB
+
+
+class ResponseTooLarge(Exception):
+    """P0 (GPT report) — the decompressed response body exceeded
+    :data:`MAX_RESPONSE_BYTES` (or the caller-supplied cap).  The
+    host treats it like any other fetch failure: log it and move on
+    to the next sub-resource."""
+
 # P22.1 — redirect chain cap (上限 5 层) + 循环检测。
 MAX_REDIRECTS = 5
 _REDIRECT_STATUS = (301, 302, 303, 307, 308)
@@ -517,7 +531,8 @@ class HttpClient:
                  verify_tls: bool = True,
                  cache: "CacheStore | None" = None,
                  progress: "LoadEventSink | None" = None,
-                 cookies: "cookie_store.CookieJar | None" = None) -> None:
+                 cookies: "cookie_store.CookieJar | None" = None,
+                 max_response_bytes: int = MAX_RESPONSE_BYTES) -> None:
         self.timeout = timeout
         self.verify_tls = verify_tls
         self.cache = cache
@@ -529,6 +544,13 @@ class HttpClient:
         # origin).  The pool is small (typically 1-4 origins per page
         # load) and is cleared by :meth:`close` / :meth:`close_pool`.
         self._conn_pool: dict = {}
+        # P0 (GPT report) — network response size cap.  A malicious or
+        # misbehaving server that streams an unbounded body (or a
+        # gzip-decompression-bomb) must not exhaust the host's RAM.
+        # The legacy reader had no cap; the P0 fix caps the
+        # decompressed body at ``max_response_bytes`` and raises
+        # :class:`ResponseTooLarge` when the cap is exceeded.
+        self.max_response_bytes = max_response_bytes
 
     # ------------------------------------------------------------------
     # P33.R2 — connection reuse
@@ -600,7 +622,8 @@ class HttpClient:
     def _single_get(self, url: URL,
                     headers: dict | None = None,
                     revalidate_etag: str = "",
-                    stale_body: bytes = b"") -> HttpResponse:
+                    stale_body: bytes = b"",
+                    cookie_context: dict | None = None) -> HttpResponse:
         """One wire GET (no redirect following).  P22 gzip-decodes the
         body when ``Content-Encoding: gzip`` is present.
 
@@ -611,6 +634,10 @@ class HttpClient:
         P33.R2 — connections are reused from the keep-alive pool
         (one per origin); a dead pooled socket is discarded and the
         request is retried once on a fresh connection.
+
+        P0 (GPT report) — *cookie_context* carries the cross-site /
+        method / top-level metadata for the cookie jar's SameSite
+        filter (see the comment at the cookie-header emission site).
         """
         if url.scheme not in ("http", "https"):
             raise UnsupportedScheme(url.scheme)
@@ -630,9 +657,26 @@ class HttpClient:
         if revalidate_etag:
             # P23.3 — conditional GET for stale cached entries.
             hdrs["If-None-Match"] = revalidate_etag
-        # P32.3 — attach matching cookies from the jar (if any).
+        # P0 (GPT report) — cookie emission now carries the
+        # cross-site / method / top-level metadata so the jar's
+        # SameSite filter can apply.  The legacy call
+        # ``cookie_header_for(url)`` sent every live cookie on every
+        # request, ignoring the Secure / SameSite flags.
+        # ``cookie_context`` is a dict with optional keys:
+        #   is_cross_site: bool   (True when the request host differs
+        #                          from the top-level page's host)
+        #   method: str           ("GET" / "POST" / …)
+        #   is_top_level: bool    (True for document navigations)
+        # Defaults are same-site GET top-level (the document fetch
+        # itself); subresource fetchers override as needed.
         if self.cookies is not None:
-            cookie_hdr = self.cookies.cookie_header_for(url)
+            ctx = cookie_context or {}
+            cookie_hdr = self.cookies.cookie_header_for(
+                url,
+                is_cross_site=ctx.get("is_cross_site", False),
+                method=ctx.get("method", "GET"),
+                is_top_level=ctx.get("is_top_level", True),
+            )
             if cookie_hdr:
                 hdrs["Cookie"] = cookie_hdr
         if headers:
@@ -677,6 +721,12 @@ class HttpClient:
                         from_cache=True,
                     )
                 body = resp.read()
+                # P0 (GPT report) — cap the raw (pre-decompression)
+                # body so a malicious server cannot exhaust RAM.
+                if len(body) > self.max_response_bytes:
+                    raise ResponseTooLarge(
+                        f"response body {len(body)} bytes exceeds "
+                        f"cap {self.max_response_bytes}")
                 headers_out = {
                     k.lower(): v for k, v in resp.getheaders()
                 }
@@ -780,7 +830,8 @@ class HttpClient:
              content_type: str = "",
              headers: dict | None = None,
              follow_redirects: bool = True,
-             max_redirects: int = MAX_REDIRECTS) -> HttpResponse:
+             max_redirects: int = MAX_REDIRECTS,
+             cookie_context: dict | None = None) -> HttpResponse:
         """P23 — POST *url* with a body.
 
         *data* may be a mapping (encoded as
@@ -789,6 +840,10 @@ class HttpClient:
         For a GET-only cache, POST responses are NOT cached (spec:
         caching non-idempotent methods is out of scope for the toy).
         P23.4 — emits load-progress events when a sink is attached.
+
+        P0 (GPT report) — *cookie_context* carries the cross-site /
+        top-level metadata for the cookie jar's SameSite filter; a
+        cross-site POST must not carry a SameSite=Lax cookie.
         """
         if not isinstance(url, URL):
             url = parse_url(url)
@@ -813,6 +868,17 @@ class HttpClient:
             hdrs["Content-Type"] = content_type
         hdrs.setdefault("Host", url.authority)
         hdrs.setdefault("User-Agent", "toy-browser-py/1.2 (P21-P23)")
+        # P0 (GPT report) — attach matching cookies from the jar.
+        if self.cookies is not None:
+            ctx = cookie_context or {}
+            cookie_hdr = self.cookies.cookie_header_for(
+                url,
+                is_cross_site=ctx.get("is_cross_site", False),
+                method="POST",
+                is_top_level=ctx.get("is_top_level", False),
+            )
+            if cookie_hdr:
+                hdrs["Cookie"] = cookie_hdr
 
         self._emit(PHASE_START, 0.0, url.to_string())
         # POST is not cached (non-idempotent); just do the wire call.
@@ -1261,18 +1327,30 @@ def decode_chunked(raw: bytes) -> bytes:
     return bytes(out)
 
 
-def maybe_gunzip(resp: "HttpResponse") -> bytes:
+def maybe_gunzip(resp: "HttpResponse",
+                 max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
     """P22.2 — decode the response body when
     ``Content-Encoding: gzip`` is present.  Idempotent: returns the
     body unchanged when the header is absent or decoding fails (a
-    failed gunzip must not break the page)."""
+    failed gunzip must not break the page).
+
+    P0 (GPT report) — the gunzip path is also capped at *max_bytes*
+    so a decompression-bomb (a small gzip that expands to multi-GB)
+    cannot exhaust the host's RAM.  When the expanded body exceeds
+    the cap, :class:`ResponseTooLarge` is raised.
+    """
     enc = resp.headers.get("content-encoding", "").lower()
     if "gzip" not in enc:
         return resp.body
     try:
-        return gzip.decompress(resp.body)
+        out = gzip.decompress(resp.body)
     except (OSError, EOFError, gzip.BadGzipFile):
         return resp.body
+    if len(out) > max_bytes:
+        raise ResponseTooLarge(
+            f"gzip-decompressed body {len(out)} bytes exceeds "
+            f"cap {max_bytes}")
+    return out
 
 
 def _follow_redirects(client: "HttpClient",
@@ -1337,7 +1415,9 @@ def fetch_html(url: "URL | str", client: HttpClient | None = None,
     unsupported page.  ``RedirectLoop`` (a FetchError subclass) is
     raised when the chain loops or exceeds the cap.
     """
-    c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    c = client or (
+        HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
+        if timeout is not None else HttpClient())
     if not isinstance(url, URL):
         url = parse_url(url)
     resp = c.get(url, follow_redirects=follow_redirects,
@@ -1370,7 +1450,9 @@ def fetch_resource(url: "URL | str",
     Subresource loading must never block or crash the page — the
     caller ignores ``None``.
     """
-    c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    c = client or (
+        HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
+        if timeout is not None else HttpClient())
     if not isinstance(url, URL):
         url = parse_url(url)
     try:
@@ -1455,7 +1537,9 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     if not isinstance(eff_base, URL):
         eff_base = parse_url(str(eff_base))
     specs = collect_subresources(dom_root)
-    c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    c = client or (
+        HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
+        if timeout is not None else HttpClient())
     # P23.4 — attach the progress sink to the (possibly fresh) client.
     if progress is not None and c.progress is None:
         c.progress = progress
@@ -1504,7 +1588,9 @@ def load_subresources_parallel(dom_root, base_url,
     if not isinstance(eff_base, URL):
         eff_base = parse_url(str(eff_base))
     specs = collect_subresources(dom_root)
-    c = client or (HttpClient(timeout=timeout) if timeout else HttpClient())
+    c = client or (
+        HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
+        if timeout is not None else HttpClient())
     if progress is not None and c.progress is None:
         c.progress = progress
     total = len(specs)

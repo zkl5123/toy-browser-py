@@ -94,8 +94,8 @@ def test_p3_svg_default_size():
     300×150 (same as the browser's intrinsic size)."""
     html = '<html><body><svg id="s"></svg></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     sv = _find_tag_box(root, "svg")
     assert sv is not None, "svg box must exist"
@@ -107,8 +107,8 @@ def test_p3_svg_size_from_attrs():
     """P33.P3 — <svg width="200" height="100"> produces a 200×100 box."""
     html = '<html><body><svg width="200" height="100"></svg></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     sv = _find_tag_box(root, "svg")
     assert sv is not None
@@ -131,8 +131,8 @@ def test_p3_video_default_size():
     """P33.P3 — a <video> element with no attrs defaults to 300×150."""
     html = '<html><body><video id="v"></video></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     v = _find_tag_box(root, "video")
     assert v is not None
@@ -145,8 +145,8 @@ def test_p3_audio_default_size():
     (the toy treats audio the same as video for sizing)."""
     html = '<html><body><audio id="a"></audio></body></html>'
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     a = _find_tag_box(root, "audio")
     assert a is not None
@@ -161,8 +161,8 @@ def test_p3_svg_css_size_override():
             '<svg width="300" height="150"></svg>'
             '</body></html>')
     tree = dom.parse(html)
-    full_css = browser._full_css(tree, "")
-    styled = css.apply(tree, full_css)
+    author_css, ua_css = browser._full_css(tree, "")
+    styled = css.apply(tree, author_css, ua_css=ua_css)
     root = layout.layout(styled, 400.0, 300.0)
     sv = _find_tag_box(root, "svg")
     assert sv is not None
