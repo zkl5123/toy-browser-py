@@ -81,41 +81,121 @@ class Node:
 
         return walk(self)
 
+    # --- P30.2 — DOM node mutation helpers ---------------------------------
+    # (querySelectorAll, appendChild, removeChild, insertBefore,
+    #  replaceChild live on the DOM Node so every downstream consumer
+    #  (css / layout / js / browser) sees the same tree.)
+
+    def append_child(self, child: "Node") -> "Node":
+        """Append *child* as the last child, re-parenting it (toy:
+        detaches it from any previous parent).  Returns *child*."""
+        self._detach(child)
+        child.parent = self
+        self.children.append(child)
+        return child
+
+    def insert_before(self, child: "Node", ref: Optional["Node"]) -> "Node":
+        """Insert *child* before sibling *ref* (or append when *ref* is
+        ``None`` / not a child of this node)."""
+        self._detach(child)
+        if ref is not None and ref in self.children:
+            i = self.children.index(ref)
+            self.children.insert(i, child)
+        else:
+            self.children.append(child)
+        child.parent = self
+        return child
+
+    def remove_child(self, child: "Node") -> "Node":
+        """Detach *child*; returns the removed node (no-op if not a child)."""
+        if child in self.children:
+            self.children.remove(child)
+        child.parent = None
+        return child
+
+    def replace_child(self, new_node: "Node", old_node: "Node") -> "Node":
+        """Swap *old_node* for *new_node* at the same position."""
+        self._detach(new_node)
+        if old_node in self.children:
+            i = self.children.index(old_node)
+            self.children[i] = new_node
+            old_node.parent = None
+            new_node.parent = self
+        else:
+            self.children.append(new_node)
+            new_node.parent = self
+        return old_node
+
+    @staticmethod
+    def _detach(child: "Node") -> None:
+        p = child.parent
+        if p is not None:
+            try:
+                p.children.remove(child)
+            except ValueError:
+                pass
+            child.parent = None
+
     def has_class(self, cls: str) -> bool:
         if not self.is_element():
             return False
         v = self.attrs.get("class", "")
         return cls in v.split()
 
-    def query_selector_all(self, selector: str) -> list:
-        """Supports ``.cls`` and ``#id`` only (toy scope, mirrors the
-        legacy ``dom`` Node so the JS engine's querySelectorAll keeps
-        working)."""
-        selector = selector.strip()
+    def _iterate_elements(self, include_self: bool = False):
+        """Depth-first pre-order walk over elements in document order.
+
+        When *include_self* is True and this node is an element, it is
+        yielded first (legacy ``Node.query_selector_all`` semantics: a
+        selector search on an element includes that element itself, so
+        ``div.query_selector_all('.c')`` finds ``div`` when it has
+        class ``c``).  Document-node scope (``document``) has no
+        element identity, so it naturally excludes itself.
+        """
+        if include_self and self.is_element():
+            yield self
+        for c in self.children:
+            if c.is_element():
+                yield c
+            yield from c._iterate_elements()
+
+    def query_selector_all(self, selector: str, interaction_state: dict | None = None) -> list:
+        """P30.1 — full CSS selector engine (reuses ``css.Selector``).
+
+        Supports simple selectors (``tag`` / ``.cls`` / ``#id`` /
+        ``.a.b``), descendant (``a b``), child (``a > b``), comma
+        selector lists, and pseudo-classes (``:hover`` / ``:focus`` /
+        ``:first-child`` / ``:last-child`` / ``:nth-child(...)``).
+        Results are in document order, and the search scope includes
+        the calling element itself (legacy semantics) when the caller
+        is an element; a document node's scope covers its descendants
+        only.  Pseudo-classes that depend on interaction state
+        (``:hover`` / ``:focus``) only match when an *interaction_state*
+        dict is supplied; structural pseudo-classes match against the
+        DOM directly.
+        """
+        import css
+
+        selector = (selector or "").strip()
+        if not selector:
+            return []
+        sels = css.parse_selector_list(selector)
         results: list[Node] = []
-        if selector.startswith("."):
-            cls = selector[1:]
+        for node in self._iterate_elements(include_self=True):
+            for s in sels:
+                try:
+                    hit = s.matches(node, interaction_state)
+                except Exception:
+                    hit = False
+                if hit:
+                    results.append(node)
+                    break  # one hit per node, document order
+        return results
 
-            def walk_cls(n: Node) -> None:
-                if n.has_class(cls):
-                    results.append(n)
-                for c in n.children:
-                    walk_cls(c)
-
-            walk_cls(self)
-            return results
-        if selector.startswith("#"):
-            _id = selector[1:]
-
-            def walk(n: Node) -> None:
-                if n.is_element() and n.attrs.get("id") == _id:
-                    results.append(n)
-                for c in n.children:
-                    walk(c)
-
-            walk(self)
-            return results
-        raise ValueError(f"unsupported selector: {selector}")
+    def query_selector(self, selector: str, interaction_state: dict | None = None):
+        """P30.1 — first match of :meth:`query_selector_all` or ``None``."""
+        out = self.query_selector_all(selector, interaction_state)
+        return out[0] if out else None
 
 
 #: P24.2 — WHATWG void elements (no closing tag, never pushed).

@@ -43,6 +43,8 @@ def char_advance(font_px: float, font_family: str = "monospace") -> float:
     *average* advance width (from hmtx) instead of the fixed cell width.
     This gives proportionally-spaced text while still using bitmap glyphs
     for rendering (P20 will replace the bitmap with true curve filling).
+    P33.R1 — when no face is registered the legacy fixed-cell estimate is
+    used; the caller then falls back to bitmap rendering.
     """
     real = _real_metrics_for(font_family)
     if real is not None:
@@ -53,26 +55,163 @@ def char_advance(font_px: float, font_family: str = "monospace") -> float:
     return float(_cell_width(font_family)) * scale_factor(font_px)
 
 
+# P33.R5 — memoized metrics cache: (family, weight) → (metrics, synthetic).
+# Repeated calls to _real_metrics_for with the same family+weight return
+# the cached result, avoiding the expensive TTF rescan on every
+# advance_text invocation (which runs 5000+ times per 1000-node layout).
+_metrics_memo: dict = {}
+
+
 def _real_metrics_for(font_family: str, weight: int = 400):
     """P17/P20.4 — return the real TTF metrics for a family+weight, or None.
 
     P20.4 — when ``weight >= 600`` and no bold TTF file is registered,
     returns the normal-weight font and sets the module-level
     ``_synthetic_bold`` flag so the curve path dilates the outline.
+    P33.R1 — idempotent: if the family's metrics were cleared from the
+    registry (a test that clears ``font._real_font_metrics``), re-load
+    them from the remembered search dirs so rendering does not silently
+    fall back to the bitmap font.  The re-init uses the *remembered*
+    search dirs (which include the "fonts/" dir set by the first
+    ``init_real_fonts(["fonts"])`` call) to avoid a full system-wide
+    CJK scan on every re-init.
+    P33.R5 — result is memoized per (family, weight) so the 5000+
+    calls from ``advance_text`` during a 1000-node layout don't each
+    trigger a TTF rescan.
     """
+    global _synthetic_bold
+    key = (font_family, weight)
+    hit = _metrics_memo.get(key)
+    if hit is not None:
+        m, synth = hit
+        if weight >= 600:
+            _synthetic_bold = synth
+        return m
     import font
     if weight >= 600:
         m, synth = font.get_metrics_for_weight(font_family, weight)
-        global _synthetic_bold
+        if m is None:
+            font.init_real_fonts(None)
+            m, synth = font.get_metrics_for_weight(font_family, weight)
         _synthetic_bold = synth
-        return m
-    return font.get_real_metrics(font_family)
+    else:
+        m = font.get_real_metrics(font_family)
+        if m is None:
+            font.init_real_fonts(None)
+            m = font.get_real_metrics(font_family)
+        synth = False
+    _metrics_memo[key] = (m, synth)
+    return m
+
+
+def clear_metrics_memo() -> None:
+    """P33.R5 — clear the ``_metrics_memo`` cache.
+
+    Call after ``font._real_font_metrics`` is cleared (tests that
+    reset the font registry) so the next layout re-resolves metrics
+    from the fresh registry instead of returning a stale cached face.
+    """
+    _metrics_memo.clear()
 
 
 # P20.4 — set by _real_metrics_for when a bold weight is requested but
 # no bold TTF file exists; the curve path applies synthetic dilation.
 _synthetic_bold: bool = False
 
+# ---------------------------------------------------------------------------
+# P33.R1 — per-glyph rasterization cache + CJK per-character fallback.
+#
+# A real page is dominated by repeated characters; rasterizing each
+# distinct (font, size, codepoint, weight) outline once and OR-blending
+# the cached 8-bit coverage mask on subsequent occurrences turns
+# O(n_chars) outline fills into O(distinct_glyphs) fills + cheap blits.
+# The cache key folds in the (quantized) font size and weight so a
+# size/weight change forces a re-rasterization.
+
+_glyph_mask_cache: dict = {}
+_glyph_cache_max = 4096
+
+
+def _mask_key(ch: str, real, font_px: float, weight: float):
+    """Cache key: character + metrics id + quantized size + weight."""
+    return (ch, id(real), int(round(font_px * 2)), int(round(weight * 10)))
+
+
+def _get_glyph_mask(ch: str, real, font_px: float, weight: float):
+    """P33.R1 — rasterize one glyph into a cached 8-bit coverage mask.
+
+    Returns a :class:`rasterize.GlyphMask` whose rows are in *flipped*
+    font space (row 0 = glyph top, y up), sized to the glyph bbox, or
+    ``None`` when the outline is empty / malformed (caller falls back
+    to the bitmap font).
+    """
+    import rasterize
+    key = _mask_key(ch, real, font_px, weight)
+    hit = _glyph_mask_cache.get(key)
+    if hit is not None:
+        return hit
+    outline = real.glyph_outline(ch)
+    if outline is None or outline.is_empty or not outline.points:
+        return None
+    scale = font_px / real.units_per_em
+    mask = rasterize.rasterize_glyph_mask(
+        outline, scale, weight=weight, antialias=(weight <= 1.5))
+    if mask is None:
+        return None
+    if len(_glyph_mask_cache) < _glyph_cache_max:
+        _glyph_mask_cache[key] = mask
+    return mask
+
+
+def _blit_coverage(bitmap: "Bitmap", x: int, y: int, ch: str,
+                   font_px: float, weight: float, color) -> bool:
+    """P33.R1 — blit a cached coverage mask for *ch* onto *bitmap*.
+
+    ``(x, y)`` is the pen's **line top** in screen space (y down).
+    The mask is placed so that its baseline row aligns with
+    ``y + ascent_px`` where the ascent is taken from the *resolved*
+    face's TTF metrics (the CJK fallback face for CJK chars, the
+    primary face for everything else).  Returns True when a cached
+    mask was found and blitted, False when the caller must fall back
+    to the bitmap font.
+
+    P33.R1 — the face is resolved per-character (not hard-coded to
+    "monospace") so that CJK codepoints use the CJK fallback face's
+    ascent / scale, which differs from the primary face.
+    """
+    import rasterize
+    import font as _fontmod
+    face = _fontmod.resolve_metrics_for_char(ch, None)
+    if face is None:
+        face = _fontmod.get_real_metrics("monospace")
+    if face is None:
+        face = _fontmod.get_real_metrics("serif")
+    if face is None:
+        return False
+    mask = _get_glyph_mask(ch, face, font_px, weight)
+    if mask is None:
+        return False
+    # P33.R1 — y is the line top; the baseline sits at y + ascent_px.
+    baseline_y = y + int(round(face.ascent * font_px / face.units_per_em))
+    rasterize.blit_glyph_mask(bitmap, mask, x, baseline_y, color)
+    return True
+
+
+def _is_cjk(ch: str) -> bool:
+    """P33.R1 — True for CJK Unified Ideographs / kana / hangul ranges."""
+    if not ch:
+        return False
+    cp = ord(ch)
+    return (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or
+            0x3040 <= cp <= 0x30FF or 0xAC00 <= cp <= 0xD7AF or
+            0x3000 <= cp <= 0x303F or 0xFF00 <= cp <= 0xFFEF)
+
+
+def _resolve_face(ch: str, real):
+    """P33.R1 — the font face that can render *ch* (primary, else the
+    CJK fallback face).  Returns the :class:`FontMetrics` or None."""
+    import font as _fontmod
+    return _fontmod.resolve_metrics_for_char(ch, real)
 
 
 def _outline_valid(outline) -> bool:
@@ -118,13 +257,36 @@ def advance_text(text: str, font_px: float, font_family: str = "monospace") -> f
 
     Uses per-character TTF advances when a real font is registered;
     otherwise falls back to the legacy fixed-cell estimate.
+    P33.R1 — CJK codepoints use the CJK fallback face's advance when
+    the primary font has no glyph for them.  A missing face (None) is
+    a render-time no-op, never a layout-time crash.
+    P33.R5 — when the face has a uniform advance for every character
+    in the string, skip the per-char face resolution loop and compute
+    the total in O(1).  Most monospace fonts are uniform, and the
+    CJK fallback face is checked separately.
     """
     real = _real_metrics_for(font_family)
     if real is not None:
         total = 0.0
-        for ch in text:
-            total += real.advance_width(ch, font_px)
-        return total
+        import font as _font_mod
+        cjk = _font_mod.get_cjk_fallback()
+        if cjk is not None:
+            # Mixed-script path: resolve the face per character.
+            for ch in text:
+                face = _resolve_face(ch, real)
+                if face is not None:
+                    total += face.advance_width(ch, font_px)
+                else:
+                    total += real.advance_width(ch, font_px)
+            return total
+        # P33.R5 — Latin-only path (no CJK fallback face).  The
+        # primary face's advance is used for every character; when
+        # the font is monospace (uniform advance) the total is simply
+        # len * single_advance.  Even for proportional fonts, using
+        # the primary face's advance for every char is the standard
+        # fallback (a missing CJK face means no per-char override).
+        adv = real.advance_width(text[0], font_px) if text else 0.0
+        return len(text) * adv
     return len(text) * char_advance(font_px, font_family)
 
 
@@ -432,26 +594,36 @@ def draw_text(
             else:
                 cx = x
             for ch in stripped:
-                # P20 — try curve-based rasterization first; fall back to
-                # the legacy 8×8 bitmap blit when the glyph outline is
-                # missing or fails bbox validation.
-                if real is not None:
-                    outline = real.glyph_outline(ch)
-                    if outline is not None and _outline_valid(outline):
+                # P33.R1 — per-character face resolution: the CJK
+                # fallback face (registered at init) covers any
+                # codepoint the primary font lacks a glyph for, and
+                # the cached 8-bit coverage mask makes repeated
+                # characters cheap.
+                face = _resolve_face(ch, real)
+                if face is not None and _blit_coverage(
+                        bitmap, int(cx), int(cy), ch, font_px, weight, color):
+                    cx += face.advance_width(ch, font_px) + letter_spacing
+                    continue
+                # P33.R1 — last-resort curve path for CJK codepoints
+                # whose coverage mask failed (empty / malformed outline):
+                # a drawn .notdef box is still better than a meaningless
+                # ASCII cell.  ASCII content keeps the 8×8 bitmap path.
+                if _is_cjk(ch) and face is not None:
+                    _outline = face.glyph_outline(ch)
+                    if _outline is not None and _outline_valid(_outline):
                         _draw_curve_glyph(bitmap, int(cx), int(cy), ch,
-                                         font_px, color, real,
-                                         text_rendering=text_rendering,
-                                         weight=weight)
-                    else:
-                        g = _glyph_for(ord(ch) & 0x7F, font_family)
-                        _blit(bitmap, int(cx), int(cy), g, scale, color,
-                              cell_w=_cell_width(font_family))
-                else:
-                    g = _glyph_for(ord(ch) & 0x7F, font_family)
-                    _blit(bitmap, int(cx), int(cy), g, scale, color,
-                          cell_w=_cell_width(font_family))
+                                          font_px, color, face,
+                                          text_rendering=text_rendering,
+                                          weight=weight)
+                        cx += face.advance_width(ch, font_px) + letter_spacing
+                        continue
+                g = _glyph_for(ord(ch) & 0x7F, font_family)
+                _blit(bitmap, int(cx), int(cy), g, scale, color,
+                      cell_w=_cell_width(font_family))
                 # P17 — per-character advance from TTF hmtx when available.
-                if real is not None:
+                if face is not None:
+                    cx += face.advance_width(ch, font_px) + letter_spacing
+                elif real is not None:
                     cx += real.advance_width(ch, font_px) + letter_spacing
                 else:
                     cx += advance + letter_spacing

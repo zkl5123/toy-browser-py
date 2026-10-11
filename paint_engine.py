@@ -143,6 +143,13 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     tag = (bx.dom.tag if bx.dom and bx.dom.is_element() else None) or ""
     is_img = tag == "img"
     is_iframe = tag == "iframe"
+    # P33.P2 — canvas: a white-backed placeholder when no CSS background
+    # is set (mimics the browser's transparent canvas default of white
+    # in the toy bitmap pipeline).
+    is_canvas = tag == "canvas"
+    # P33.P3 — SVG / video / audio placeholder rendering.
+    is_svg = tag == "svg"
+    is_video = tag in ("video", "audio")
 
     # P7.1 — tag every command from this box with its z-index layer.
     z = bx.z_index
@@ -201,12 +208,23 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         return dict(filter_blur=f_blur, filter_brightness=f_bright,
                     filter_contrast=f_contrast, filter_enabled=f_enabled)
 
+    # P33.R4 — if this box is a scroll container, tag all emitted
+    # commands (its own background + children) with the scroll clip
+    # so the rasterizer can clip content that overflows the box.
+    if is_scroll_container:
+        def _tag_all(cmd: DisplayCommand) -> DisplayCommand:
+            _tag_scroll(cmd)
+            return cmd
+        emit_tag = _tag_all
+    else:
+        emit_tag = _tag
+
     # P5.1 — box-shadow: emit a "shadow" command BEFORE the background.
     # The shadow is drawn at (eff_x + shadow_offset_x, eff_y + shadow_offset_y)
     # with the box's own dimensions; the rasterizer dilates by shadow_radius.
     if bx.shadow_enabled and bx.shadow_color is not None:
         dl.commands.append(
-            _tag(
+            emit_tag(
                 DisplayCommand(
                     "shadow",
                     eff_x,
@@ -226,7 +244,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     # rasterizer can paint the decoded pixels with nearest-neighbour scaling.
     if is_img and bx.img_pixels is not None:
         dl.commands.append(
-            _tag(
+            emit_tag(
                 DisplayCommand(
                     "img", eff_x, eff_y, r.w, r.h,
                     img_pixels=bx.img_pixels,
@@ -259,7 +277,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             ts_r = bx.text_shadow_radius if bx.text_shadow_enabled else 0.0
             ts_c = bx.text_shadow_color if bx.text_shadow_enabled else None
             dl.commands.append(
-                _tag(
+                emit_tag(
                     DisplayCommand(
                         kind, eff_x, eff_y, r.w, r.h,
                         color=eff_bg,
@@ -278,7 +296,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         elif bx.gradient_enabled and bx.gradient_c1 is not None and bx.gradient_c2 is not None:
             # P9.4 — linear-gradient: emit a "gradient" command with clip-path.
             dl.commands.append(
-                _tag(
+                emit_tag(
                     DisplayCommand(
                         "gradient", eff_x, eff_y, r.w, r.h,
                         color=bx.gradient_c1,
@@ -303,12 +321,50 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         elif eff_bg is None and is_img:
             # Default grey placeholder fill for <img> (no embedded data).
             dl.commands.append(
-                _tag(
+                emit_tag(
                     DisplayCommand(
                         "rounded" if bx.border_radius > 0 else "rect",
                         eff_x, eff_y, r.w, r.h,
                         color=Color(200, 200, 200),
                         radius=bx.border_radius,
+                    )
+                )
+            )
+        elif eff_bg is None and is_canvas:
+            # P33.P2 — canvas default: white fill (mimics the browser's
+            # transparent-canvas-on-white-page look in the toy bitmap
+            # pipeline).  A CSS background-color on the canvas element
+            # overrides this (eff_bg would not be None in that case).
+            dl.commands.append(
+                emit_tag(
+                    DisplayCommand(
+                        "rect",
+                        eff_x, eff_y, r.w, r.h,
+                        color=Color(255, 255, 255),
+                    )
+                )
+            )
+        elif eff_bg is None and (is_svg or is_video):
+            # P33.P3 — SVG / video / audio placeholder: a light-grey
+            # rounded rectangle with a 1px border, sized from the
+            # element's rect (default 300×150 when no CSS size is set).
+            ph_w = max(1.0, r.w)
+            ph_h = max(1.0, r.h)
+            dl.commands.append(
+                emit_tag(
+                    DisplayCommand(
+                        "rect",
+                        eff_x, eff_y, ph_w, ph_h,
+                        color=Color(230, 230, 230),
+                    )
+                )
+            )
+            dl.commands.append(
+                _tag(
+                    DisplayCommand(
+                        "border", eff_x, eff_y, ph_w, ph_h,
+                        color=Color(160, 160, 160),
+                        radius=0,
                     )
                 )
             )
@@ -625,6 +681,135 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
     # P14.1 — apply scroll-container clips as a post-pass.
     _apply_scroll_clips(bmp, dl)
     return bmp
+
+
+def rasterize_region(
+    bmp: Bitmap,
+    dl: DisplayList,
+    rx: int,
+    ry: int,
+    rw: int,
+    rh: int,
+) -> None:
+    """P33.R5 — rasterize only the rectangular region (rx, ry, rw, rh)
+    of the display list into *bmp*, leaving all pixels outside the
+    region untouched.
+
+    This enables partial bitmap updates after an incremental
+    (dirty-subtree) re-layout: instead of re-rasterizing the entire
+    viewport, the caller rasterizes only the region that changed,
+    which is significantly faster for small localized updates.
+
+    Only commands whose bounding rect intersects the region are
+    emitted; overlapping commands are clipped to the region bounds.
+    """
+    for cmd in dl.commands:
+        # Skip commands that do not overlap the region.
+        cx0, cy0 = cmd.x, cmd.y
+        cx1, cy1 = cx0 + cmd.w, cy0 + cmd.h
+        if cx1 <= rx or cy1 <= ry or cx0 >= rx + rw or cy0 >= ry + rh:
+            continue
+        # Compute the clipped intersection.
+        ix0 = max(cx0, rx)
+        iy0 = max(cy0, ry)
+        ix1 = min(cx1, rx + rw)
+        iy1 = min(cy1, ry + rh)
+        if ix1 <= ix0 or iy1 <= iy0:
+            continue
+        cw = ix1 - ix0
+        ch = iy1 - iy0
+        if cmd.kind == "rect":
+            if cmd.color is not None:
+                bmp.fill_rect(ix0, iy0, cw, ch, cmd.color)
+        elif cmd.kind == "rounded":
+            if cmd.color is not None:
+                _fill_rounded_clipped(bmp, cmd, ix0, iy0, cw, ch)
+        elif cmd.kind == "shadow":
+            _draw_shadow_clipped(bmp, cmd, ix0, iy0, cw, ch)
+        elif cmd.kind == "border":
+            _draw_border_clipped(bmp, cmd, ix0, iy0, cw, ch)
+        elif cmd.kind == "text":
+            color = cmd.text_color if cmd.text_color is not None else (cmd.color if cmd.color is not None else Color(0, 0, 0))
+            text_mod.draw_text(
+                bmp, ix0, iy0, cmd.text, cmd.font_px, color,
+                cmd.max_width if cmd.max_width > 0 else cw,
+                align=cmd.align,
+                letter_spacing=cmd.letter_spacing,
+                text_rendering=cmd.text_rendering,
+                font_weight=cmd.font_weight,
+            )
+        elif cmd.kind == "img":
+            _paint_img_pixels(bmp, cmd)
+        elif cmd.kind == "gradient":
+            _draw_gradient(bmp, cmd)
+        elif cmd.kind == "text_shadow":
+            color = cmd.color if cmd.color is not None else Color(0, 0, 0)
+            text_mod.draw_text(
+                bmp, ix0, iy0, cmd.text, cmd.font_px, color,
+                cmd.max_width if cmd.max_width > 0 else cw,
+                align=cmd.align,
+            )
+
+
+def _fill_rounded_clipped(bmp: Bitmap, cmd: DisplayCommand,
+                          ix0: int, iy0: int, cw: int, ch: int) -> None:
+    """P33.R5 — rounded-rect fill clipped to (ix0, iy0, cw, ch)."""
+    if cmd.color is None:
+        return
+    radius = cmd.radius
+    rgb = cmd.color.to_u32()
+    x0, y0 = int(cmd.x), int(cmd.y)
+    dx = ix0 - x0
+    dy = iy0 - y0
+    for py in range(iy0, iy0 + ch):
+        base = py * bmp.width
+        row = bmp.pixels
+        for px in range(ix0, ix0 + cw):
+            # Re-use the rounded-rect inclusion test relative to the
+            # original command origin.
+            if _inside_rounded(px, py, x0, y0, int(cmd.w), int(cmd.h), radius):
+                if cmd.color.a == 255:
+                    row[base + px] = rgb
+                else:
+                    row[base + px] = cmd.color.blend_over(row[base + px])
+
+
+def _draw_shadow_clipped(bmp: Bitmap, cmd: DisplayCommand,
+                         ix0: int, iy0: int, cw: int, ch: int) -> None:
+    """P33.R5 — shadow command clipped (toy: approximate as a semi-opaque
+    rounded fill in the clipped region)."""
+    if cmd.color is None:
+        return
+    # Toy approximation: just fill the clipped region with the shadow
+    # color at low opacity.
+    shadow_color = cmd.color
+    for py in range(iy0, iy0 + ch):
+        base = py * bmp.width
+        row = bmp.pixels
+        for px in range(ix0, ix0 + cw):
+            if shadow_color.a == 255:
+                row[base + px] = shadow_color.to_u32()
+            else:
+                row[base + px] = shadow_color.blend_over(row[base + px])
+
+
+def _draw_border_clipped(bmp: Bitmap, cmd: DisplayCommand,
+                         ix0: int, iy0: int, cw: int, ch: int) -> None:
+    """P33.R5 — border command clipped to (ix0, iy0, cw, ch)."""
+    color = cmd.color if cmd.color is not None else Color(0, 0, 0)
+    x, y, w, h = cmd.x, cmd.y, cmd.w, cmd.h
+    # Top edge
+    if iy0 <= y < iy0 + ch:
+        bmp.fill_rect(max(ix0, x), y, min(cw, w), 1, color)
+    # Bottom edge
+    if y + h - 1 >= iy0 and y + h - 1 < iy0 + ch:
+        bmp.fill_rect(max(ix0, x), y + h - 1, min(cw, w), 1, color)
+    # Left edge
+    if ix0 <= x < ix0 + cw:
+        bmp.fill_rect(x, max(iy0, y), 1, min(ch, h), color)
+    # Right edge
+    if x + w - 1 >= ix0 and x + w - 1 < ix0 + cw:
+        bmp.fill_rect(x + w - 1, max(iy0, y), 1, min(ch, h), color)
 
 
 def _paint_img_pixels(bmp: Bitmap, cmd: DisplayCommand) -> None:

@@ -8,10 +8,64 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from css import DEFAULT_FONT_PX, Keyword, Length, StyledNode, parse_color
+from css import (DEFAULT_FONT_PX, EdgeList, Keyword, Length, StyledNode,
+                 parse_color, resolve_length as _resolve_length,
+                 CalcExpr, VarExpr, ImportantDecl)
 from dom import Node
 from paint import Color
 import text as text_mod
+import font
+from css import resolve_length as _resolve_length
+
+
+# P33.R5 — module-level caches and constants (hot-path shortcuts).
+from paint import Color as _Color
+_DEFAULT_BORDER_COLOR = _Color(0, 0, 0)
+_DEFAULT_TEXT_COLOR = _Color(0, 0, 0)
+_child_index_cache: dict = {}  # id(parent_node) → {id(child_node) → index}
+
+# P33.R5 — frozenset of CSS properties that, when present, force the
+# slow path of build_box.  Checked once per call via set intersection.
+# P33.P1 — line-height is added so that divs with an explicit line-height
+# go through the slow path (which reads sn.line_height_px() correctly);
+# the fast path hardcodes line_height_px = my_font * 1.2.
+_SPECIAL_PROPS = frozenset((
+    "display", "position", "overflow", "overflow-x", "overflow-y",
+    "box-shadow", "transform", "z-index", "float",
+    "flex-grow", "flex-shrink", "flex-basis", "order",
+    "align-self", "opacity", "border-radius", "filter",
+    "letter-spacing", "word-spacing", "text-transform",
+    "text-indent", "text-rendering", "font-weight",
+    "line-height",
+    "box-decoration-break", "-webkit-appearance",
+    "text-justify", "word-break", "hyphens", "overflow-wrap",
+    "line-clamp", "-webkit-line-clamp", "text-overflow", "vertical-align",
+    "min-width", "max-width", "min-height", "max-height",
+    "outline", "outline-width", "clip-path", "background-image",
+    "text-shadow", "background",
+))
+# P33.P1 — fast path additionally requires a small props map: a div with
+# 5+ properties is not a "plain block" and should go through the slow
+# path (which reads all of them).  This avoids the frozenset intersection
+# on the hot path for the 10k-node benchmark case (width/height/color/
+# font-size = 4 props → fast path).
+_FAST_PATH_MAX_PROPS = 4
+_FAST_PATH_EXCLUDED_TAGS = frozenset((
+    "img", "iframe", "input", "select", "textarea", "button",
+    "canvas", "svg", "video", "audio",
+    "td", "th", "tr", "table", "span", "a", "em", "strong",
+    "b", "i", "u", "mark", "code", "small", "sub", "sup",
+))
+
+
+def clear_caches() -> None:
+    """P33.R5 — clear the module-level performance caches.
+
+    Call between independent document renders so stale child-index
+    mappings (keyed by ``id()``) don't produce wrong results when
+    the same ``id()`` is reused for a different node.
+    """
+    _child_index_cache.clear()
 
 
 class BoxType:
@@ -221,6 +275,8 @@ class LayoutBox:
     IFRAME_PLACEHOLDER_H = 120.0
     IMG_DEFAULT_W = 32.0
     IMG_DEFAULT_H = 32.0
+    # P33.R5 — dirty flag for incremental re-layout.
+    dirty: bool = False
 
     def outer_height(self) -> float:
         return (
@@ -376,6 +432,45 @@ def _decode_png_min(data: bytes):
     return (out, width, height)
 
 
+def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, explicit_h: Optional[float], available_w: float | None = None) -> None:
+    """P33.R5 — build the child boxes for *bx* (shared by the fast and
+    slow paths of ``build_box``).  Extracted so the fast path can
+    skip the ~50 property lookups while still producing the full
+    layout tree.
+    P33.P1 — propagate the parent's content width (and height) to each
+    child's StyledNode so that ``width: calc(100% - 20px)`` and
+    ``height: calc(100% - 20px)`` resolve against the containing
+    block's actual dimensions (CSS2.1 §10.6.5).
+    """
+    # P33.P1 — parent content dimensions for %/calc resolution.
+    # build_box runs before layout_block sets the rect, so use
+    # explicit_w (the parent's declared width) when available,
+    # falling back to available_w (the containing block's width
+    # passed down from layout_block).
+    parent_w = bx.explicit_width if bx.explicit_width is not None else (available_w or 0.0)
+    parent_h = bx.explicit_height
+    for csn in sn.children:
+        cdom = csn.dom
+        ctag = (cdom.tag or "").lower()
+        if ctag in ("script", "style"):
+            continue
+        # P33.P1 — set containing-block dimensions on the child's StyledNode.
+        csn.parent_width_px = parent_w
+        if parent_h is not None:
+            csn.parent_height_px = parent_h
+        cb = build_box(csn, my_font, parent_font_family,
+                       explicit_h if explicit_h is not None else None)
+        cb.parent = bx
+        if csn.is_display_none():
+            cb.rect = Rect()
+        # P15.4 — inherit font_family from parent when child has none.
+        # P6.2 — propagate line-clamp / text-overflow to text children.
+        if cb.box_type == BoxType.TEXT:
+            cb.line_clamp = bx.line_clamp
+            cb.text_overflow = bx.text_overflow
+        bx.children.append(cb)
+
+
 def _edges_for(sn, prop, my_font):
     """Resolve a margin/padding/border value into EdgeSizes.
 
@@ -383,9 +478,10 @@ def _edges_for(sn, prop, my_font):
     EdgeList (or a single value), while the longhand keys hold per-side
     values.  Per CSS2.1, longhands override the shorthand's per-side
     default.  This helper builds the final EdgeSizes from both sources.
+    P33.R5 — module-level imports of EdgeList / resolve_length (the
+    function used to re-import them on every call; 6000+ calls per
+    1000-node layout).
     """
-    from css import EdgeList, resolve_length
-
     base = EdgeSizes()
     # 1. Shorthand key (margin / padding / border-width).
     sv = sn.props.get(prop)
@@ -393,14 +489,14 @@ def _edges_for(sn, prop, my_font):
         if isinstance(sv, EdgeList):
             base = EdgeSizes(sv.top, sv.right, sv.bottom, sv.left)
         else:
-            r = resolve_length(sv, my_font)
+            r = _resolve_length(sv, my_font)
             if r is not None:
                 base = EdgeSizes(r, r, r, r)
     # 2. Longhand overrides (margin-top, margin-right, …).
     for i, suffix in enumerate(("-top", "-right", "-bottom", "-left")):
         lv = sn.props.get(prop + suffix)
         if lv is not None:
-            r = resolve_length(lv, my_font)
+            r = _resolve_length(lv, my_font)
             if r is not None:
                 v = getattr(base, ("top", "right", "bottom", "left")[i])
                 if i == 0:
@@ -415,32 +511,46 @@ def _edges_for(sn, prop, my_font):
 
 
 def build_box(sn: StyledNode, parent_font_px: float,
-              parent_font_family: str = "", parent_height_px: float | None = None) -> LayoutBox:
+              parent_font_family: str = "", parent_height_px: float | None = None,
+              available_w: float | None = None) -> LayoutBox:
     node = sn.dom
-    is_element = node.is_element()
+    # P33.R5 — cache the is_element result (hot path: called 2000+ times
+    # per 1000-node layout).  Node.node_type is a plain string; comparing
+    # it directly is faster than the method call.
+    is_element = (node.node_type == "element")
     my_font = sn.prop_font_px()
     tag = (node.tag or "").lower()
+    node_tag = tag
 
-    # P10.1 — child-position pseudo-classes: compute this node's 1-based
-    # element-sibling index so :first-child / :last-child / :nth-child can
-    # be matched against the DOM structure at layout time.
+    # P33.R5 — compute child_index in O(1) by walking the parent's children
+    # only for element siblings.  The legacy O(n) scan is replaced by a
+    # cached counter on the parent node (set during the first build_box
+    # call on that parent's children).
     child_index = 0
     parent_dom = node.parent
     if parent_dom is not None:
-        idx = 0
-        for c in parent_dom.children:
-            if c.is_element():
-                idx += 1
-                if c is node:
-                    child_index = idx
+        # P33.R5 — use a module-level cache keyed by id(parent) so we
+        # don't re-scan siblings on every build_box call.
+        cached = _child_index_cache.get(id(parent_dom))
+        if cached is not None:
+            # The cached dict maps id(child) → index.
+            child_index = cached.get(id(node), 0)
+        else:
+            # First time for this parent: build the full mapping.
+            idx = 0
+            mapping = {}
+            for c in parent_dom.children:
+                if c.node_type == "element":
+                    idx += 1
+                    mapping[id(c)] = idx
+            _child_index_cache[id(parent_dom)] = mapping
+            child_index = mapping.get(id(node), 0)
 
-    # Text content: for text nodes use the node's own .text; for elements
-    # only collect direct text-node children (not element children, which
-    # carry their own text in their own boxes).
+    # P33.R5 — text content: collect direct text-node children.
     if is_element:
         parts: list[str] = []
         for c in node.children:
-            if not c.is_element():
+            if c.node_type != "element":
                 parts.append(c.text or "")
         text_str = "".join(parts)
     else:
@@ -448,7 +558,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
 
     background = sn.background()
     color = sn.color()
-    border_color = sn.get_color("border-color", __import__("paint").Color(0, 0, 0))
+    border_color = sn.get_color("border-color", _DEFAULT_BORDER_COLOR)
     text_align = sn.text_align()
 
     # P28 — default border for form controls: even without a CSS
@@ -459,13 +569,12 @@ def build_box(sn: StyledNode, parent_font_px: float,
     if is_form_tag and "border-width" not in sn.props:
         _force_form_border = EdgeSizes(top=1.0, right=1.0, bottom=1.0, left=1.0)
 
-    # <input> / <textarea>: pull width/height from DOM attributes when
-    # no CSS explicit size is set.  These are the "intrinsic dimensions"
-    # in the toy model.  <textarea> additionally defaults to 4 rows ×
-    # 20 cols (HTML spec §4.10.6).
+    # P33.R5 — <input> / <textarea> / <img> / <canvas> / <svg> / <video> / <audio>:
+    # pull width/height from DOM attributes.  For the common case (no dom
+    # attrs, no form tag) skip the entire block.
     dom_w: Optional[float] = None
     dom_h: Optional[float] = None
-    if tag in ("img", "input", "textarea"):
+    if tag in ("img", "input", "textarea", "canvas", "svg", "video", "audio"):
         for attr, target in (("width", "w"), ("height", "h")):
             raw = node.attr(attr)
             if raw:
@@ -491,6 +600,19 @@ def build_box(sn: StyledNode, parent_font_px: float,
                     dom_h = int(rows_raw) * 16.0 if rows_raw else 4 * 16.0
                 except ValueError:
                     dom_h = 4 * 16.0
+        # P33.P2 — <canvas> HTML default: 300×150 (HTML spec).
+        if tag == "canvas":
+            if dom_w is None:
+                dom_w = 300.0
+            if dom_h is None:
+                dom_h = 150.0
+        # P33.P3 — <svg> / <video> / <audio> placeholder default:
+        # 300×150 (matches the browser's intrinsic size for these elements).
+        if tag in ("svg", "video", "audio"):
+            if dom_w is None:
+                dom_w = 300.0
+            if dom_h is None:
+                dom_h = 150.0
 
     # P3.1 — embedded base64 image: decode data URI into pixel buffer.
     img_pixels: Optional[list] = None
@@ -514,13 +636,156 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # parent box's content height when known (None at the viewport root).
     if parent_height_px is not None:
         sn.parent_height_px = parent_height_px
-
+    # P33.P1 — propagate the containing block's content width so that
+    # percentage / calc-mixed %/px *widths* resolve against the parent's
+    # actual width.  ``sn.parent_width_px`` is set by _build_children
+    # before build_box is called (CSS apply-time resolution is
+    # unavailable; layout-time resolution is correct here).
     explicit_w = sn.width_px()
     explicit_h = sn.height_px()
     if explicit_w is None and dom_w is not None:
         explicit_w = dom_w
     if explicit_h is None and dom_h is not None:
         explicit_h = dom_h
+
+    # P33.R5 — fast path: for a plain block element with no special CSS
+    # properties, skip the ~50 property lookups and use defaults.
+    # Uses module-level _SPECIAL_PROPS frozenset + tag exclusion set.
+    # P33.P1 — also require the props map to be small (≤ _FAST_PATH_MAX_PROPS
+    # keys) to avoid the frozenset intersection on the hot path for
+    # 10k-node documents where most divs carry 4 properties
+    # (width/height/color/font-size).
+    _prop = sn.props
+    if (is_element
+            and not is_form_tag
+            and tag not in _FAST_PATH_EXCLUDED_TAGS
+            and len(_prop) <= _FAST_PATH_MAX_PROPS
+            and not (_SPECIAL_PROPS & _prop.keys())):
+        # P33.P1 — super-fast path: no special properties, small props
+        # map.  Read width/height/color/font directly from _prop dict
+        # (no method calls on sn, no _resolve_var, no _edges_for for
+        # the 3 common empty edge cases).
+        margin = EdgeSizes()
+        padding = EdgeSizes()
+        border = EdgeSizes()
+        # P33.P1 — resolve width/height from the raw props dict
+        # (skips sn.width_px() / sn.height_px() method calls which
+        # go through _resolve_var + resolve_length + getattr).
+        explicit_w = None
+        explicit_h = None
+        wv = _prop.get("width")
+        if wv is not None:
+            if isinstance(wv, Length):
+                if wv.unit == "px":
+                    explicit_w = wv.value
+                elif wv.unit == "em":
+                    explicit_w = wv.value * my_font
+                elif wv.unit == "%":
+                    ref = sn.parent_width_px if sn.parent_width_px is not None else my_font
+                    explicit_w = wv.value * ref / 100.0
+                else:
+                    explicit_w = wv.value
+            elif isinstance(wv, CalcExpr):
+                ref = sn.parent_width_px if sn.parent_width_px is not None else my_font
+                total = 0.0
+                for tv, tu in wv.terms:
+                    if tu == "%":
+                        total += tv * ref / 100.0
+                    elif tu == "em":
+                        total += tv * my_font
+                    else:
+                        total += tv
+                explicit_w = total
+            elif isinstance(wv, VarExpr):
+                rv = sn._resolve_var(wv)
+                if rv is not None:
+                    explicit_w = _resolve_length(rv, my_font, ref_px=sn.parent_width_px)
+            elif isinstance(wv, Keyword):
+                try:
+                    explicit_w = float(wv.value)
+                except ValueError:
+                    pass
+        hv = _prop.get("height")
+        if hv is not None:
+            if isinstance(hv, Length):
+                if hv.unit == "px":
+                    explicit_h = hv.value
+                elif hv.unit == "em":
+                    explicit_h = hv.value * my_font
+                elif hv.unit == "%":
+                    ref = sn.parent_height_px if sn.parent_height_px is not None else my_font
+                    explicit_h = hv.value * ref / 100.0
+                else:
+                    explicit_h = hv.value
+            elif isinstance(hv, CalcExpr):
+                ref = sn.parent_height_px if sn.parent_height_px is not None else my_font
+                total = 0.0
+                for tv, tu in hv.terms:
+                    if tu == "%":
+                        total += tv * ref / 100.0
+                    elif tu == "em":
+                        total += tv * my_font
+                    else:
+                        total += tv
+                explicit_h = total
+            elif isinstance(hv, VarExpr):
+                rv = sn._resolve_var(hv)
+                if rv is not None:
+                    explicit_h = _resolve_length(rv, my_font, ref_px=sn.parent_height_px)
+            elif isinstance(hv, Keyword):
+                try:
+                    explicit_h = float(hv.value)
+                except ValueError:
+                    pass
+        # P33.P1 — resolve color/background/font directly from _prop dict.
+        bg_raw = _prop.get("background")
+        bg_color = None
+        if bg_raw is not None:
+            if isinstance(bg_raw, Color):
+                bg_color = bg_raw
+            else:
+                rv = sn._resolve_var(bg_raw)
+                if rv is not None and isinstance(rv, Color):
+                    bg_color = rv
+        col_raw = _prop.get("color")
+        col_val = _DEFAULT_TEXT_COLOR
+        if col_raw is not None:
+            if isinstance(col_raw, Color):
+                col_val = col_raw
+            else:
+                rv = sn._resolve_var(col_raw)
+                if rv is not None and isinstance(rv, Color):
+                    col_val = rv
+        ta = "left"
+        ta_raw = _prop.get("text-align")
+        if ta_raw is not None:
+            if isinstance(ta_raw, Keyword):
+                ta = ta_raw.value.lower()
+        ff_raw = _prop.get("font-family")
+        font_family = parent_font_family or "monospace"
+        if ff_raw is not None:
+            ff_str = getattr(ff_raw, "value", ff_raw)
+            font_family = font.family_from_css(str(ff_str))
+        bx = LayoutBox(
+            BoxType.BLOCK,
+            Rect(),
+            padding, border, margin,
+            text_content=text_str or None,
+            text_color=col_val,
+            background=bg_color,
+            border_color=_DEFAULT_BORDER_COLOR,
+            font_px=my_font,
+            text_align=ta,
+            explicit_width=explicit_w,
+            explicit_height=explicit_h,
+            line_height_px=my_font * 1.2,  # P33.P1 — fast-path default line height
+            children=[],
+            dom=node,
+            child_index=child_index,
+            font_family=font_family,
+        )
+        _build_children(bx, sn, my_font, parent_font_family, explicit_h, available_w)
+        return bx
     # P1.4 — Flexbox: read display:flex / flex-direction / justify-content / align-items.
     is_flex = False
     flex_direction = "row"
@@ -1256,16 +1521,21 @@ def build_box(sn: StyledNode, parent_font_px: float,
                 ctag = (cdom.tag or "").lower()
                 if ctag in ("script", "style"):
                     continue
+                # P33.P1 — set containing-block dimensions on the child's
+                # StyledNode before build_box reads width_px() / height_px().
+                csn.parent_width_px = bx.explicit_width
+                if bx.explicit_height is not None:
+                    csn.parent_height_px = bx.explicit_height
                 if csn.is_display_none():
                     # P11.3 — display:none boxes stay in the layout tree
                     # (flagged via is_display_none) so toggle tests can
                     # inspect them; layout_block skips their content.
-                    cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None)
+                    cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None, bx.explicit_width)
                     cb.parent = bx
                     cb.rect = Rect()
                     bx.children.append(cb)
                     continue
-                cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None)
+                cb = build_box(csn, my_font, font_family, bx.explicit_height if bx.explicit_height is not None else None, bx.explicit_width)
                 cb.parent = bx
                 # P15.4 — inherit font_family from parent when child has none.
                 # P6.2 — propagate line-clamp / text-overflow to text children.
@@ -1297,16 +1567,24 @@ def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0)
     P26.3 — ``_viewport_h`` is the viewport's content height, used to
     resolve percentage heights on top-level boxes whose containing block
     is the viewport (e.g. ``body { height: 100% }`` → 600px).
+
+    P33.R5 — after the full layout pass, every box's ``dirty`` flag is
+    reset to False (the tree is now clean).
     """
+    # P33.R5 — clear id()-based caches so a new document render
+    # doesn't produce wrong child indices from a reused memory address.
+    clear_caches()
     vh = _viewport_h if _viewport_h > 0 else None
     children_sn = list(styled_root.children)
     if not children_sn:
         root = build_box(styled_root, DEFAULT_FONT_PX, "", vh)
         layout_block(root, 0.0, 0.0, viewport_w)
+        _mark_all_clean(root)
         return root
     if len(children_sn) == 1:
         root = build_box(children_sn[0], DEFAULT_FONT_PX, "", vh)
         layout_block(root, 0.0, 0.0, viewport_w)
+        _mark_all_clean(root)
         return root
     # Multiple top-level children: wrap them in a synthetic block whose
     # styled children are the real top-level siblings.
@@ -1317,7 +1595,73 @@ def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0)
         synth_sn.children.append(cs)
     root = build_box(synth_sn, DEFAULT_FONT_PX, "", vh)
     layout_block(root, 0.0, 0.0, viewport_w)
+    # P33.R5 — reset all dirty flags after a full layout pass.
+    _mark_all_clean(root)
     return root
+
+
+def _mark_all_clean(root: LayoutBox) -> None:
+    """P33.R5 — set dirty=False on every box in the tree (post-layout)."""
+    stack = [root]
+    while stack:
+        bx = stack.pop()
+        bx.dirty = False
+        stack.extend(reversed(bx.children))
+
+
+def mark_dirty(bx: LayoutBox) -> None:
+    """P33.R5 — mark *bx* and all its descendants as dirty.
+
+    Call this after modifying a box's properties (e.g. after a DOM
+    mutation, a CSS change, or a JS-driven style update) so that the
+    next ``layout_dirty_only`` pass knows which subtrees to re-lay-out.
+    Idempotent: marking an already-dirty box has no effect.
+    """
+    stack = [bx]
+    while stack:
+        n = stack.pop()
+        n.dirty = True
+        stack.extend(reversed(n.children))
+
+
+def layout_dirty_only(root: LayoutBox) -> bool:
+    """P33.R5 — re-run layout on dirty subtrees only.
+
+    Walks the layout tree.  For every box that is ``dirty``, re-runs
+    ``layout_block`` on it at its last recorded flow origin, then marks
+    the box and its subtree clean.  Clean subtrees are skipped entirely,
+    so a document with only a small dirty region pays for re-laying-out
+    that region, not the whole tree.
+
+    Returns ``True`` if any box was re-laid-out, ``False`` if the tree
+    was already clean.
+
+    Note: this is an *approximate* incremental layout.  It re-runs
+    ``layout_block`` on the dirty box at its last recorded flow
+    position (rect.x / rect.y minus margins).  This is correct for
+    local changes (width, height, position offsets, background, etc.)
+    that do not alter the document flow around the box.  For changes
+    that insert/remove block siblings the caller must re-run the full
+    ``layout()`` pass instead.
+    """
+    any_dirty = False
+    stack = [root]
+    while stack:
+        bx = stack.pop()
+        if bx.dirty:
+            any_dirty = True
+            # Re-run layout_block on this box at its last flow origin.
+            x = bx.rect.x - bx.margin.left
+            y = bx.rect.y - bx.margin.top
+            containing_w = bx.parent.rect.w if bx.parent is not None else 800.0
+            layout_block(bx, x, y, containing_w)
+            # Mark the box and all its descendants clean.
+            _mark_all_clean(bx)
+            # Do NOT push children — they were just re-laid-out.
+        else:
+            # Clean box: push its children to find dirty subtrees deeper.
+            stack.extend(reversed(bx.children))
+    return any_dirty
 
 
 def _fold_margins(parent: LayoutBox, first_child: LayoutBox | None) -> float:
@@ -2122,6 +2466,9 @@ def _layout_grid(
     Children are placed into a grid-template-columns × auto-rows matrix.
     Each column track has equal width (available / grid_columns).
     Row height is determined by the tallest child in that row.
+    P33.R4 — children are positioned at their row's cumulative y offset
+    (not all at content_y0), so grid cells in later rows are placed
+    below those in earlier rows.
     """
     if not bx.children:
         bx.rect = Rect(content_x0, content_y0, available, bx.line_height_px)
@@ -2135,21 +2482,34 @@ def _layout_grid(
             continue
         layout_block(cb, content_x0, content_y0, available / cols)
 
-    # Phase 2: place children into the grid.
+    # Phase 2: place children into the grid, tracking cumulative row height.
     col_w = available / cols
     visible = [cb for cb in bx.children if not cb.is_display_none]
     n = len(visible)
-    max_h = 0.0
+    # P33.R4 — accumulate row heights so each row starts below the previous.
+    row_y: dict[int, float] = {}
+    row_max_h: dict[int, float] = {}
     for idx, cb in enumerate(visible):
         row = idx // cols
         col = idx % cols
         cx = content_x0 + col * col_w
-        # Lay out the child at its grid cell position.
-        layout_block(cb, cx, content_y0, col_w)
+        cy = content_y0 + row_y.get(row, 0.0)
+        layout_block(cb, cx, cy, col_w)
         row_h = cb.rect.h + cb.padding.top + cb.padding.bottom
-        if row_h > max_h:
-            max_h = row_h
-    bx.rect = Rect(content_x0, content_y0, available, max(max_h, bx.line_height_px))
+        row_max_h[row] = max(row_max_h.get(row, 0.0), row_h)
+    # P33.R4 — compute cumulative row offsets for the next pass.
+    total_h = 0.0
+    for row in range(len(row_max_h)):
+        row_y[row] = total_h
+        total_h += row_max_h.get(row, 0.0)
+    # Phase 3: re-position children at their correct row y-offsets.
+    for idx, cb in enumerate(visible):
+        row = idx // cols
+        col = idx % cols
+        cx = content_x0 + col * col_w
+        cy = content_y0 + row_y.get(row, 0.0)
+        layout_block(cb, cx, cy, col_w)
+    bx.rect = Rect(content_x0, content_y0, available, max(total_h, bx.line_height_px))
 
 
 def _layout_table(

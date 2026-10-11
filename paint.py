@@ -67,6 +67,13 @@ class Bitmap:
         idx = y * self.width + x
         self.pixels[idx] = color.blend_over(self.pixels[idx])
 
+    def pixel_at(self, x: int, y: int) -> tuple:
+        """P33.R5 — return (r, g, b) for a single pixel (clamped to bounds)."""
+        x = max(0, min(self.width - 1, int(x)))
+        y = max(0, min(self.height - 1, int(y)))
+        v = self.pixels[y * self.width + x]
+        return ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
+
     def fill_rect(self, x: float, y: float, w: float, h: float, color: Color) -> None:
         if color.is_transparent:
             return

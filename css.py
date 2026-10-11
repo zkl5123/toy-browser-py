@@ -9,9 +9,12 @@ Pure standard library. Supported:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from dom import Node
 from paint import Color
+import font as _css_font_mod
+import text as _css_text_mod
 
 DEFAULT_FONT_PX = 16.0
 
@@ -22,6 +25,28 @@ DEFAULT_FONT_PX = 16.0
 class Length:
     value: float
     unit: str  # "px" | "em"
+
+
+@dataclass
+class CalcExpr:
+    """P33.P1 — calc() expression: a list of (value, unit) terms joined by
+    + / −.  ``unit`` is "px" | "em" | "%" | "" (unitless).
+
+    A single-term expression with mixed units is still valid (e.g.
+    ``calc(100% - 20px)`` → [(100.0, "%"), (-20.0, "px")]).
+    Resolution requires a reference size (parent content width/height)
+    for "%" terms; see :func:`resolve_length`.
+    """
+    terms: tuple  # tuple of (float, str) pairs
+    unit_hint: str = ""  # dominant unit when all terms agree ("" when mixed)
+
+
+@dataclass
+class VarExpr:
+    """P33.P1 — var(--name, fallback).  Resolved at style-application
+    time against the node's inherited custom-property map."""
+    name: str
+    fallback: object = None  # a Value or None
 
 
 @dataclass
@@ -110,8 +135,32 @@ def parse_value(val: str) -> Value:
     c = parse_color(v)
     if c is not None:
         return c
+    # P33.P1 — var(--name, fallback): custom property reference.
+    if lc.startswith("var(") and lc.endswith(")"):
+        inner = lc[4:-1]
+        # Split on the first top-level comma (fallback may itself contain
+        # a nested var(); toy: naive split on first comma).
+        depth = 0
+        split_at = -1
+        for i, ch in enumerate(inner):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                split_at = i
+                break
+        if split_at >= 0:
+            name = inner[:split_at].strip()
+            fb_raw = inner[split_at + 1:].strip()
+            fb = parse_value(fb_raw) if fb_raw else None
+        else:
+            name = inner.strip()
+            fb = None
+        return VarExpr(name, fb)
     # P12.3 — calc() toy: evaluate simple binary expressions like
     # "calc(100px - 20px)" or "calc(10px + 5%)".
+    # P33.P1 — calc(100% - 20px): mixed %/px now yields CalcExpr.
     if lc.startswith("calc(") and lc.endswith(")"):
         return parse_calc(lc[5:-1])
     # P5.1 — multi-token values (box-shadow, transform, grid-template-*)
@@ -135,52 +184,98 @@ def parse_value(val: str) -> Value:
 
 
 def parse_calc(expr: str) -> Value:
-    """P12.3 — evaluate a simple calc() expression.
+    """P12.3 / P33.P1 — evaluate a calc() expression.
 
-    Supports binary ``+`` / ``-`` between two operands, each being a
+    Supports multi-term ``+`` / ``-`` between operands, each being a
     number with optional unit (``px``, ``em``, ``%``, ``pt``) or a bare
-    number.  Returns a :class:`Length` (or unitless :class:`Keyword`).
-    Unknown shapes fall back to a raw :class:`Keyword`.
+    number.  Returns a :class:`CalcExpr` when the result mixes units
+    (e.g. ``calc(100% - 20px)`` → ``[(100.0, "%"), (-20.0, "px")]``),
+    a :class:`Length` when all terms share one unit, a unitless
+    :class:`Keyword` when no unit, or a raw :class:`Keyword` fallback
+    for unsupported shapes.
     """
     import re as _re
     expr = expr.strip()
-    m = _re.fullmatch(
-        r"([\d.]+)(\w+)\s*([+-])\s*([\d.]+)(\w*)",
-        expr,
+    # Tokenize: number+unit pairs and binary + / - operators.
+    token_re = _re.compile(
+        r"([\d.]+)(px|em|%|pt)?\s*(?=[+-]|$)|([+-])",
     )
-    if m:
-        a, ua, op, b, ub = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
-        va, vb = float(a), float(b)
-        # P12.3 — supported units: px, em, %, pt, and none.
-        supported = {"px", "em", "%", "pt"}
-        if ua not in supported and ua:
-            return Keyword(f"calc({expr})")
-        if ub not in supported and ub:
-            return Keyword(f"calc({expr})")
-        if ua and ub and ua != ub:
-            # Mismatched units — toy: convert em to px (1em = 16px).
-            if ua == "em":
-                va = va * 16.0
-                ua = "px"
-            if ub == "em":
-                vb = vb * 16.0
-                ub = "px"
-            if ua != ub:
-                # P12.3 — unsupported unit mix: carry the raw calc() text so
-                # downstream code can recognize it (toy fallback).
+    # Simpler approach: split on + and - operators while respecting
+    # signed numbers.  Toy: no nested calc() inside calc().
+    # Walk the string building (value, sign, unit) terms.
+    terms: list = []  # list of (float, str, int)  [value, unit, sign]
+    i = 0
+    n = len(expr)
+    while i < n:
+        # Skip whitespace
+        while i < n and expr[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        ch = expr[i]
+        if ch in "+-":
+            # Binary operator.  Determine sign for the next term.
+            # The first term's sign: leading '-' is part of the number;
+            # a sign followed by whitespace or another sign is binary.
+            # Toy heuristic: if terms already exist, the sign is binary
+            # (applies to the upcoming term).  If no terms yet, it's
+            # part of the number (leading minus).
+            sign = 1 if ch == "+" else -1
+            i += 1
+            # P33.P1 — skip whitespace after the operator before reading
+            # the next number (calc(100px - 20px) has a space after -).
+            while i < n and expr[i].isspace():
+                i += 1
+            m2 = _re.match(r"([\d.]+)(px|em|%|pt)?", expr[i:])
+            if m2:
+                val = float(m2.group(1))
+                unit = m2.group(2) or ""
+                terms.append((val * sign, unit, sign))
+                i += m2.end()
+            else:
                 return Keyword(f"calc({expr})")
-        if op == "-":
-            result = va - vb
         else:
-            result = va + vb
-        if ua or ub:
-            return Length(result, ua or ub)
-        return Keyword(str(result))
-    # Bare number.
-    try:
-        return Length(float(expr), "px") if "." in expr else Keyword(str(float(expr)))
-    except ValueError:
+            # Start of a number (first term).
+            m2 = _re.match(r"(-?[\d.]+)(px|em|%|pt)?", expr[i:])
+            if m2:
+                val = float(m2.group(1))
+                unit = m2.group(2) or ""
+                terms.append((val, unit, 1))
+                i += m2.end()
+            else:
+                return Keyword(f"calc({expr})")
+    if not terms:
         return Keyword(f"calc({expr})")
+    # Collect distinct units (ignore the empty string for terms without units).
+    units = set(t[1] for t in terms if t[1])
+    if len(units) == 0:
+        # All terms unitless → Keyword.
+        total = sum(t[0] for t in terms)
+        return Keyword(str(total))
+    if len(units) == 1:
+        # All terms share the same unit → Length.
+        u = next(iter(units))
+        total = sum(t[0] for t in terms)
+        return Length(total, u)
+    # Multi-unit — try legacy eager em→px conversion (1em = 16px, P12.3).
+    # em + px → Length in px; % + px/em/pt → CalcExpr (deferred, P33.P1).
+    has_pct = any(t[1] == "%" for t in terms)
+    if not has_pct:
+        # All absolute units — convert em→px and sum.
+        total_px = 0.0
+        for tv, tu, _sign in terms:
+            if tu == "em":
+                total_px += tv * 16.0
+            elif tu == "pt":
+                total_px += tv * (96.0 / 72.0)  # 1pt ≈ 1.333px
+            else:  # px or ""
+                total_px += tv
+        return Length(total_px, "px")
+    # Mixed % + absolute → CalcExpr for deferred resolution against ref size.
+    calc_terms = tuple((t[0], t[1]) for t in terms)
+    non_pct = set(t[1] for t in terms if t[1] and t[1] != "%")
+    hint = next(iter(non_pct)) if len(non_pct) == 1 else ""
+    return CalcExpr(calc_terms, hint)
 
 
 # --- Selectors --------------------------------------------------------------
@@ -201,6 +296,7 @@ class Selector:
     combinator: str
     specificity: tuple[int, int, int, int]  # P25.1 — (inline, id, cls, type)
     pseudo: str = ""  # ":hover" / ":focus" / ""
+    selector_text: str = ""  # P32.4 — raw source text (DevTools provenance)
 
     def matches(self, node: Node, interaction_state: dict | None = None) -> bool:
         """Match this selector against a DOM node.
@@ -275,20 +371,57 @@ class Selector:
 
     @staticmethod
     def _simple_matches(simple: str, node: Node) -> bool:
+        """P32 fix — one *simple selector* token: may combine a tag,
+        classes, and an id.  Supported compound forms:
+
+        * ``tag``           — element type
+        * ``.class``        — single class
+        * ``.a.b``          — multi-class (all must be present)
+        * ``#id``           — id
+        * ``tag.class``     — tag + class (e.g. ``p.x``)
+        * ``tag.id``        — tag + id   (e.g. ``div#box``)
+        * ``tag.id.class``  — full compound
+
+        The tag portion (leading identifier without ``.``/``#``) is
+        optional; when present it must match the node's tag.  Each
+        ``.`` / ``#`` segment after the tag is matched independently.
+        """
         simple = simple.strip()
-        if simple.startswith("#"):
-            return node.attr("id") == simple[1:]
-        if simple.startswith("."):
-            body = simple[1:]
-            # Multi-class: ".a.b" → both classes required.
-            if "." in body:
-                classes = [c for c in body.split(".") if c]
-                if not classes:
+        if not simple:
+            return False
+
+        # Split into segments: a leading bare tag name, then ``.class``
+        # and ``#id`` segments.  ``p.x`` → ("p", ".x"); ``div#box`` →
+        # ("div", "#box"); ``.a.b`` → ("", ".a.b").
+        import re as _re
+        m = _re.match(
+            r"^(?P<tag>[a-zA-Z][a-zA-Z0-9-]*)?(?P<tail>(?:[#.][\w-]+)*)$",
+            simple,
+        )
+        if m is None:
+            # Unknown compound — fall back to legacy single-part check.
+            if simple.startswith("#"):
+                return node.attr("id") == simple[1:]
+            if simple.startswith("."):
+                return node.has_class(simple[1:])
+            return node.tag_name() == simple
+        tag_part = m.group("tag") or ""
+        tail = m.group("tail") or ""
+
+        # 1) tag portion (when present).
+        if tag_part:
+            if node.tag_name() != tag_part:
+                return False
+
+        # 2) class / id segments in the tail.
+        for seg in _re.findall(r"[#.][\w-]+", tail):
+            if seg.startswith("#"):
+                if node.attr("id") != seg[1:]:
                     return False
-                return all(node.has_class(c) for c in classes)
-            return node.has_class(body)
-        # Type selector (tag name).
-        return node.tag_name() == simple
+            else:  # class
+                if not node.has_class(seg[1:]):
+                    return False
+        return True
 
     # --- P10.1 — child-position pseudo-class helpers -------------------------
 
@@ -443,7 +576,8 @@ class Selector:
         if pseudo:
             spec_b += 1
         # P25.1 — 4-tuple: (inline=0, id, cls, type)
-        return cls(tuple(parts), combinator, (0, spec_a, spec_b, spec_c), pseudo)
+        return cls(tuple(parts), combinator, (0, spec_a, spec_b, spec_c), pseudo,
+                   selector_text=text)
 
     def specificity_sum(self) -> tuple[int, int, int, int]:
         return self.specificity
@@ -713,6 +847,7 @@ class Rule:
     specificity: tuple[int, int, int, int]
     source: str = "author"  # P25.2 — "author" or "ua"
     important: bool = False  # P25.2 — True if any decl is !important
+    selector_text: str = ""  # P32.4 — raw selector text (DevTools provenance)
 
 
 def parse_rulesheet(css_text: str) -> list[Rule]:
@@ -758,7 +893,8 @@ def parse_rulesheet(css_text: str) -> list[Rule]:
         # Re-parse declarations (parse_declaration_pairs returns a fresh
         # dict each call; the double-parse is cheap for the toy).
         decls = parse_declaration_pairs(decl_src)
-        rules.append(Rule(sels, decls, max_spec, "author", rule_important))
+        rules.append(Rule(sels, decls, max_spec, "author", rule_important,
+                          selector_text=selector_text))
     return rules
 
 
@@ -918,20 +1054,140 @@ def supports_matches(condition: str) -> bool:
     return True
 
 
+# --- P33.P3 — @font-face ----------------------------------------------------------
+
+@dataclass
+class FontFace:
+    """P33.P3 — a parsed @font-face rule.
+
+    Attributes:
+        family: the ``font-family`` value (e.g. "MyFont").
+        src: the raw ``src`` value (e.g. ``"local('Arial')"``).
+        weight: the ``font-weight`` keyword or integer (default 400).
+        style: the ``font-style`` keyword (default "normal").
+        unicode_range: the ``unicode-range`` value (default "U+0-FFFF").
+    """
+    family: str
+    src: str = ""
+    weight: str = "400"
+    style: str = "normal"
+    unicode_range: str = "U+0-FFFF"
+
+    @property
+    def is_local(self) -> bool:
+        """True when the src uses a local() reference (no network fetch)."""
+        return self.src.startswith("local(") if self.src else False
+
+    @property
+    def url(self) -> str:
+        """Extract the URL from a url(...) src expression, or "" when
+        the src is local() / empty."""
+        if not self.src:
+            return ""
+        m = re.search(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", self.src)
+        return m.group(1).strip() if m else ""
+
+
+def parse_font_faces(css_text: str) -> list[FontFace]:
+    """P33.P3 — extract all @font-face blocks from *css_text*.
+
+    The parser scans for ``@font-face`` followed by a declaration
+    block.  Each block's declarations are parsed into a :class:`FontFace`.
+    Unrecognized declarations are ignored.
+
+    Returns a list of :class:`FontFace` objects in document order.
+    """
+    out: list[FontFace] = []
+    i = 0
+    n = len(css_text)
+    while i < n:
+        idx = css_text.find("@font-face", i)
+        if idx < 0:
+            break
+        brace = css_text.find("{", idx)
+        if brace < 0:
+            break
+        depth = 0
+        j = brace
+        while j < n:
+            if css_text[j] == "{":
+                depth += 1
+            elif css_text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        inner = css_text[brace + 1: j] if j < n else ""
+        family = ""
+        src = ""
+        weight = "400"
+        style = "normal"
+        unicode_range = "U+0-FFFF"
+        for decl in inner.split(";"):
+            if ":" not in decl:
+                continue
+            prop, _, val = decl.partition(":")
+            prop = prop.strip().lower()
+            val = val.strip()
+            if prop == "font-family":
+                family = val.strip("'\"")
+            elif prop == "src":
+                src = val
+            elif prop == "font-weight":
+                weight = val
+            elif prop == "font-style":
+                style = val
+            elif prop == "unicode-range":
+                unicode_range = val
+        if family:
+            out.append(FontFace(
+                family=family, src=src, weight=weight,
+                style=style, unicode_range=unicode_range,
+            ))
+        i = (j + 1) if j < n else n
+    return out
+
+
 # --- Property resolution ---------------------------------------------------------
 
-def resolve_length(value: Value, parent_font_px: float) -> float | None:
+def resolve_length(value: Value, parent_font_px: float,
+                   ref_px: float | None = None) -> float | None:
+    """P26.3 / P33.P1 — resolve a CSS Value to a pixel length.
+
+    ``ref_px`` is the reference size for "%" terms (e.g. the containing
+    block's content width).  When omitted, "%" resolves against
+    ``parent_font_px`` (legacy behaviour).  P33.P1 — :class:`CalcExpr`
+    (mixed ``%`` + ``px``) and :class:`VarExpr` (custom property
+    reference) are resolved here.
+    """
     if isinstance(value, Length):
         if value.unit == "px":
             return value.value
         if value.unit == "em":
             return value.value * parent_font_px
         if value.unit == "%":
-            # P26.3 — percentage lengths resolve against the caller-supplied
-            # reference size (parent content height for height, font size
-            # for everything else in the legacy path).
-            return value.value * parent_font_px / 100.0
+            base = ref_px if ref_px is not None else parent_font_px
+            return value.value * base / 100.0
         return value.value
+    if isinstance(value, CalcExpr):
+        # P33.P1 — mixed-unit calc (e.g. calc(100% - 20px)).
+        # Each % term uses ref_px; px/em terms are absolute.
+        base = ref_px if ref_px is not None else parent_font_px
+        total = 0.0
+        for tv, tu in value.terms:
+            if tu == "%":
+                total += tv * base / 100.0
+            elif tu == "em":
+                total += tv * parent_font_px
+            else:
+                total += tv  # px or unitless
+        return total
+    if isinstance(value, VarExpr):
+        # P33.P1 — var(--name, fallback).  Resolution requires the node's
+        # custom-property map; resolve_length is a module-level function
+        # without node context, so we return None here.  The actual
+        # resolution happens in StyledNode.prop_* via _resolve_var().
+        return None
     if isinstance(value, Keyword):
         try:
             return float(value.value)
@@ -1099,20 +1355,97 @@ def expand_shorthands(decls: dict[str, Value]) -> dict[str, Value]:
 
 class StyledNode:
     def __init__(self, dom_node: Node, parent_font_px: float = DEFAULT_FONT_PX,
-                 parent_height_px: float | None = None):
+                 parent_height_px: float | None = None,
+                 parent_width_px: float | None = None,
+                 parent_custom_props: "dict | None" = None):
         self.dom = dom_node
         self.parent_font_px = parent_font_px
         # P26.3 — the containing block's resolved content height, used to
         # resolve percentage *heights* (a child's height: 50% is 50% of
         # the parent's content height, not of the font size).
         self.parent_height_px = parent_height_px
+        # P33.P1 — containing block's resolved content *width*, used to
+        # resolve percentage / calc-mixed %/px *widths*.
+        self.parent_width_px = parent_width_px
+        # P33.P1 — custom property (--*) inheritance chain.
+        # parent_custom_props is the parent's map (immutable view);
+        # custom_props is this node's own declarations.
+        self.parent_custom_props = parent_custom_props if parent_custom_props is not None else {}
+        self.custom_props: dict[str, Value] = {}
         self.props: dict[str, Value] = {}
         self.children: list["StyledNode"] = []
 
+    # P33.P1 — custom property access (inheritance-aware).
+    def get_custom_prop(self, name: str) -> Value | None:
+        """P33.P1 — resolve a custom property (--name) with inheritance."""
+        if name in self.custom_props:
+            return self.custom_props[name]
+        # Inherit from parent's merged map.
+        return self.parent_custom_props.get(name)
+
+    def _resolve_var(self, value: Value, seen: frozenset | None = None) -> Value | None:
+        """P33.P1 — resolve var() references in *value*.
+
+        Walks the node's custom property chain (own → inherited) to
+        substitute :class:`VarExpr` nodes.  Cycles are detected via
+        ``seen`` (frozenset of var names already in the expansion
+        stack).  Falls back to the expression's own fallback value,
+        or ``None`` when neither a custom property nor a fallback
+        exists.
+        """
+        if not isinstance(value, VarExpr):
+            return value
+        if seen is None:
+            seen = frozenset()
+        if value.name in seen:
+            # Cycle — use fallback if present, else give up.
+            return self._resolve_var(value.fallback, seen) if value.fallback is not None else None
+        new_seen = seen | {value.name}
+        raw = self.get_custom_prop(value.name)
+        if raw is not None:
+            # Unwrap ImportantDecl wrappers stored as the raw value.
+            if isinstance(raw, ImportantDecl):
+                raw = raw.value
+            # The stored value may itself be a var() — recurse.
+            return self._resolve_var(raw, new_seen)
+        if value.fallback is not None:
+            return self._resolve_var(value.fallback, new_seen)
+        return None
+
+    def resolve_value(self, value: Value, ref_px: float | None = None) -> Value | None:
+        """P33.P1 — fully resolve var()/calc() in *value* to a concrete
+        Value (Length/Keyword/Color/CalcExpr), then return it.
+        Callers that need a pixel length pass ``ref_px`` so that
+        :class:`CalcExpr` can be evaluated inline."""
+        v = self._resolve_var(value)
+        if v is None:
+            return None
+        if isinstance(v, CalcExpr):
+            # Evaluate the calc now that var() is resolved; keep mixed
+            # %/px as CalcExpr for the caller's ref_px-aware resolution.
+            return v
+        return v
+
     # Convenience accessors
+    def _resolve_with_var(self, v: Value, ref_px: float | None = None) -> float | None:
+        """P33.P1 — resolve a Value that may contain var() / calc() to a
+        pixel length, using ``ref_px`` for % terms when available."""
+        rv = self._resolve_var(v)
+        if rv is None:
+            return None
+        if ref_px is not None:
+            r = resolve_length(rv, self.parent_font_px, ref_px=ref_px)
+            if r is not None:
+                return r
+        return resolve_length(rv, self.parent_font_px)
+
     def prop_font_px(self) -> float:
         v = self.props.get("font-size")
-        return resolve_length(v, self.parent_font_px) if v else self.parent_font_px
+        if v is not None:
+            r = self._resolve_with_var(v)
+            if r is not None:
+                return r
+        return self.parent_font_px
 
     def font_family(self) -> str:
         """P18 — CSS font-family (raw value, e.g. 'serif'/'monospace'/'arial')."""
@@ -1121,10 +1454,16 @@ class StyledNode:
             return str(v).strip()
         return "monospace"
 
+    # P33.R5 — per-node font metrics cache: the line-height / char-advance
+    # lookups below run 5000+ times per 1000-node layout; memoize the
+    # resolved TTF face + line height on the node itself.
+    _fm_cache: dict = {}
+
     def line_height_px(self) -> float:
         v = self.props.get("line-height")
         if v is not None:
-            r = resolve_length(v, self.parent_font_px)
+            rv = self._resolve_var(v)
+            r = resolve_length(rv, self.parent_font_px) if rv is not None else None
             if r:
                 return r
         # P18 — when a real TTF font is registered, the natural line
@@ -1132,34 +1471,55 @@ class StyledNode:
         # (e.g. Arial 16px → ~18.4px), not from the legacy bitmap
         # scale (font_px).  This makes the half-leading model visible
         # even without an explicit line-height property.
+        # P33.R5 — per-node memo: avoid re-resolving the TTF face on
+        # every call (the font registry is process-stable).
+        key = (self.parent_font_px, self.font_family())
+        hit = self._fm_cache.get(key)
+        if hit is not None:
+            return hit
         try:
-            import font as _fmod
-            import text as _tmod
-            real_fm = _fmod.get_real_metrics(self.font_family())
+            real_fm = _css_font_mod.get_real_metrics(self.font_family())
             if real_fm is not None and real_fm.units_per_em > 0:
-                return _tmod.line_height_px(self.prop_font_px(), self.font_family())
+                lh = _css_text_mod.line_height_px(self.prop_font_px(), self.font_family())
+            else:
+                lh = self.prop_font_px()
         except Exception:
-            pass
-        return self.prop_font_px()
+            lh = self.prop_font_px()
+        self._fm_cache[key] = lh
+        return lh
 
     def height_px(self) -> float | None:
         v = self.props.get("height")
         if v is None:
             return None
+        # P33.P1 — resolve var() references first.
+        rv = self._resolve_var(v)
+        if rv is None:
+            return None
         # P26.3 — percentage heights resolve against the containing block's
         # content height when known (parent_height_px is not None);
         # otherwise fall back to the parent font size (legacy behaviour).
         ref = self.parent_height_px if self.parent_height_px is not None else self.parent_font_px
-        r = resolve_length(v, ref)
+        r = resolve_length(rv, self.parent_font_px, ref_px=ref)
         if r is not None:
             return r
-        return resolve_length(v, self.parent_font_px)
+        return resolve_length(rv, self.parent_font_px)
 
     def width_px(self) -> float | None:
         v = self.props.get("width")
         if v is None:
             return None
-        return resolve_length(v, self.parent_font_px)
+        # P33.P1 — resolve var() references first.
+        rv = self._resolve_var(v)
+        if rv is None:
+            return None
+        # P33.P1 — CalcExpr with % terms resolves against the containing
+        # block's content width (parent_width_px) when known.
+        ref = self.parent_width_px if self.parent_width_px is not None else self.parent_font_px
+        r = resolve_length(rv, self.parent_font_px, ref_px=ref)
+        if r is not None:
+            return r
+        return resolve_length(rv, self.parent_font_px)
 
     def is_display_none(self) -> bool:
         v = self.props.get("display")
@@ -1188,27 +1548,34 @@ class StyledNode:
 
     def color(self) -> Color:
         v = self.props.get("color")
-        if isinstance(v, Color):
-            return v
+        if v is not None:
+            rv = self._resolve_var(v)
+            if isinstance(rv, Color):
+                return rv
         return Color(0, 0, 0)
 
     def background(self) -> Color | None:
         v = self.props.get("background")
-        if isinstance(v, Color):
-            return v
+        if v is not None:
+            rv = self._resolve_var(v)
+            if isinstance(rv, Color):
+                return rv
         return None
 
     def get_number(self, prop: str, default: float) -> float:
         v = self.props.get(prop)
         if v is None:
             return default
-        r = resolve_length(v, self.parent_font_px)
+        rv = self._resolve_var(v)
+        r = resolve_length(rv, self.parent_font_px) if rv is not None else None
         return r if r is not None else default
 
     def get_color(self, prop: str, default: Color) -> Color:
         v = self.props.get(prop)
-        if isinstance(v, Color):
-            return v
+        if v is not None:
+            rv = self._resolve_var(v)
+            if isinstance(rv, Color):
+                return rv
         return default
 
     def get_keyword(self, prop: str, default: str) -> str:
@@ -1262,10 +1629,34 @@ def apply(
             if supports_matches(sr.condition):
                 rules.extend(sr.rules)
     root_sn = StyledNode(dom_root)
+    # P33.P1 — extract custom properties (--*) declared on :root / html.
+    _collect_custom_props(dom_root, root_sn)
     root_sn.children = [
-        _apply_subtree(c, rules, interaction_state) for c in dom_root.children
+        _apply_subtree(c, rules, interaction_state,
+                       parent_custom_props=root_sn.custom_props)
+        for c in dom_root.children
     ]
     return root_sn
+
+
+def _collect_custom_props(node: Node, sn: StyledNode) -> None:
+    """P33.P1 — pull --custom properties from inline style="" and
+    cascade them into ``sn.custom_props``.
+
+    Walks the node's own ``style=""`` attribute; custom properties set
+    in rulesheets are not yet parsed (toy limitation).
+    """
+    inline = node.attr("style")
+    if not inline:
+        return
+    for decl in inline.split(";"):
+        if ":" not in decl:
+            continue
+        prop, _, val = decl.partition(":")
+        prop = prop.strip().lower()
+        val = val.strip()
+        if prop.startswith("--") and val:
+            sn.custom_props[prop] = parse_value(val)
 
 
 def _unimportant(v: Value) -> Value:
@@ -1283,9 +1674,11 @@ def _cascade_key(r: Rule) -> tuple:
 
 
 def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None = None,
-                   parent_props: dict[str, Value] | None = None) -> StyledNode:
+                   parent_props: dict[str, Value] | None = None,
+                   parent_custom_props: dict[str, Value] | None = None) -> StyledNode:
     parent_font = DEFAULT_FONT_PX
-    sn = StyledNode(node, parent_font)
+    sn = StyledNode(node, parent_font,
+                    parent_custom_props=parent_custom_props)
     # P25 — Cascade: collect matching rules, sort by (source, important,
     # specificity, order).  Later rules with equal key win (CSS source
     # order rule).
@@ -1331,6 +1724,20 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     # Pass 3 — inline !important declarations (top of the important layer).
     for k, v in inline_important.items():
         sn.props[k] = v
+    # P33.P1 — custom property declarations (--*) from inline style.
+    # These must NOT go into ``sn.props`` (the layout engine's property
+    # read path doesn't know about them); they go into
+    # ``sn.custom_props`` for ``_resolve_var`` lookups.
+    inline_cp = node.attr("style")
+    if inline_cp:
+        for decl in inline_cp.split(";"):
+            if ":" not in decl:
+                continue
+            cp, _, cv = decl.partition(":")
+            cp = cp.strip().lower()
+            cv = cv.strip()
+            if cp.startswith("--") and cv:
+                sn.custom_props[cp] = parse_value(cv)
     # P25.3 — resolve inherit/initial/unset keywords.
     pp = parent_props or {}
     for k, v in list(sn.props.items()):
@@ -1339,6 +1746,9 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
             sn.props[k] = resolved
     # P25.4 — expand shorthands into longhands.
     sn.props = expand_shorthands(sn.props)
+    # P33.P1 — merged custom property map for children (own + inherited).
+    merged_cp = dict(sn.parent_custom_props)
+    merged_cp.update(sn.custom_props)
     # Compute the font this node gives to its children.
     child_font = sn.prop_font_px()
     # P25.5 — em/% computed-value chain: resolve the child's parent font.
@@ -1346,7 +1756,8 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     # which is what em/% reference in the child's context.
     inherited_color = sn.props.get("color", Color(0, 0, 0))
     for c in node.children:
-        sub = _apply_subtree(c, rules, interaction_state, sn.props)
+        sub = _apply_subtree(c, rules, interaction_state, sn.props,
+                             parent_custom_props=merged_cp)
         sub.parent_font_px = child_font
         # P25.3 — inherit font-size when not explicitly set.
         if "font-size" not in sub.props:
