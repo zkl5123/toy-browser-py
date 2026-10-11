@@ -162,19 +162,17 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
 
     # P7.1 — tag every command from this box with its z-index layer.
     z = bx.z_index
-
-    # P34.3 — the legacy _tag/_tag_scroll pair allocated a new closure
-    # object per _emit call (21k calls on the 10k-node benchmark) and
-    # passed each command through a Python function call before the
-    # dl.commands.append.  Inlining the _layer assignment directly at
-    # each append site removes both the closure allocation and the
-    # per-command function call; the net effect is the same (every
-    # command from this box carries the box's z-index layer) with no
-    # change to the command's fields.
-    def _tag(cmd: DisplayCommand) -> DisplayCommand:
-        cmd._layer = z
-        return cmd
-
+    # P34.4 — plain method local (dl_append = dl.commands.append) to
+    # skip the `dl.commands` attribute read at every append site; the
+    # legacy `dl.commands.append(...)` paid two attribute lookups per
+    # command on a 6k-command list.
+    dl_append = dl.commands.append
+    # P34.4 — _tag is a one-liner closure allocated per _emit call
+    # (21k calls on the 10k-node benchmark); the function call is the
+    # only work it does, so inlining cmd._layer = z at each append
+    # site is cheaper than the 6360 call/return pairs.  The
+    # _tag_scroll variant (scroll containers only) is a genuine
+    # behavior change and stays a function.
     # P14.1 — scroll container: shift children by scroll offset + clip.
     # P34.3 — hoist the scroll-container read (offsets, clip edges)
     # once into locals so the per-command path is a plain attribute
@@ -204,18 +202,17 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         outside the box are erased by the post-pass.
         """
         cmd._layer = z
-        if is_scroll_container:
-            cmd.x -= _sc_left
-            cmd.y -= _sc_top
-            cmd.scroll_x = _sc_x
-            cmd.scroll_y = _sc_y
-            cmd.scroll_w = _sc_w
-            cmd.scroll_h = _sc_h
-            cmd.scroll_enabled = True
-            cmd.scroll_clip_left = _sc_l
-            cmd.scroll_clip_top = _sc_t
-            cmd.scroll_clip_right = _sc_r
-            cmd.scroll_clip_bottom = _sc_b
+        cmd.x -= _sc_left
+        cmd.y -= _sc_top
+        cmd.scroll_x = _sc_x
+        cmd.scroll_y = _sc_y
+        cmd.scroll_w = _sc_w
+        cmd.scroll_h = _sc_h
+        cmd.scroll_enabled = True
+        cmd.scroll_clip_left = _sc_l
+        cmd.scroll_clip_top = _sc_t
+        cmd.scroll_clip_right = _sc_r
+        cmd.scroll_clip_bottom = _sc_b
         return cmd
 
     # P5.1 — apply transform:translate to the box's position.
@@ -258,16 +255,19 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     def _filter_fields():
         return _FILTER_FIELDS
 
-    # P33.R4 — if this box is a scroll container, tag all emitted
-    # commands (its own background + children) with the scroll clip
-    # so the rasterizer can clip content that overflows the box.
+    # P33.R4 — if this box is a scroll container, route every emitted
+    # command through _tag_scroll (shift + clip); otherwise the plain
+    # _layer assignment below (P34.4: no _tag function call).
+    _dc = DisplayCommand
+    _cmds_append = dl_append
     if is_scroll_container:
-        def _tag_all(cmd: DisplayCommand) -> DisplayCommand:
+        def _emit_one(cmd: DisplayCommand) -> None:
             _tag_scroll(cmd)
-            return cmd
-        emit_tag = _tag_all
+            _cmds_append(cmd)
     else:
-        emit_tag = _tag
+        def _emit_one(cmd: DisplayCommand) -> None:
+            cmd._layer = z
+            _cmds_append(cmd)
 
     # P34.3 — hoist the per-box paint flags into locals so the ~30
     # condition checks below are local reads instead of repeated
@@ -319,35 +319,31 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     # The shadow is drawn at (eff_x + shadow_offset_x, eff_y + shadow_offset_y)
     # with the box's own dimensions; the rasterizer dilates by shadow_radius.
     if shadow_enabled and shadow_color is not None:
-        dl.commands.append(
-            emit_tag(
-                DisplayCommand(
-                    "shadow",
-                    eff_x,
-                    eff_y,
-                    r.w,
-                    r.h,
-                    color=shadow_color,
-                    radius=border_radius,
-                    shadow_offset_x=shadow_ox,
-                    shadow_offset_y=shadow_oy,
-                    shadow_radius=shadow_r,
-                )
+        _emit_one(
+            _dc(
+                "shadow",
+                eff_x,
+                eff_y,
+                r.w,
+                r.h,
+                color=shadow_color,
+                radius=border_radius,
+                shadow_offset_x=shadow_ox,
+                shadow_offset_y=shadow_oy,
+                shadow_radius=shadow_r,
             )
         )
 
     # P3.1 — embedded image: emit a dedicated "img" command so the
     # rasterizer can paint the decoded pixels with nearest-neighbour scaling.
     if is_img and img_pixels is not None:
-        dl.commands.append(
-            emit_tag(
-                DisplayCommand(
-                    "img", eff_x, eff_y, r.w, r.h,
-                    img_pixels=img_pixels,
-                    img_src_w=img_pixel_w,
-                    img_src_h=img_pixel_h,
-                    radius=border_radius,
-                )
+        _emit_one(
+            _dc(
+                "img", eff_x, eff_y, r.w, r.h,
+                img_pixels=img_pixels,
+                img_src_w=img_pixel_w,
+                img_src_h=img_pixel_h,
+                radius=border_radius,
             )
         )
         # Border around the embedded image.
@@ -355,9 +351,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             bc = border_color
             if op < 1.0:
                 bc = Color(bc.r, bc.g, bc.b, int(bc.a * op))
-            dl.commands.append(
-                _tag(DisplayCommand("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
-            )
+            _emit_one(_dc("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
     else:
         # Background fill — use "rounded" when border_radius > 0.
         # P9.4 — linear-gradient: emit a dedicated "gradient" command.
@@ -372,58 +366,52 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             ts_y = text_shadow_oy if text_shadow_enabled else 0.0
             ts_r = text_shadow_r if text_shadow_enabled else 0.0
             ts_c = text_shadow_color if text_shadow_enabled else None
-            dl.commands.append(
-                emit_tag(
-                    DisplayCommand(
-                        kind, eff_x, eff_y, r.w, r.h,
-                        color=eff_bg,
-                        radius=border_radius,
-                        clip_top=clip_t, clip_right=clip_r,
-                        clip_bottom=clip_b, clip_left=clip_l,
-                        clip_enabled=clip_enabled,
-                        text_shadow_x=ts_x, text_shadow_y=ts_y,
-                        text_shadow_radius=ts_r,
-                        text_shadow_color=ts_c,
-                        text_shadow_enabled=text_shadow_enabled,
-                        **_filter_fields(),
-                    )
+            _emit_one(
+                _dc(
+                    kind, eff_x, eff_y, r.w, r.h,
+                    color=eff_bg,
+                    radius=border_radius,
+                    clip_top=clip_t, clip_right=clip_r,
+                    clip_bottom=clip_b, clip_left=clip_l,
+                    clip_enabled=clip_enabled,
+                    text_shadow_x=ts_x, text_shadow_y=ts_y,
+                    text_shadow_radius=ts_r,
+                    text_shadow_color=ts_c,
+                    text_shadow_enabled=text_shadow_enabled,
+                    **_filter_fields(),
                 )
             )
         elif gradient_enabled and gradient_c1 is not None and gradient_c2 is not None:
             # P9.4 — linear-gradient: emit a "gradient" command with clip-path.
-            dl.commands.append(
-                emit_tag(
-                    DisplayCommand(
-                        "gradient", eff_x, eff_y, r.w, r.h,
-                        color=gradient_c1,
-                        radius=border_radius,
-                        grad_c1=gradient_c1,
-                        grad_c2=gradient_c2,
-                        grad_angle=gradient_angle,
-                        clip_top=clip_inset_top,
-                        clip_right=clip_inset_right,
-                        clip_bottom=clip_inset_bottom,
-                        clip_left=clip_inset_left,
-                        clip_enabled=clip_enabled,
-                        text_shadow_x=text_shadow_ox,
-                        text_shadow_y=text_shadow_oy,
-                        text_shadow_radius=text_shadow_r,
-                        text_shadow_color=text_shadow_color,
-                        text_shadow_enabled=text_shadow_enabled,
-                        **_filter_fields(),
-                    )
+            _emit_one(
+                _dc(
+                    "gradient", eff_x, eff_y, r.w, r.h,
+                    color=gradient_c1,
+                    radius=border_radius,
+                    grad_c1=gradient_c1,
+                    grad_c2=gradient_c2,
+                    grad_angle=gradient_angle,
+                    clip_top=clip_inset_top,
+                    clip_right=clip_inset_right,
+                    clip_bottom=clip_inset_bottom,
+                    clip_left=clip_inset_left,
+                    clip_enabled=clip_enabled,
+                    text_shadow_x=text_shadow_ox,
+                    text_shadow_y=text_shadow_oy,
+                    text_shadow_radius=text_shadow_r,
+                    text_shadow_color=text_shadow_color,
+                    text_shadow_enabled=text_shadow_enabled,
+                    **_filter_fields(),
                 )
             )
         elif eff_bg is None and is_img:
             # Default grey placeholder fill for <img> (no embedded data).
-            dl.commands.append(
-                emit_tag(
-                    DisplayCommand(
-                        "rounded" if border_radius > 0 else "rect",
-                        eff_x, eff_y, r.w, r.h,
-                        color=Color(200, 200, 200),
-                        radius=border_radius,
-                    )
+            _emit_one(
+                _dc(
+                    "rounded" if border_radius > 0 else "rect",
+                    eff_x, eff_y, r.w, r.h,
+                    color=Color(200, 200, 200),
+                    radius=border_radius,
                 )
             )
         elif eff_bg is None and is_canvas:
@@ -431,13 +419,11 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             # transparent-canvas-on-white-page look in the toy bitmap
             # pipeline).  A CSS background-color on the canvas element
             # overrides this (eff_bg would not be None in that case).
-            dl.commands.append(
-                emit_tag(
-                    DisplayCommand(
-                        "rect",
-                        eff_x, eff_y, r.w, r.h,
-                        color=Color(255, 255, 255),
-                    )
+            _emit_one(
+                _dc(
+                    "rect",
+                    eff_x, eff_y, r.w, r.h,
+                    color=Color(255, 255, 255),
                 )
             )
         elif eff_bg is None and (is_svg or is_video):
@@ -446,22 +432,18 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             # element's rect (default 300×150 when no CSS size is set).
             ph_w = max(1.0, r.w)
             ph_h = max(1.0, r.h)
-            dl.commands.append(
-                emit_tag(
-                    DisplayCommand(
-                        "rect",
-                        eff_x, eff_y, ph_w, ph_h,
-                        color=Color(230, 230, 230),
-                    )
+            _emit_one(
+                _dc(
+                    "rect",
+                    eff_x, eff_y, ph_w, ph_h,
+                    color=Color(230, 230, 230),
                 )
             )
-            dl.commands.append(
-                _tag(
-                    DisplayCommand(
-                        "border", eff_x, eff_y, ph_w, ph_h,
-                        color=Color(160, 160, 160),
-                        radius=0,
-                    )
+            _emit_one(
+                _dc(
+                    "border", eff_x, eff_y, ph_w, ph_h,
+                    color=Color(160, 160, 160),
+                    radius=0,
                 )
             )
 
@@ -471,18 +453,14 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             bc = border_color
             if op < 1.0:
                 bc = Color(bc.r, bc.g, bc.b, int(bc.a * op))
-            dl.commands.append(
-                _tag(DisplayCommand("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
-            )
+            _emit_one(_dc("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
         elif is_img or is_iframe:
             # Default 1px grey border for img / iframe placeholders.
-            dl.commands.append(
-                _tag(
-                    DisplayCommand(
-                        "border", eff_x, eff_y, r.w, r.h,
-                        color=Color(128, 128, 128),
-                        radius=border_radius,
-                    )
+            _emit_one(
+                _dc(
+                    "border", eff_x, eff_y, r.w, r.h,
+                    color=Color(128, 128, 128),
+                    radius=border_radius,
                 )
             )
 
@@ -495,84 +473,72 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         cy = eff_y + r.h / 2.0
         if control_type == "checkbox" and control_checked:
             # Check mark: a filled 6×6 square in the center.
-            dl.commands.append(
-                _tag(
-                    DisplayCommand(
-                        "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
-                        color=Color(30, 30, 30),
-                        control_type=control_type,
-                    )
+            _emit_one(
+                _dc(
+                    "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
+                    color=Color(30, 30, 30),
+                    control_type=control_type,
                 )
             )
         elif control_type == "radio" and control_checked:
             # Radio dot: a filled 6×6 square (toy: no circles yet).
-            dl.commands.append(
-                _tag(
-                    DisplayCommand(
-                        "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
-                        color=Color(30, 30, 30),
-                        control_type=control_type,
-                    )
+            _emit_one(
+                _dc(
+                    "rect", cx - 3.0, cy - 3.0, 6.0, 6.0,
+                    color=Color(30, 30, 30),
+                    control_type=control_type,
                 )
             )
     elif control_type == "select" or tag == "select":
         # <select> combobox: draw a down-arrow glyph (toy: "v" text).
         opt_label = bx.control_options[bx.control_option_index] if bx.control_options else ""
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "text",
-                    eff_x + 4.0,
-                    eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
-                    r.w - 16.0,
-                    r.h,
-                    text=opt_label,
-                    text_color=bx.text_color or Color(0, 0, 0),
-                    font_px=font_px,
-                    control_type="select",
-                )
+        _emit_one(
+            _dc(
+                "text",
+                eff_x + 4.0,
+                eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
+                r.w - 16.0,
+                r.h,
+                text=opt_label,
+                text_color=bx.text_color or Color(0, 0, 0),
+                font_px=font_px,
+                control_type="select",
             )
         )
         # Down arrow: a small filled triangle approximated as a 6×3 rect.
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "rect",
-                    eff_x + r.w - 12.0,
-                    eff_y + r.h / 2.0 - 1.5,
-                    8.0, 3.0,
-                    color=Color(80, 80, 80),
-                    control_type="select",
-                )
+        _emit_one(
+            _dc(
+                "rect",
+                eff_x + r.w - 12.0,
+                eff_y + r.h / 2.0 - 1.5,
+                8.0, 3.0,
+                color=Color(80, 80, 80),
+                control_type="select",
             )
         )
     elif control_type == "file":
         # <input type="file">: show the file name (or "No file selected").
         file_label = bx.control_file_name or "No file selected"
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "text",
-                    eff_x + 4.0,
-                    eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
-                    r.w - 16.0,
-                    r.h,
-                    text=file_label,
-                    text_color=bx.text_color or Color(0, 0, 0),
-                    font_px=font_px,
-                    control_type="file",
-                )
+        _emit_one(
+            _dc(
+                "text",
+                eff_x + 4.0,
+                eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
+                r.w - 16.0,
+                r.h,
+                text=file_label,
+                text_color=bx.text_color or Color(0, 0, 0),
+                font_px=font_px,
+                control_type="file",
             )
         )
     # P28.3 — focus ring for any focused form control.
     if control_focus and _is_control:
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "border", eff_x - 1.0, eff_y - 1.0, r.w + 2.0, r.h + 2.0,
-                    color=Color(0, 100, 255),
-                    control_type=control_type,
-                )
+        _emit_one(
+            _dc(
+                "border", eff_x - 1.0, eff_y - 1.0, r.w + 2.0, r.h + 2.0,
+                color=Color(0, 100, 255),
+                control_type=control_type,
             )
         )
     # P10.3 — CSS outline: draw a ring OUTSIDE the border.
@@ -589,32 +555,24 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         ow_full = int(r.w) + 2 * off
         oh_full = int(r.h) + 2 * off
         # Hollow rect: four strips.
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "rect", ox0, oy0, ow_full, 1, color=oc
-                )
+        _emit_one(
+            _dc(
+                "rect", ox0, oy0, ow_full, 1, color=oc
             )
         )
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "rect", ox0, oy0 + oh_full - 1, ow_full, 1, color=oc
-                )
+        _emit_one(
+            _dc(
+                "rect", ox0, oy0 + oh_full - 1, ow_full, 1, color=oc
             )
         )
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "rect", ox0, oy0, 1, oh_full, color=oc
-                )
+        _emit_one(
+            _dc(
+                "rect", ox0, oy0, 1, oh_full, color=oc
             )
         )
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "rect", ox0 + ow_full - 1, oy0, 1, oh_full, color=oc
-                )
+        _emit_one(
+            _dc(
+                "rect", ox0 + ow_full - 1, oy0, 1, oh_full, color=oc
             )
         )
 
@@ -632,21 +590,19 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
 
         # P9.4 — text-shadow: emit a shadow command BEFORE the text.
         if text_shadow_enabled and text_shadow_color is not None:
-            dl.commands.append(
-                _tag(
-                    DisplayCommand(
-                        "text_shadow",
-                        tx + text_shadow_ox,
-                        ty + text_shadow_oy,
-                        r.w,
-                        r.h,
-                        color=text_shadow_color,
-                        text=text_content,
-                        font_px=font_px,
-                        align=text_align,
-                        max_width=max_w if max_w > 0 else r.w,
-                        text_shadow_radius=text_shadow_r,
-                    )
+            _emit_one(
+                _dc(
+                    "text_shadow",
+                    tx + text_shadow_ox,
+                    ty + text_shadow_oy,
+                    r.w,
+                    r.h,
+                    color=text_shadow_color,
+                    text=text_content,
+                    font_px=font_px,
+                    align=text_align,
+                    max_width=max_w if max_w > 0 else r.w,
+                    text_shadow_radius=text_shadow_r,
                 )
             )
 
@@ -673,25 +629,23 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 text_content = "\n".join(lines)
                 if text_overflow == "ellipsis" and not lines[-1].endswith("…"):
                     text_content += "…"
-        dl.commands.append(
-            _tag(
-                DisplayCommand(
-                    "text",
-                    tx,
-                    ty,
-                    r.w,
-                    r.h,
-                    color=tc,
-                    text=text_content,
-                    font_px=font_px,
-                    align=text_align,
-                    max_width=max_w if max_w > 0 else r.w,
-                    # P20.5 — letter-spacing + text-rendering.
-                    letter_spacing=bx.letter_spacing,
-                    text_rendering=bx.text_rendering,
-                    # P20.4 — font-weight (>= 600 → bold / synthetic bold).
-                    font_weight=bx.font_weight,
-                )
+        _emit_one(
+            _dc(
+                "text",
+                tx,
+                ty,
+                r.w,
+                r.h,
+                color=tc,
+                text=text_content,
+                font_px=font_px,
+                align=text_align,
+                max_width=max_w if max_w > 0 else r.w,
+                # P20.5 — letter-spacing + text-rendering.
+                letter_spacing=bx.letter_spacing,
+                text_rendering=bx.text_rendering,
+                # P20.4 — font-weight (>= 600 → bold / synthetic bold).
+                font_weight=bx.font_weight,
             )
         )
     for c in bx.children:

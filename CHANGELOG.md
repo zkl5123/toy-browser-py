@@ -7,6 +7,62 @@ roadmap milestones).
 
 ---
 
+## P34.4 — text.measure document-width cache + half-leading cache + _emit micro-opts
+
+*Pipeline totals on the 10k-node stress doc: ~29.5s (P34.3 baseline) →
+~24.5s after this round.  The `text.measure` document-width cache and
+`_emit` closure elimination dominate the win; the half-leading cache
+contributes a smaller but measurable improvement on layout.*
+
+### Added
+
+- **`text.measure` document-width cache** — short strings (< 128
+  chars, the 95 % case of a typical document) go through a
+  document-scoped cache keyed on `(text, family, font_px)`.  The
+  10k-node layout measures the *identical* short CJK/Latin strings
+  thousands of times across 21k text boxes; the cache turns the
+  common case into a single dict hit.  Long strings stay on the
+  O(n) advance scan.
+- **`layout.layout_block` half-leading cache** — the legacy code
+  re-resolved the TTF metrics + ascent / descent / half-leading on
+  every text box (~3180 times in a 3k-node layout).  Now the
+  computed `(half_lead, ascent_px, descent_px)` triple is cached per
+  `(family, font_px, line_h)`; a document uses only a handful of
+  distinct text sizes.
+- **`text.clear_advance_cache()` + `text._doc_width_cache`** —
+  explicit reset of the advance-width tables + document-width cache,
+  called from `layout.clear_caches()` between independent document
+  renders so stale widths do not leak into the next page.
+- **`paint_engine._emit` micro-opts** — replaced the per-call
+  `_tag` / `_tag_scroll` / `_tag_all` closure triple with a single
+  `_emit_one` dispatch + inlined `cmd._layer = z` at each append
+  site (the legacy code allocated 2 closures per _emit call on a
+  21k-box tree = 42k closure objects + 21k function calls for the
+  plain case).  Also hoisted `dl.commands.append` to `dl_append`
+  (plain method local) and `DisplayCommand` to `_dc` so the
+  constructor name is a local read instead of a module-global
+  lookup at every command construction.
+- **`test_p34_r4.py`** — 15 P34.4 regression tests (measure cache
+  correctness, edge cases, `clear_advance_cache` reset semantics,
+  `layout.clear_caches` wiring, half-leading cache consistency,
+  `_emit` closure refactor regression guards, perf thresholds).
+
+### Changed
+
+- `layout.clear_caches()` now also resets `text._adv_width_tables`
+  and `text._metrics_memo` in addition to its own `_child_index_cache`.
+- `paint_engine._emit` no longer allocates the `_tag` / `_tag_all`
+  closures on the non-scroll path (the common case); only the
+  scroll-container path retains `_tag_scroll` as a function (a
+  genuine behavior change that cannot be inlined away).
+
+### Tests
+
+- 807 (main) + 27 (P34) + 9 (P34r2) + 25 (P34r3) + **15 (P34r4)**
+  + 4 (CSS-memo) = **887** total, all green.
+
+---
+
 ## P34.3 — viewport culling + text-node layout fast path + short-text skip-wrap + emit micro-opts
 
 *Pipeline totals on the 10k-node stress doc: 122s (pre-P34.1) →
