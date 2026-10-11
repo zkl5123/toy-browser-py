@@ -646,6 +646,51 @@ _supports_blocks_memo: dict = {}
 #: P34.1 — memo: css_text → @font-face FontFace list (see parse_font_faces).
 _font_faces_memo: dict = {}
 
+# P34.5 — candidate-rule cache: node identity → list of matching Rule
+# objects.  Keyed on (tag, id-attr, class-attr, hover-id, focus-id);
+# the vast majority of nodes in a page share a small number of
+# distinct identities (e.g. "div.c0" / "p" / "li"), so the
+# per-selector match walk runs once per identity instead of once per
+# node.  Bounded at 4096 distinct identities; cleared together with
+# the rulesheet memo (clear_caches) so a new CSS document starts clean.
+_candidate_rules_cache: dict = {}
+_CANDIDATE_RULES_CACHE_MAX = 4096
+
+
+# P34.5 — module flag set by apply(): True when the current ruleset
+# contains at least one "#id" selector, in which case the
+# candidate-rule cache identity key includes the element id so id-only
+# rules still resolve per-node; False for the common tag/class-driven
+# ruleset, where including the id would 100 %-miss a cache on a
+# document whose elements all carry unique ids.
+_identity_includes_id = False
+
+# P34.5 — module flag set by apply(): True when the current ruleset
+# contains at least one *compound* selector (a multi-part selector with
+# a descendant or child combinator, e.g. "div p" or "div > p").  Such
+# selectors match based on the node's *ancestor chain*, not on the
+# node's own identity alone, so a node-identity cache is insufficient
+# — two <p> nodes with the same (tag, class) identity can sit under
+# different ancestors and therefore match different rule sets.  When
+# this flag is True, the candidate-rule cache is bypassed and the
+# legacy per-node match walk runs on every node (correctness first);
+# when False (all selectors are single-part: tag / .class / #id), the
+# cache is a pure function of the node's own identity and the legacy
+# walk is replaced by a single dict hit.  apply() sets this flag by
+# scanning the ruleset.
+_identity_ancestor_sensitive = False
+
+
+def clear_caches() -> None:
+    """P34.5 — reset all module-level CSS caches.
+
+    Call between independent document renders (e.g. a navigation in
+    the GUI) so the candidate-rule cache does not survive across pages
+    with different selector sets.  The legacy behaviour (no cache) is
+    the safe default: stale matches are never produced.
+    """
+    _candidate_rules_cache.clear()
+
 
 def parse_keyframes(css_text: str) -> dict[str, Animation]:
     """P34.1 — memoized @keyframes parse (callers read the map only)."""
@@ -1438,6 +1483,12 @@ SHORTHAND_EXPANSION: dict[str, list[str]] = {
     "border-width": ["border-top-width", "border-right-width",
                      "border-bottom-width", "border-left-width"],
 }
+# P34.5 — frozenset of the shorthand keys so expand_shorthands() can
+# exit in O(1) when none of them is present (the 10k-node benchmark
+# has 21k StyledNodes and only a small fraction declare margin/padding
+# shorthands; the legacy code paid 3 dict `in` checks per node
+# regardless).  Built once at module load.
+_SHORTHAND_KEYS = frozenset(SHORTHAND_EXPANSION)
 
 
 def expand_shorthands(decls: dict[str, Value]) -> dict[str, Value]:
@@ -1447,7 +1498,16 @@ def expand_shorthands(decls: dict[str, Value]) -> dict[str, Value]:
     The original shorthand key is kept in the result (layout still reads
     it via ``sn.props.get("margin")``); the longhands are added alongside
     so that a child's ``inherit`` for ``margin-top`` finds a value.
+
+    P34.5 — short-circuit when no shorthand key is present: a node with
+    only color / font-size / background declarations (the 90 %+ case in
+    a typical document) returns the input dict unchanged instead of
+    copying it.  When a shorthand is present, the legacy copy + per-key
+    expansion runs (a new dict is still returned, so the caller's input
+    is never mutated).
     """
+    if not (_SHORTHAND_KEYS & decls.keys()):
+        return decls
     out = dict(decls)
     for sh, lh in SHORTHAND_EXPANSION.items():
         if sh in decls:
@@ -1739,6 +1799,36 @@ def apply(
     # tag so _apply_subtree skips the O(rules) walk when a node's tag
     # is not referenced.  See _build_tag_rule_index.
     tag_rules = _build_tag_rule_index(rules)
+    # P34.5 — the candidate-rule cache is scoped to one apply() call:
+    # selector match results depend on the ruleset, so a different
+    # document / stylesheet must never inherit a stale match list.
+    # clear_caches() is called *before* the _apply_subtree walk so
+    # the cache fills for this apply and is dropped for the next.
+    # P34.5 — ``id`` is part of the identity key *only when the ruleset
+    # contains an ``#id`` selector*: an id-keyed cache sees 100 %
+    # miss rate on a document whose elements all carry unique ids
+    # (~9600 distinct ids in the 10k-node benchmark), so tag/class
+    # identity alone is the right granularity for the common
+    # tag/class-driven ruleset; when "#id" rules are present, the
+    # first node of each (tag, class, id) tuple gets its own cache
+    # entry so id-only rules still cascade to the right node.
+    # Interaction state (hover/focus id) is always part of the key —
+    # :hover/:focus rules match a specific node, not its siblings.
+    global _identity_includes_id, _identity_ancestor_sensitive
+    _identity_includes_id = any(
+        part.startswith("#") for r in rules for s in r.selectors for part in s.parts
+    )
+    # P34.5 — a compound selector (multi-part: "div p", "div > p")
+    # matches on the ancestor chain, not on the node's own identity.
+    # Detect it once here; when present the candidate-rule cache is
+    # bypassed in _apply_subtree (the legacy per-node walk is correct
+    # for all rules; the cache would silently produce wrong matches
+    # for the compound ones).  Simple single-part selectors (tag /
+    # .class / #id) remain cached.
+    _identity_ancestor_sensitive = any(
+        len(s.parts) > 1 for r in rules for s in r.selectors
+    )
+    clear_caches()
     root_sn = StyledNode(dom_root)
     # P33.P1 — extract custom properties (--*) declared on :root / html.
     _collect_custom_props(dom_root, root_sn)
@@ -1828,18 +1918,68 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     # P34.1 — O(1) candidate lookup via the per-tag rule index (built
     # once by ``_build_tag_rule_index``); the legacy O(len(rules)) scan
     # is used when no index is supplied.
+    # P34.5 — cache the per-node candidate-rule *identity* instead of
+    # re-running ``s.matches()`` over every candidate selector for the
+    # 21k+ nodes of a 10k-node document: most nodes in a page share
+    # exactly the same (tag, id, class, pseudo-interaction) identity,
+    # so the match result for one node applies verbatim to all others
+    # with the same identity.  The cache is keyed on the identity
+    # tuple and bounded at 4096 entries; the legacy per-node walk runs
+    # only when the cache is full *or* when the node has no candidates
+    # to begin with.
     if tag_rules is not None:
         tag = (node.tag or "").lower() if node.is_element() else ""
         cand_idxs = list(tag_rules.get(tag, ()))
         wildcard_idxs = tag_rules.get("*")
-        if wildcard_idxs:
-            cand_idxs.extend(wildcard_idxs)
-        if not cand_idxs:
-            matching: list[Rule] = []
+        # P34.5 — the candidate-rule cache is correct only when every
+        # matching rule's result is a pure function of the node's own
+        # (tag, class, [id]) identity.  A compound selector
+        # (descendant / child combinator, e.g. "div p" / "div > p")
+        # matches on the *ancestor chain*, so two nodes with the same
+        # identity can match different rule sets; in that case the
+        # legacy per-node walk must run for every node (correctness
+        # first).  Interaction state (hover/focus id) is always part
+        # of the key — :hover/:focus rules match a specific node, not
+        # its siblings.
+        if not _identity_ancestor_sensitive:
+            class_attr = node.attr("class") or ""
+            hover_id = (interaction_state or {}).get("hover", "")
+            focus_id = (interaction_state or {}).get("focus", "")
+            # P34.5 — include the element id in the key only when the
+            # ruleset has "#id" selectors; otherwise the id is
+            # irrelevant to matching and would 100 %-miss a cache on a
+            # document with unique ids.
+            if _identity_includes_id:
+                id_attr = node.attr("id")
+                ident_key = (tag, class_attr, id_attr, hover_id, focus_id)
+            else:
+                ident_key = (tag, class_attr, hover_id, focus_id)
+            cached = _candidate_rules_cache.get(ident_key)
+            if cached is not None:
+                matching = list(cached)  # a fresh list; matches are shared
+            else:
+                if wildcard_idxs:
+                    cand_idxs.extend(wildcard_idxs)
+                if not cand_idxs:
+                    matching: list[Rule] = []
+                else:
+                    cand_idxs = sorted(set(cand_idxs))
+                    matching = [rules[i] for i in cand_idxs
+                                if any(s.matches(node, interaction_state) for s in rules[i].selectors)]
+                if len(_candidate_rules_cache) < _CANDIDATE_RULES_CACHE_MAX:
+                    _candidate_rules_cache[ident_key] = matching
         else:
-            cand_idxs = sorted(set(cand_idxs))
-            matching = [rules[i] for i in cand_idxs
-                        if any(s.matches(node, interaction_state) for s in rules[i].selectors)]
+            # P34.5 — compound selectors present: the match result
+            # depends on the ancestor chain, so the node-identity
+            # cache is bypassed and the legacy per-node walk runs.
+            if wildcard_idxs:
+                cand_idxs.extend(wildcard_idxs)
+            if not cand_idxs:
+                matching: list[Rule] = []
+            else:
+                cand_idxs = sorted(set(cand_idxs))
+                matching = [rules[i] for i in cand_idxs
+                            if any(s.matches(node, interaction_state) for s in rules[i].selectors)]
     else:
         # P25 — Cascade: collect matching rules, sort by (source, important,
         # specificity, order).  Later rules with equal key win (CSS source
@@ -1866,6 +2006,10 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
             sn.props[k] = _unimportant(v)
     # Pass 1.5 — inline *normal* declarations (override author normal,
     # but are still below author !important).
+    # P34.5 — the legacy code called node.attr("style") *twice* per
+    # node (once here, once for the custom-property pass below); a
+    # 10k-node document paid 43k+ attr lookups for the same string.
+    # Read it once and reuse for both passes.
     inline = node.attr("style")
     inline_normal: dict[str, Value] = {}
     inline_important: dict[str, Value] = {}
@@ -1890,7 +2034,10 @@ def _apply_subtree(node: Node, rules: list[Rule], interaction_state: dict | None
     # These must NOT go into ``sn.props`` (the layout engine's property
     # read path doesn't know about them); they go into
     # ``sn.custom_props`` for ``_resolve_var`` lookups.
-    inline_cp = node.attr("style")
+    # P34.5 — reuse the ``inline`` string read once above (the legacy
+    # code called node.attr("style") a second time here for the same
+    # value).
+    inline_cp = inline
     if inline_cp:
         for decl in inline_cp.split(";"):
             if ":" not in decl:

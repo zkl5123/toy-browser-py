@@ -12,6 +12,7 @@ from typing import Optional
 from css import (DEFAULT_FONT_PX, EdgeList, Keyword, Length, StyledNode,
                  parse_color, resolve_length as _resolve_length,
                  CalcExpr, VarExpr, ImportantDecl)
+import css as css_mod
 from dom import Node
 from paint import Color
 import text as text_mod
@@ -123,6 +124,12 @@ def clear_caches() -> None:
     _half_lead_cache.clear()
     text_mod.clear_advance_cache()
     text_mod.clear_metrics_memo()
+    # P34.5 — the CSS candidate-rule cache is scoped to one apply()
+    # call (see css.clear_caches); a layout.clear_caches() between two
+    # independent document renders drops it too, so a page whose
+    # selector set differs from the previous one never inherits a
+    # stale match list.
+    css_mod.clear_caches()
 
 
 class BoxType:
