@@ -345,7 +345,21 @@ def measure(text: str, font_px: float, font_family: str = "monospace") -> float:
     """P15.4 — Width in pixels of `text` at `font_px` for the given family.
 
     P17 — uses per-character TTF advances when available.
+    P34.4 — short strings (< 128 chars, the 95 %+ case of a typical
+    document) go through a document-scoped width cache: the same string
+    at the same size/family has a constant width, and a 10k-node layout
+    measures the *identical* short string thousands of times.  Long
+    strings (full paragraphs) stay on the O(n) advance scan.
     """
+    if len(text) < 128:
+        key = (text, font_family, int(round(font_px * 2)))
+        w = _doc_width_cache.get(key)
+        if w is not None:
+            return w
+        w = advance_text(text, font_px, font_family)
+        if len(_doc_width_cache) < _doc_width_cache_max:
+            _doc_width_cache[key] = w
+        return w
     return advance_text(text, font_px, font_family)
 
 
@@ -358,6 +372,18 @@ def measure(text: str, font_px: float, font_family: str = "monospace") -> float:
 # memory does not grow unboundedly across pages).
 _adv_width_tables: dict = {}
 _adv_tables_max = 64
+
+# P34.4 — document-width cache: the full-pipeline benchmark measures
+# the *same* short CJK/Latin strings (content 47321 / list item i-0)
+# thousands of times across 21k text boxes.  advance_text/measure
+# re-scans the string on every call even when the exact (text, font_px,
+# family) triple was measured moments ago.  Cache the per-document
+# width; the same string at the same size/family in a document has a
+# constant width.  Bounded at 4096 entries; cleared together with the
+# advance tables (clear_advance_cache) so a new document render starts
+# clean.
+_doc_width_cache: dict = {}
+_doc_width_cache_max = 4096
 
 
 def _adv_width_for(ch: str, font_px: float, font_family: str) -> float:
@@ -378,6 +404,21 @@ def _adv_width_for(ch: str, font_px: float, font_family: str) -> float:
         if len(table) < 8192:
             table[ch] = adv
     return adv
+
+
+def clear_advance_cache() -> None:
+    """P34.4 — reset the advance-width + document-width caches.
+
+    Called between independent document renders (layout.clear_caches)
+    so a stale cached width from a previous page does not leak into
+    the next one.  The per-(family, font_px) advance table is keyed
+    by font identity, so it would survive a re-render of the same
+    family; the document-width cache is content-scoped and MUST be
+    dropped, otherwise a string that changed between renders would
+    keep its old width.
+    """
+    _adv_width_tables.clear()
+    _doc_width_cache.clear()
 
 
 # ---------------------------------------------------------------------------

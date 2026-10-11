@@ -36,6 +36,17 @@ _DEFAULT_TEXT_COLOR = _Color(0, 0, 0)
 _child_index_cache: dict = {}  # id(parent) → (weakref(parent), {id(child) → idx})
 _CHILD_INDEX_CACHE_MAX = 4096
 
+# P34.4 — half-leading line box cache: a document uses a handful of
+# distinct (family, font_px) pairs (body text 14px, h1 16px, caption
+# 12px …).  The legacy code re-resolved the TTF metrics + ascent /
+# descent / half-leading on every text box (~3180 times in a 3k-node
+# layout).  Cache the computed (half_lead, ascent_px, descent_px) per
+# (family, font_px, line_h); the same string triple in a document
+# always produces the same line box.  Bounded at 64 entries (a
+# document realistically uses far fewer).  Reset in clear_caches.
+_half_lead_cache: dict = {}
+_HALF_LEAD_CACHE_MAX = 64
+
 
 def _child_index_for(node, parent_dom) -> int:
     """P34.1 — O(1) child index with an address-reuse guard.
@@ -102,8 +113,16 @@ def clear_caches() -> None:
     Call between independent document renders so stale child-index
     mappings (keyed by ``id()``) don't produce wrong results when
     the same ``id()`` is reused for a different node.
+
+    P34.4 — also resets the text-stage caches (advance-width tables
+    + document-width cache + metrics memo) so a new document render
+    starts with clean measurement state; a string that changed
+    between renders must not keep its cached width.
     """
     _child_index_cache.clear()
+    _half_lead_cache.clear()
+    text_mod.clear_advance_cache()
+    text_mod.clear_metrics_memo()
 
 
 class BoxType:
@@ -1923,27 +1942,34 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                 text_str += "…"
         line_h = bx.line_height_px
         # P18 — half-leading line box model (simplified CSS2.1 §10.8).
-        # When a real TTF font is registered, line_height_px may exceed
-        # the em box (ascent + descent).  The extra space is split as
-        # "half-leading" above and below:
-        #   half = max(0, (line_height_px - em_box) / 2)
-        #   baseline_y = rect.y + half + ascent_px
-        # This keeps text vertically centred in the line box when line
-        # height > font size.  Legacy path (no TTF): half ≈ 0.
-        half_lead = 0.0
-        ascent_px = 0.0
-        descent_px = 0.0
-        try:
-            real_fm = font.get_real_metrics(bx.font_family)
-            if real_fm is not None and real_fm.units_per_em > 0:
-                scale = bx.font_px / real_fm.units_per_em
-                ascent_px = real_fm.ascent * scale
-                descent_px = -real_fm.descent * scale
-                em_box = ascent_px + descent_px
-                if line_h > em_box:
-                    half_lead = (line_h - em_box) / 2.0
-        except Exception:
-            pass
+        # P34.4 — cache the computed (half_lead, ascent, descent) per
+        # (family, font_px, line_h): a document uses a handful of
+        # distinct text sizes, and the legacy code re-resolved the TTF
+        # metrics + the three float ops on every one of the ~3180
+        # text boxes in a 3k-node layout.  The same triple in a
+        # document always produces the same line box.
+        hl_key = (bx.font_family, bx.font_px, line_h)
+        hl = _half_lead_cache.get(hl_key)
+        if hl is None:
+            half_lead = 0.0
+            ascent_px = 0.0
+            descent_px = 0.0
+            try:
+                real_fm = font.get_real_metrics(bx.font_family)
+                if real_fm is not None and real_fm.units_per_em > 0:
+                    scale = bx.font_px / real_fm.units_per_em
+                    ascent_px = real_fm.ascent * scale
+                    descent_px = -real_fm.descent * scale
+                    em_box = ascent_px + descent_px
+                    if line_h > em_box:
+                        half_lead = (line_h - em_box) / 2.0
+            except Exception:
+                pass
+            if len(_half_lead_cache) < _HALF_LEAD_CACHE_MAX:
+                hl = (half_lead, ascent_px, descent_px)
+                _half_lead_cache[hl_key] = hl
+        else:
+            half_lead, ascent_px, descent_px = hl
         bx.rect = Rect(content_x0, content_y0 + half_lead, available,
                        line_h * max(1, len(wrapped)))
         # P18 — record baseline y (top of em box + ascent) for
