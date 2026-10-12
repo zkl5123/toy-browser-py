@@ -1,0 +1,18 @@
+{
+ "render_basic": {
+  "diff_rate": 23.1,
+  "edge_nonwhite_pct": 19.69
+ },
+ "render_cjk": {
+  "diff_rate": 14.14,
+  "edge_nonwhite_pct": 9.75
+ },
+ "render_emoji_symbols": {
+  "diff_rate": 2.73,
+  "edge_nonwhite_pct": 1.66
+ },
+ "render_forms": {
+  "diff_rate": 21.29,
+  "edge_nonwhite_pct": 18.54
+ }
+}

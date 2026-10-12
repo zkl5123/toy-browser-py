@@ -855,9 +855,10 @@ def _default_css() -> str:
     input { margin: 4px 0; padding: 2px 4px; border-width: 1px; border-color: #888888; }
     textarea { margin: 4px 0; padding: 2px 4px; border-width: 1px; border-color: #888888; }
     select { margin: 4px 0; padding: 2px; border-width: 1px; border-color: #888888; }
-    table { border-width: 1px; border-color: #aaaaaa; margin: 4px 0; }
-    td { padding: 2px 4px; border-width: 1px; border-color: #cccccc; }
-    th { padding: 2px 4px; border-width: 1px; border-color: #cccccc; background: #f0f0f0; }
+    table { display: table; border-width: 1px; border-color: #aaaaaa; margin: 4px 0; }
+    tr { display: table-row; }
+    td { display: table-cell; padding: 2px 4px; border-width: 1px; border-color: #cccccc; }
+    th { display: table-cell; padding: 2px 4px; border-width: 1px; border-color: #cccccc; background: #f0f0f0; }
     a { color: #0000ee; }
     em { font-size: 16px; }
     """

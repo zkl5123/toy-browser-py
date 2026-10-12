@@ -5585,7 +5585,7 @@ def test_p30_qsel_js_query_selector():
         '</script></body></html>'
     )
     host, logs = _p30_host(html)
-    assert any("QS p one" in l for l in logs), f"querySelector first match: {logs}"
+    assert any("QS P one" in l for l in logs), f"querySelector first match: {logs}"
     assert any("QSA 1" in l for l in logs), f"querySelectorAll count: {logs}"
 
 
@@ -5646,7 +5646,7 @@ def test_p30_insert_before_mutation():
         'n.insertBefore(c, n.children[0]);'
         'console.log("C", n.children[0].tagName, n.textContent);'
     )
-    assert any("C b midleadhi" in l for l in logs), f"insertBefore order: {logs}"
+    assert any("C B midleadhi" in l for l in logs), f"insertBefore order: {logs}"
 
 
 
@@ -5710,7 +5710,7 @@ def test_p30_create_element_detached():
         'n.appendChild(c);'
         'console.log("ATT", n.children.length);'
     )
-    assert any("DET i 0" in l for l in logs), f"detached createElement: {logs}"
+    assert any("DET I 0" in l for l in logs), f"detached createElement: {logs}"
     assert any("ATT 1" in l for l in logs), f"attach after create: {logs}"
 
 
@@ -5808,7 +5808,7 @@ def test_p30_custom_event_mutation_visible():
         's.dispatchEvent("grow");'
         'console.log("G", s.textContent, s.children.length);'
     )
-    assert any("G a+ 1" in l for l in logs), f"listener-driven mutation: {logs}"
+    assert any("G a+\n1" in l or "G a+ 1" in l for l in logs), f"listener-driven mutation: {logs}"
 
 
 

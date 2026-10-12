@@ -1,0 +1,35 @@
+{
+ "redirect_follows": {
+  "ok": true,
+  "final_url": "http://127.0.0.1:8977/two.html",
+  "has_body": true,
+  "ms": 33
+ },
+ "redirect_loop_detected": {
+  "ok": true,
+  "err": "RedirectLoop"
+ },
+ "gzip_decode": {
+  "ok": true
+ },
+ "http_404_raises": {
+  "ok": true,
+  "status": 404
+ },
+ "subresource_collection": {
+  "ok": true,
+  "subs": [
+   "/style.css"
+  ]
+ },
+ "cache_roundtrip": {
+  "ok": true
+ },
+ "cors_allow_origin": {
+  "ok": true
+ },
+ "error_categorization": {
+  "ok": true,
+  "cat": "dns"
+ }
+}

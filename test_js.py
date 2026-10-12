@@ -154,15 +154,20 @@ def test_js_object_literal():
 
 TESTS.append(("test_js_object_literal", test_js_object_literal))
 def test_promise_resolve_then():
-    """Promise resolves and .then logs the resolved value."""
+    """Promise resolves and .then passes the value to the handler.
+
+    P0 (agent report) — ``.then`` no longer auto-logs the resolved
+    value (the legacy code logged it when the handler returned a
+    plain value).  The handler itself logs it, matching real-browser
+    Promise semantics."""
     root = dom.parse("<html><body></body></html>")
     logs = []
     host = js.Host(root, logs.append)
     host.execute(
         "let p = Promise(function(resolve, reject) { resolve(42); });"
-        "p.then(function(v) { console.log(v); });"
+        "p.then(function(v) { console.log('v=' + v); });"
     )
-    assert any("42" in l for l in logs), f"promise.then must log 42, logs={logs}"
+    assert any("v=42" in l for l in logs), f"promise.then must log v=42, logs={logs}"
 
 
 
@@ -303,7 +308,7 @@ def test_js_date_getmonth():
         "let ok = (m >= 0) && (m <= 11);"
         "console.log('month:' + ok);"
     )
-    assert any("month:True" in l for l in logs), f"getMonth must be 0–11, got {logs}"
+    assert any("month:true" in l for l in logs), f"getMonth must be 0–11, got {logs}"
 
 
 
@@ -1020,12 +1025,18 @@ def test_js_try_catch_finally():
 
 TESTS.append(("test_js_try_catch_finally", test_js_try_catch_finally))
 def test_js_uncaught_throw():
-    """P11.2 — uncaught throw is logged, not a crash."""
+    """P0 (agent report) — uncaught throw surfaces as JSUncaughtError;
+    the legacy log-and-swell behavior is replaced by a re-raise so
+    host-level callers (GUI console, test runners) can mark the
+    script as aborted without a polluted log stream."""
     logs = []
     host = js.Host(dom.parse('<div id="x"></div>'), logs.append)
-    host.execute("throw 'uncaught';")
-    assert any("uncaught throw" in l for l in logs), \
-        f"uncaught throw must be logged, got {logs}"
+    try:
+        host.execute("throw 'uncaught';")
+        raise AssertionError("uncaught throw must raise JSUncaughtError")
+    except js.JSUncaughtError as e:
+        assert str(e) == "uncaught", f"unexpected error text: {e!r}"
+    assert logs == [], f"uncaught throw must NOT pollute logs, got {logs}"
 
 
 
@@ -1117,7 +1128,7 @@ def test_js_new_builtin_still_works():
     host.execute(
         "let r = new RegExp('a'); let hit = r.test('a'); console.log('re:' + hit);"
     )
-    assert any("re:True" in l for l in logs), \
+    assert any("re:true" in l for l in logs), \
         f"new RegExp('a').test('a') must be truthy, got {logs}"
     # Date via host ctor.
     host.execute("let d = new Date(); console.log('date ok');")
@@ -1442,7 +1453,7 @@ def test_js_arrow_paren_expr_still_works():
     logs = []
     host = js.Host(dom.parse('<div></div>'), logs.append)
     host.execute("let m = 5; let ok = (m >= 0) && (m <= 11); console.log('month:' + ok);")
-    assert any("month:True" in l for l in logs), \
+    assert any("month:true" in l for l in logs), \
         f"paren expressions must still work, got {logs}"
 
 
@@ -1576,7 +1587,7 @@ def test_js_number_isnan():
     host.execute(
         "console.log(Number.isNaN(NaN) + ':' + Number.isNaN(1));"
     )
-    assert any(l == "True:False" for l in logs), \
+    assert any(l == "true:false" for l in logs), \
         f"Number.isNaN must work, got {logs}"
 
 
@@ -1589,7 +1600,7 @@ def test_js_number_is_integer():
     host.execute(
         "console.log(Number.isInteger(5.0) + ':' + Number.isInteger(Infinity));"
     )
-    assert any(l == "True:False" for l in logs), \
+    assert any(l == "true:false" for l in logs), \
         f"Number.isInteger must work, got {logs}"
 
 
@@ -1789,24 +1800,32 @@ def test_js_array_spread_literal_mix():
 
 TESTS.append(("test_js_array_spread_literal_mix", test_js_array_spread_literal_mix))
 def test_js_call_spread_zero_args():
-    """P16.1 — spreading an empty array passes no arguments."""
+    """P16.1 — spreading an empty array passes no arguments, so the
+    declared param resolves to ``undefined`` (JS semantics).  ``undefined
+    === null`` is false but ``undefined == null`` is true (loose ==)."""
     logs = []
     host = js.Host(dom.parse('<div></div>'), logs.append)
     host.execute(
-        "function f(a) { if (a === null) { return 'none'; } if (a == 1) { return 'one'; } return 'many'; }"
+        "function f(a) { if (a == null) { return 'none'; } if (a == 1) { return 'one'; } return 'many'; }"
         "console.log(f(...[]));"
     )
-    assert any(l == "none" for l in logs), f"zero-arg spread must log none, got {logs}"
+    assert any(l == "none" for l in logs), f"zero-arg spread must log none (loose null), got {logs}"
 
 
 
 TESTS.append(("test_js_call_spread_zero_args", test_js_call_spread_zero_args))
 def test_js_optional_chain_null():
-    """P16.2 — o?.b on null returns null (short-circuit)."""
+    """P16.2 — o?.b on null short-circuits to ``undefined`` (JS
+    semantics: the whole chain evaluates to undefined, not null).
+
+    P0 (agent report) — console.log renders a lone undefined as ""
+    (V8 headless multi-arg capture) or "undefined" (single-arg)."""
     logs = []
     host = js.Host(dom.parse('<div></div>'), logs.append)
     host.execute("let o = null; console.log(o?.b);")
-    assert any(l == "null" for l in logs), f"o?.b on null must be null, got {logs}"
+    # Single-arg undefined → "" (matches V8 headless capture, and the
+    # real-browser agent reference where undefined args render empty).
+    assert any(l == "" or l == "undefined" for l in logs), f"o?.b on null must be undefined/empty, got {logs}"
 
 
 
@@ -1822,11 +1841,14 @@ def test_js_optional_chain_obj():
 
 TESTS.append(("test_js_optional_chain_obj", test_js_optional_chain_obj))
 def test_js_optional_call_null():
-    """P16.2 — f?.() on null returns null without invoking."""
+    """P16.2 — f?.() on null short-circuits to ``undefined`` without
+    invoking (JS semantics).
+
+    P0 (agent report) — undefined logs as empty (V8 headless capture)."""
     logs = []
     host = js.Host(dom.parse('<div></div>'), logs.append)
     host.execute("let f = null; console.log(f?.());")
-    assert any(l == "null" for l in logs), f"f?.() on null must be null, got {logs}"
+    assert any(l == "" or l == "undefined" for l in logs), f"f?.() on null must be undefined/empty, got {logs}"
 
 
 

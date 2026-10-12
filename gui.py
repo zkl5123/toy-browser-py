@@ -659,67 +659,10 @@ class PageInstance:
             '</body></html>'
         )
 
-    def go_back(self):
-        if self.back_stack:
-            self.fwd_stack.append(self.url)
-            target = self.back_stack.pop()
-            self._load_no_history(target, self.width, self.height)
-
-    def go_forward(self):
-        if self.fwd_stack:
-            self.back_stack.append(self.url)
-            target = self.fwd_stack.pop()
-            self._load_no_history(target, self.width, self.height)
-
-    def _load_no_history(self, url: str, w: int, h: int):
-        """Load *url* without touching back/fwd stacks (internal)."""
-        url = url.strip()
-        if not url:
-            return
-        if url.lower().startswith("about:"):
-            self.url = url
-            self.title = url
-            self.bitmap = self._about_page(url, w, h)
-            return
-        if url.startswith("<"):
-            self.title = "Inline HTML"
-            self.load_html(url, "", w, h)
-            return
-        if os.path.isfile(url):
-            self.load_file(url, w, h)
-            return
-        # P21 — http/https network loading (M2 网络栈第一步).
-        import net
-        lowered = url.lower()
-        if lowered.startswith("http://") or lowered.startswith("https://"):
-            self.url = url
-            self.title = url
-            try:
-                html, _resp = net.fetch_html(url, timeout=10.0)
-                self.load_html(html, "", w, h)
-            except net.FetchError as e:
-                cat = net.categorize_fetch_error(e)
-                err_html = net.error_page_html(
-                    f"HTTP {e.status}" if e.status else "Request failed",
-                    f"Loading {url} failed (status={e.status}).",
-                    category=cat,
-                )
-                self.load_html(err_html, "", w, h)
-            except Exception as e:
-                cat = net.categorize_fetch_error(e)
-                err_html = net.error_page_html(
-                    "Connection error", f"Loading {url} failed: {e}",
-                    category=cat,
-                )
-                self.load_html(err_html, "", w, h)
-            return
-        self.url = url
-        self.title = url
-        html = (
-            f"<html><body><h1>Not supported yet</h1>"
-            f"<p>URL: {url}</p></body></html>"
-        )
-        self.load_html(html, "", w, h)
+    # P0 (agent report) — the legacy duplicate go_back / go_forward /
+    # _load_no_history definitions (lines ~662–722) are removed; the
+    # canonical implementations above (lines ~527–587) already do the
+    # same work.  Removing them clears the F811 warnings.
 
     def reload(self):
         if self.bitmap is not None:

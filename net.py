@@ -34,6 +34,13 @@ import ssl
 import time
 import urllib.parse
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # P0 (agent report) — cookie_store imports net, so a runtime import
+    # would cycle; the type-only guard keeps the annotation resolvable
+    # for static checkers without the cycle.
+    import cookie_store
 
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
 # import time; cookie_store only needs net for URL parsing).
