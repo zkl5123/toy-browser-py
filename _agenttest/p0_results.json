@@ -1,0 +1,27 @@
+{
+ "rare_char_render": {
+  "ok": true,
+  "nonwhite": 1828,
+  "ms": 763
+ },
+ "demo_html_render": {
+  "ok": true,
+  "nonwhite": 117734,
+  "ms": 1792
+ },
+ "network_default_timeout_finite": {
+  "ok": true,
+  "snippet": [
+   "def __init__(self, timeout: float = DEFAULT_TIMEOUT,",
+   "self.timeout = timeout"
+  ]
+ },
+ "perf_1000": {
+  "ok": true,
+  "ms": 4097
+ },
+ "perf_5000": {
+  "ok": true,
+  "ms": 20024
+ }
+}

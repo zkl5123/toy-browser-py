@@ -24,6 +24,8 @@ from paint import Color
 TWO_CHAR_OPS = [
     "??", "==", "!=", "<=", ">=", "&&", "||", "++", "--",
     "+=", "-=", "*=", "/=", "<<", ">>", "=>",
+    # P0 (agent report) — exponentiation `**` (JS binary operator).
+    "**",
     # P16.2 — optional chaining (must be checked before single ".").
     "?.",
     # P16.2 — strict equality operators (must be checked before "==" / "!=").
@@ -184,6 +186,17 @@ def lex(src: str, _allow_regexp: bool = True) -> list[Token]:
                 i += 1
                 while i < n and _is_digit(src[i]):
                     i += 1
+            # P0 (agent report) — JS scientific-notation literal
+            # (e.g. 1e100, 2.5e-3): consume an optional e/E + sign + digits.
+            if i < n and src[i] in ("e", "E"):
+                j = i + 1
+                if j < n and src[j] in ("+", "-"):
+                    j += 1
+                if j < n and _is_digit(src[j]):
+                    k = j
+                    while k < n and _is_digit(src[k]):
+                        k += 1
+                    i = k
             tokens.append(Token("number", src[start:i], start))
             continue
         if _is_ident_start(c):
@@ -246,6 +259,28 @@ class Null(JNode):
     pass
 
 
+class _UndefinedSentinel:
+    """P0 (agent report) — JS ``undefined`` as a distinct runtime value,
+    separate from ``null``.  Rendered as ``"undefined"`` by
+    ``console.log`` and by string coercion helpers."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "undefined"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+_UNDEFINED = _UndefinedSentinel()
+
+
 @dataclass
 class Ident(JNode):
     name: str
@@ -287,6 +322,8 @@ class Binary(JNode):
 class Unary(JNode):
     op: str
     operand: JNode
+    # P0 (agent report) — optional label for `break lbl` / `continue lbl`.
+    label: str | None = None
 
 
 @dataclass
@@ -555,6 +592,14 @@ class YieldExpr(JNode):
 # P29.2 — iterator protocol + generators
 # ---------------------------------------------------------------------------
 
+class _ArgsObject(list):
+    """P0 (agent report) — JS ``arguments`` object: behaves like a list
+    of the actual call args (so ``for (let v of arguments)`` and
+    ``arguments[0]`` work) but ``.length`` reports the *actual* arg
+    count, not the declared param count (V8 semantics)."""
+    pass
+
+
 class _JSStop:
     """Internal sentinel: a JS iterator is exhausted."""
     pass
@@ -762,6 +807,22 @@ class _Throw(Exception):
         self.value = value
 
 
+# P0 (agent report) — uncaught JS throw surfaces to host-level
+# callers (GUI / test runners) so a script that aborts mid-execution
+# is observable, instead of being swallowed into console logs.
+class JSUncaughtError(Exception):
+    """An uncaught JS throw escaped ``Host.execute``.
+
+    ``value`` holds the thrown JS value (string / object / error).
+    Real browsers report this as an uncaught error that aborts the
+    rest of the script; callers (GUI, ``_agenttest`` runner) log
+    it or mark the run as failed.
+    """
+    def __init__(self, value):
+        self.value = value
+        super().__init__(f"{value}")
+
+
 # P12.2 — `new` expression
 @dataclass
 class NewExpr(JNode):
@@ -772,18 +833,30 @@ class NewExpr(JNode):
 # ---------------------------------------------------------------------------
 # Parser (Pratt / precedence climbing)
 # ---------------------------------------------------------------------------
+# P0 (agent report) — precedence table reordered to match JS.
+# Convention: HIGHER value = TIGHTER binding (the Pratt loop
+# `prec >= min_prec → continue` grabs operators with prec >= min_prec,
+# so tighter operators have larger values and are included).
+#
+# JS binary-operator precedence (loosest → tightest):
+#   ?? (1) < || (2) < && (3) < ===/==/</> (4)
+#   < +/- (5) < */÷/% (6) < ** (7)
+#
+# ADD_SUB = 5 so that `a + b * c` → `a + (b*c)` (MUL_DIV=6 > 5+1).
+# CMP = 4 so that `a === b && c` → `(a===b) && c` (LOGICAL_AND=3 < 4+1=5).
+# `**` = 7, the tightest binary operator, so `a === b ** 2` → `a === (b**2)`.
 
-ADD_SUB = 1
-MUL_DIV = 2
-CMP = 3
-LOGICAL_AND = 4
-LOGICAL_OR = 5
-NULLISH = 6
+ADD_SUB = 5
+MUL_DIV = 6
+CMP = 4
+LOGICAL_AND = 3
+LOGICAL_OR = 2
+NULLISH = 1
 ASSIGN = 0
 # P0 (GLM report) — ternary sits just above assignment but below
 # logical-or; the right operand of a binary operator must not
 # "swallow" a ternary `?` that belongs to the enclosing expression.
-TERNARY = 7
+TERNARY = 8
 
 
 class Parser:
@@ -816,19 +889,34 @@ class Parser:
     def parse_expression(self, min_prec: int = 1) -> JNode:
         """Parse a full expression at the given minimum precedence.
 
-        Delegates to parse_expression_inner, but first tries to parse a
-        top-level assignment (lowest precedence).
-
-        P0 (GLM report) — when the caller's min_prec is at or above
-        the ternary level, the right operand of a binary operator must
-        NOT swallow a ternary `?` that belongs to the enclosing
-        expression.  The legacy code always called
-        ``parse_assignment_min`` for any min_prec ≤ ASSIGN, which
-        caused ``6 % 2 === 0`` to be parsed as
-        ``6 % (2 === 0)`` instead of ``(6 % 2) === 0``.
+        P0 (agent report) — at *assignment* precedence (min_prec ≤
+        ASSIGN) the expression may contain a ternary (`cond ? a : b`)
+        or an assignment (`e = value`); delegate to
+        ``parse_assignment_min`` which owns the `?`/`:` and `=`
+        handling.  At higher precisions the expression is a plain
+        binary-operator chain (no ternary, no assignment) so use
+        ``parse_expression_min`` to stop at the binary-operator level.
         """
         if min_prec <= ASSIGN:
             return self.parse_assignment_min()
+        return self.parse_expression_min(min_prec)
+
+    def parse_expression_min(self, min_prec: int) -> JNode:
+        """Parse an expression at *min_prec* WITHOUT descending into the
+        assignment / ternary level.
+
+        P0 (agent report) — the legacy ``parse_expression(1)`` call from
+        ``parse_assignment_min``'s ternary then-branch re-enters
+        ``parse_assignment_min`` when min_prec ≤ ASSIGN, which in turn
+        greedily parses the ``then_branch`` at full expression
+        precedence.  That swallows the enclosing ``:`` when the
+        then-branch itself contains a nested ``?`` / assignment, and
+        breaks the right-associative else-branch chain.  This variant
+        stops at the binary-operator level and never descends into
+        ``parse_assignment_min`` again, so the then-branch is a clean
+        left-associative expression and the enclosing parser owns the
+        ``:``.
+        """
         return self.parse_expression_inner(min_prec)
 
     def parse_assignment_min(self) -> JNode:
@@ -842,13 +930,25 @@ class Parser:
         `a` branch at full expression precedence, expect `:`, then
         parse the `b` branch at the same level (right-associative,
         so nested ternaries bind to the nearest `:`).
+
+        P0 (agent report) — the then-branch must be parsed with
+        ``parse_expression_min(1)``, NOT ``parse_expression(1)``:
+        the legacy ``parse_expression(1)`` (min_prec ≤ ASSIGN)
+        re-entered ``parse_assignment_min``, which greedily parsed
+        the then-branch at full expression precedence.  That swallowed
+        the enclosing ``:`` when the then-branch contained a nested
+        ``?``/assignment, breaking the right-associative else-branch
+        chain.  ``parse_expression_min`` stops at the binary-operator
+        level and never descends into the assignment/ternary level,
+        so the then-branch is a clean left-associative expression and
+        the enclosing parser owns the ``:``.
         """
-        left = self.parse_expression_inner(1)
+        left = self.parse_expression_min(1)
         t = self.peek()
         # P0 — ternary: `left ? a : b`.
         if t.value == "?":
             self.next()
-            then_branch = self.parse_expression(1)
+            then_branch = self.parse_expression_min(1)
             t = self.peek()
             if t.value != ":":
                 raise SyntaxError(f"expected ':' after ternary then-branch, got {t.value!r}")
@@ -865,14 +965,15 @@ class Parser:
     def parse_expression_inner(self, min_prec: int) -> JNode:
         """P12.2 — Pratt-style precedence climbing.
 
-        Precedence order (lower value = tighter binding):
-          MUL_DIV (2) < CMP (3) < LOGICAL_AND (4) < LOGICAL_OR (5) < NULLISH (6)
+        Precedence order (HIGHER value = TIGHTER binding):
+          NULLISH (1) < LOGICAL_OR (2) < LOGICAL_AND (3) < CMP (4)
+          < ADD_SUB (5) < MUL_DIV (6) < ** (MUL_DIV+1 = 7)
 
-        Left-associative operators (``*``, ``/``, ``+``, ``-``) use
-        ``prec + 1`` for the right-operand minimum so that same-level
-        operators chain left (``a * b * c`` → ``(a * b) * c``) while
-        higher-precedence operators on the right bind tighter
-        (``a + b * c`` → ``a + (b * c)``).
+        Left-associative operators use ``prec + 1`` for the
+        right-operand minimum so same-level operators chain left
+        (``a * b * c`` → ``(a * b) * c``) while tighter operators on
+        the right bind first (``a + b * c`` → ``a + (b * c)``).
+        ``**`` is right-associative: ``2 ** 3 ** 2`` → ``2 ** (3**2)``.
         """
         left = self.parse_unary()
         while True:
@@ -884,8 +985,11 @@ class Parser:
                 break
             self.next()
             if t.value in ("&&", "||"):
-                # Left-associative logical: right continues at same level.
-                right = self.parse_expression(prec + 1)
+                # Left-associative logical: right operand parsed at the
+                # SAME precedence level (``prec``) so same-level
+                # operators chain left and looser ones stop:
+                # ``a && b || c`` → ``(a && b) || c``.
+                right = self.parse_expression(prec)
                 left = Logical(t.value, left, right)
             elif t.value == "??":
                 # Right-associative nullish: right continues at same level.
@@ -893,13 +997,50 @@ class Parser:
                 left = Logical("??", left, right)
             else:
                 op = t.value
-                # Left-associative math / comparison ops:
-                # right continues at prec + 1 (same or higher precedence).
-                right = self.parse_expression(prec + 1)
+                # Left-associative math / comparison ops.
+                # New table (higher value = tighter):
+                #   NULLISH=1 < LOGICAL_OR=2 < LOGICAL_AND=3 < CMP=4
+                #   < ADD_SUB=5 < MUL_DIV=6 < **(MUL_DIV+1)=7
+                if op in ("*", "/", "%"):
+                    # P0 (agent report) — `*` / `/` / `%` bind tighter
+                    # than CMP (prec 6 > 4).  Right operand must stop
+                    # before CMP (4 < 5 → stop) so `n % 7 === 0`
+                    # parses as `(n % 7) === 0`, not `n % (7 === 0)`.
+                    # `**` (prec 7 >= 5) IS included in the right
+                    # operand: `a * b ** 2` → `a * (b ** 2)`.
+                    # Same-level operators (`*` prec 6 >= 5) chain
+                    # left: `a * b * c` → `(a * b) * c`.
+                    right_prec = MUL_DIV
+                elif op in ("+", "-"):
+                    # additive: right continues at ADD_SUB + 1 so a
+                    # trailing `*` / `%` / `**` binds tighter.
+                    right_prec = prec + 1
+                elif op in ("==", "!=", "===", "!==", "<", ">", "<=", ">="):
+                    # comparison: right operand continues at LOGICAL_AND
+                    # level so `a === b && c` → `(a===b) && c`
+                    # (LOGICAL_AND=3 < CMP+1=5 → stop).  `**` (prec 7)
+                    # and `*` (prec 6) are included in the right operand.
+                    right_prec = CMP + 1
+                elif op == "**":
+                    # P0 (agent report) — `**` is RIGHT-associative in JS:
+                    # `2 ** 3 ** 2` = `2 ** (3 ** 2)` = `2 ** 9` = 512.
+                    # Use `prec` (not `prec + 1`) so the right operand
+                    # parse continues at the same level and grabs
+                    # trailing `**`.
+                    right_prec = prec
+                else:
+                    right_prec = prec + 1
+                right = self.parse_expression(right_prec)
                 left = Binary(op, left, right)
         return left
 
     def _infix_prec(self, t: Token) -> int:
+        # P0 (agent report) — `**` binds tighter than `*`/`/`/`%`
+        # and tighter than CMP/&&/||.  New table (higher value =
+        # tighter): ADD_SUB=5, MUL_DIV=6, CMP=4, LOGICAL_AND=3,
+        # LOGICAL_OR=2, NULLISH=1.  `**` = MUL_DIV + 1 = 7.
+        if t.value == "**":
+            return MUL_DIV + 1
         if t.value in ("*", "/", "%"):
             return MUL_DIV
         if t.value in ("+", "-"):
@@ -1028,9 +1169,15 @@ class Parser:
             # P16.1 — argument spread: `f(...xs)` records a CallSpread node.
             if self.peek().value == "...":
                 self.next()
-                args.append(CallSpread(self.parse_expression(1)))
+                args.append(CallSpread(self.parse_expression(0)))
             else:
-                args.append(self.parse_expression(1))
+                # P0 (agent report) — parse args at assignment level so a
+                # ternary (`c ? a : b`) inside a call arg is captured
+                # (parse_expression(0) delegates to parse_assignment_min,
+                # which owns the `?`/`:` handling).  The legacy
+                # parse_expression(1) stopped at binary ops and broke on
+                # a `?` in the arg list.
+                args.append(self.parse_expression(0))
             if self.match(","):
                 continue
             break
@@ -1050,8 +1197,13 @@ class Parser:
             name = t.value
             if name in ("true", "false"):
                 return Bool(name == "true")
-            if name in ("null", "undefined"):
+            if name == "null":
                 return Null()
+            # P0 (agent report) — `undefined` is its own value in JS,
+            # distinct from null.  Map it to the module-level sentinel
+            # so typeof / console.log render it correctly.
+            if name == "undefined":
+                return _UNDEFINED
             # P15.1 — Infinity / NaN literals (toy: special float values)
             if name == "Infinity":
                 return Num(float("inf"))
@@ -1350,6 +1502,27 @@ class Parser:
 
     def parse_statement(self) -> JNode:
         t = self.peek()
+        # P0 (agent report) — labeled statements (`lbl: while (...) {...}`):
+        # an identifier immediately followed by ':' (but not a ternary/
+        # arrow, which are only valid in expression position, not at the
+        # start of a statement) is treated as a no-op label marker — the
+        # label token is consumed and the underlying statement parsed.
+        # JS `break lbl` remains unsupported (plain break/continue).
+        if (t.kind == "id"
+                and t.value not in ("true", "false", "null", "undefined",
+                                     "function", "class", "new")):
+            nt = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else None
+            if nt is not None and nt.kind == "op" and nt.value == ":":
+                label = t.value
+                self.next()  # consume the label identifier
+                self.next()  # consume ':'
+                stmt = self.parse_statement()
+                # P0 (agent report) — wrap in a Labeled node so the label
+                # binds to the nearest loop and `break lbl` / `continue
+                # lbl` can escape multiple loops at once (spec §14.5).
+                if isinstance(stmt, (While, For, ForOf)):
+                    return Labeled(label, stmt)
+                return stmt
         if t.value == "{":
             block = self.parse_block()
             # P33.R3 — allow a bare block statement to be terminated by
@@ -1421,12 +1594,21 @@ class Parser:
             return Throw(value)
         if t.value == "break":
             self.next()
+            label = None
+            # P0 (agent report) — `break label;` / `continue label;`
+            if self.peek().kind == "id" and self.peek().value not in ("true", "false", "null", "undefined"):
+                label = self.peek().value
+                self.next()
             self.match(";")
-            return ExprStmt(Unary("break", Null()))
+            return ExprStmt(Unary("break", Str(label) if label is not None else Null(), label=label))
         if t.value == "continue":
             self.next()
+            label = None
+            if self.peek().kind == "id" and self.peek().value not in ("true", "false", "null", "undefined"):
+                label = self.peek().value
+                self.next()
             self.match(";")
-            return ExprStmt(Unary("continue", Null()))
+            return ExprStmt(Unary("continue", Str(label) if label is not None else Null(), label=label))
         # P0 (GLM report) — an isolated `;` (e.g. after a function
         # declaration ``function A(){};``) is an empty statement in
         # JS, not a syntax error.  The legacy parser tried to parse
@@ -1772,12 +1954,24 @@ class _Yield(Exception):
         self.value = value
 
 
+@dataclass
+class Labeled(JNode):
+    """P0 (agent report) — `label: stmt` (e.g. `outer: while (...) {...}`).
+
+    The label binds to the nearest loop so `break label` / `continue label`
+    can escape multiple loops at once (spec §13.7.2 / §14.5)."""
+    label: str
+    stmt: JNode
+
+
 class _Break(Exception):
-    pass
+    def __init__(self, label: str | None = None):
+        self.label = label
 
 
 class _Continue(Exception):
-    pass
+    def __init__(self, label: str | None = None):
+        self.label = label
 
 
 class _BudgetExceeded(Exception):
@@ -1804,10 +1998,17 @@ class Interpreter:
         self._cancelling: bool = False  # set by host.cancel_scripts()
         self._recursion_depth: int = 0
         self._max_recursion: int = getattr(host, "_js_max_recursion", 256)
+        # P0 (agent report) — when True, a plain `break`/`continue` inside
+        # a loop must propagate to the owning Labeled frame (spec §14.13).
+        self._labeled_loop_active: bool = False
+        # P0 (agent report) — set to the Labeled node's label while a
+        # Labeled frame is active, so the inner loop can re-raise plain
+        # break/continue to the correct owner.
+        self._labeled_loop_label: str | None = None
 
     @staticmethod
     def truthy(v: Any) -> bool:
-        if v is None:
+        if v is None or isinstance(v, _UndefinedSentinel):
             return False
         if isinstance(v, bool):
             return v
@@ -1834,6 +2035,37 @@ class Interpreter:
             raise _BudgetExceeded("JS execution cancelled by host")
         if isinstance(node, Block):
             return self.eval_block(node)
+        # P0 (agent report) — labeled statement: evaluate the wrapped loop.
+        # A *plain* break/continue inside a labeled loop targets the nearest
+        # labeled loop (spec §14.13: a `break` without a label in a labeled
+        # statement exits that statement).  A *labeled* `break lbl` targets
+        # the specific named label.
+        if isinstance(node, Labeled):
+            # P0 (agent report) — activate the labeled-loop flag so the
+            # inner while/for loop re-raises plain break/continue to
+            # this frame (spec §14.13).  A `break` (no label) inside a
+            # labeled loop exits the *labeled* loop, not just the
+            # innermost loop; a `break lbl` targets the named label.
+            self._labeled_loop_active = True
+            self._labeled_loop_label = node.label
+            try:
+                result = self.eval(node.stmt)
+            except _Break as b:
+                lbl = getattr(b, "label", None)
+                if lbl is None or lbl == node.label:
+                    result = None
+                else:
+                    raise
+            except _Continue as c:
+                lbl = getattr(c, "label", None)
+                if lbl is None or lbl == node.label:
+                    result = None
+                else:
+                    raise
+            finally:
+                self._labeled_loop_active = False
+                self._labeled_loop_label = None
+            return result
         if isinstance(node, Num):
             return node.value
         if isinstance(node, Str):
@@ -1886,7 +2118,13 @@ class Interpreter:
             except NameError:
                 if node.name in self.host.globals:
                     return self.host.globals[node.name]
-                return None
+                # P0 (agent report) — an unbound identifier is JS
+                # ``undefined`` (the sentinel), not Python None: it is
+                # truthy-checked as falsy and renders as "undefined".
+                # Exception: `super`/`this` already handled above.
+                if node.name == "undefined":
+                    return _UNDEFINED
+                return _UNDEFINED
         if isinstance(node, LetDecl):
             # P33.R3 — let/const initialize the TDZ record created at
             # block entry; var defines directly (no TDZ).  const
@@ -1959,6 +2197,18 @@ class Interpreter:
                 if 0 <= idx < len(obj):
                     return obj[idx]
                 return None
+            # P0 (agent report) — dict index access: JS `obj[key]` where
+            # key is a number or string.  Try the exact key first, then
+            # the str(int) form so `m[0]` works on a dict with "0" keys
+            # (regexp exec results) and `o[1]` works on plain dicts.
+            if isinstance(obj, dict) and idx is not None:
+                if idx in obj:
+                    return obj[idx]
+                if isinstance(idx, (int, float)):
+                    skey = str(int(idx)) if isinstance(idx, float) and idx == int(idx) else str(idx)
+                    if skey in obj:
+                        return obj[skey]
+                return None
             return None
         if isinstance(node, Call):
             callee = self.eval(node.callee)
@@ -1972,12 +2222,24 @@ class Interpreter:
                     src = self.eval(a.expr)
                     if isinstance(src, list):
                         args.extend(src)
-                    elif src is None:
-                        pass  # spreading null → zero args
+                    elif src is None or isinstance(src, _UndefinedSentinel):
+                        # P0 (agent report) — spreading null OR undefined
+                        # yields ZERO arguments (JS spread semantics).
+                        pass
                     else:
                         args.append(src)
                 else:
                     args.append(self.eval(a))
+            # P0 (agent report) — pad the call's args with the JS
+            # ``undefined`` sentinel up to the callee's declared
+            # parameter count, so missing params read as `undefined`
+            # (V8 semantics).  `arguments` is the actual arg list, so
+            # `arguments.length` stays the real count while declared
+            # params that were omitted resolve to undefined.
+            if callable(callee):
+                _n_params = getattr(callee, "__js_param_count__", None)
+                if _n_params is not None and len(args) < _n_params:
+                    args = args + [_UNDEFINED] * (_n_params - len(args))
             if callable(callee):
                 try:
                     return callee(*args)
@@ -2032,13 +2294,23 @@ class Interpreter:
                         except Exception as e:
                             self.host.log(f"constructor error: {e}")
                     elif isinstance(gobj, dict):
+                        # P0 (agent report) — a dict-based "class" (e.g.
+                        # the Promise global) is called *as a constructor*:
+                        # `Promise(executor)` must build a promise via the
+                        # host's factory, not return the dict itself.
+                        ctor = gobj.get("__construct__")
+                        if callable(ctor):
+                            return ctor(*args)
                         return gobj
             return None
         # P16.2 — optional chaining: short-circuit to null when base is null.
         if isinstance(node, OptionalChain):
             base = self.eval(node.base)
-            if base is None:
-                return None
+            # P0 (agent report) — optional chaining must short-circuit to
+            # `undefined` (JS semantics) on BOTH `null` AND `undefined`,
+            # not just `null` (Python None).
+            if base is None or isinstance(base, _UndefinedSentinel):
+                return _UNDEFINED
             # Computed access: base?.[expr]
             if isinstance(node.prop, JNode):
                 key = self.eval(node.prop)
@@ -2172,6 +2444,12 @@ class Interpreter:
         if isinstance(node, Throw):
             value = self.eval(node.value)
             raise _Throw(value)
+        # P0 (agent report) — a bare `undefined` reference is evaluated to
+        # the JS sentinel by the Ident branch above; if it reaches this
+        # fallback (e.g. as a value stored directly in an AST slot) keep
+        # it as the sentinel so console.log prints "undefined".
+        if node is _UNDEFINED:
+            return _UNDEFINED
         raise TypeError(f"cannot evaluate {node}")
 
     def eval_block(self, block: Block) -> Any:
@@ -2290,6 +2568,27 @@ class Interpreter:
             raise result
         return result
 
+    # P0 (agent report) — JS strict equality helper: in JS, booleans
+    # are *numbers* (true===1, false===0), so `type(l) is type(r)` is
+    # wrong for the bool/number pair.  Compare values with numeric
+    # coercion for that one case.
+    @staticmethod
+    def _js_strict_eq(l, r):
+        # P0 (agent report) — JS booleans are *numbers* (true===1,
+        # false===0).  Treat bool/number pairs by value.
+        if isinstance(l, bool) and isinstance(r, (int, float)) and not isinstance(r, bool):
+            return (1 if l else 0) == r
+        if isinstance(r, bool) and isinstance(l, (int, float)) and not isinstance(l, bool):
+            return (1 if r else 0) == l
+        # P0 (agent report) — JS numbers compare numerically regardless
+        # of int/float representation (0 === 0.0, 1 === 1.0).
+        if isinstance(l, (int, float)) and isinstance(r, (int, float)):
+            return l == r
+        if type(l) is type(r):
+            return l == r
+        # null === undefined is False in JS (distinct values).
+        return False
+
     def eval_binary(self, node: Binary) -> Any:
         op = node.op
         l = self.eval(node.left)
@@ -2300,6 +2599,9 @@ class Interpreter:
                 # P15.1 — Infinity / NaN formatting.
                 import math
                 def _jsnum(x):
+                    # P0 (agent report) — JS boolean → "true"/"false".
+                    if isinstance(x, bool):
+                        return "true" if x else "false"
                     if isinstance(x, float):
                         if math.isinf(x):
                             return "Infinity" if x > 0 else "-Infinity"
@@ -2314,6 +2616,14 @@ class Interpreter:
             return l - r
         if op == "*":
             return l * r
+        if op == "**":
+            # P0 (agent report) — JS exponentiation operator.
+            # P0 (agent report) — JS `2**0` is 1 (not Python's True, which
+            # prints as "1" anyway but is a bool, not a number).
+            result = l ** r
+            if isinstance(result, bool):
+                result = 1 if result else 0
+            return result
         if op == "/":
             # P0 (GLM report) — JS `/` returns Infinity / -Infinity /
             # NaN for zero divisors instead of raising ZeroDivisionError.
@@ -2328,23 +2638,47 @@ class Interpreter:
             # P0 (GLM report) — JS ``%`` follows the sign of the
             # dividend (C-style remainder), unlike Python's floor
             # modulo.  ``-7 % 3`` is ``-1`` in JS but ``2`` in
-            # Python.  Convert with a sign-corrected formula.
-            if r == 0:
-                import math
-                if l == 0:
+            # Python.
+            # P0 (agent report) — coerce to float so that int/float
+            # operand pairs don't raise TypeError, matching V8
+            # (``14 % 7`` → ``0``, not ``0.0``; the toy renders whole
+            # floats without a decimal point).
+            import math
+            l_f = float(l)
+            r_f = float(r)
+            if r_f == 0:
+                if l_f == 0:
                     return float("nan")
-                return float("inf") if l > 0 else float("-inf")
-            q = abs(l) % abs(r)
-            return q if l >= 0 else -q
+                return float("inf") if l_f > 0 else float("-inf")
+            quotient = math.trunc(l_f / r_f)
+            result = l_f - r_f * quotient
+            # JS: a % b where both are integers → integer result.
+            if isinstance(l, int) and isinstance(r, int):
+                return int(result)
+            return result
         if op in ("==", "==="):
             if op == "===":
-                return type(l) is type(r) and l == r
-            # P0 (GLM report) — JS loose equality with type coercion:
-            # ``1 == "1"`` is true (both coerce to the number 1),
-            # ``null == undefined`` is true, booleans coerce to
-            # numbers before comparing.
-            if type(l) is type(r):
-                return l == r
+                # P0 (agent report) — JS strict equality: bools are
+                # numbers (true===1, false===0), null/undefined are
+                # distinct.
+                return self._js_strict_eq(l, r)
+            if op == "==":
+                # P0 (GLM report) — JS loose equality with type coercion:
+                # ``1 == "1"`` is true (both coerce to the number 1),
+                # ``null == undefined`` is true, booleans coerce to
+                # numbers before comparing.
+                # P0 (agent report) — undefined participates in loose ==
+                # the same way null does (both are falsy "nothing" values).
+                if (l is None or isinstance(l, _UndefinedSentinel)) and \
+                   (r is None or isinstance(r, _UndefinedSentinel)):
+                    return True
+                # P0 (agent report) — JS numbers compare numerically
+                # regardless of int/float representation (0 == 0.0).
+                if isinstance(l, (int, float)) and isinstance(r, (int, float)) \
+                        and not isinstance(l, bool) and not isinstance(r, bool):
+                    return l == r
+                if type(l) is type(r):
+                    return l == r
             # Cross-type coercion (loose == only).
             if isinstance(l, bool) and isinstance(r, (int, float)):
                 return (1 if l else 0) == r
@@ -2365,7 +2699,7 @@ class Interpreter:
             return False
         if op in ("!=", "!=="):
             if op == "!==":
-                return not (type(l) is type(r) and l == r)
+                return not self._js_strict_eq(l, r)
             # P0 (GLM report) — negation of loose ==.
             if type(l) is type(r):
                 return l != r
@@ -2395,6 +2729,14 @@ class Interpreter:
         raise TypeError(f"unsupported operator {op}")
 
     def eval_unary(self, node: Unary) -> Any:
+        # P0 (agent report) — `break label` / `continue label`: the label
+        # is carried on the Unary node; raise a label-targeted signal so
+        # the enclosing Labeled frame (or an outer loop with a matching
+        # label) can consume it.  A plain `break` / `continue` has label=None.
+        if node.op == "break":
+            raise _Break(node.label)
+        if node.op == "continue":
+            raise _Continue(node.label)
         # P0 (GLM report) — `typeof` is a *unary* operator in JS but
         # the legacy parser only recognised it as a prefix in
         # limited contexts.  Support it here so the eval path returns
@@ -2402,7 +2744,17 @@ class Interpreter:
         # which JS maps to the string ``"undefined"``, not ``None``).
         if node.op == "typeof":
             v = self.eval(node.operand)
+            # P0 (agent report) — JS typeof: null and undefined both map
+            # to their literal strings, but ``typeof null`` is the famous
+            # historical quirk → "object" (V8: ``typeof null === 'object'``).
             if v is None:
+                # distinguish: a Null node evaluates to None too, but we
+                # can't tell which from the value alone.  typeof of a
+                # *value* that is null → "object"; undefined sentinel →
+                # "undefined".  The undefined sentinel is a distinct type,
+                # so only a true null (None) reaches here as "object".
+                return "object"
+            if isinstance(v, _UndefinedSentinel):
                 return "undefined"
             if v is True:
                 return "boolean"
@@ -2421,10 +2773,6 @@ class Interpreter:
             return not self.truthy(self.eval(node.operand))
         if node.op == "-":
             return -self.eval(node.operand)
-        if node.op == "break":
-            raise _Break()
-        if node.op == "continue":
-            raise _Continue()
         raise TypeError(f"unsupported unary {node.op}")
 
     # P33.R3 — increment / decrement
@@ -2490,6 +2838,13 @@ class Interpreter:
         if obj is None:
             return None
         prop = node.prop
+        # P0 (agent report) — function ``length`` property: V8 reports
+        # the declared parameter count.  Toy closures carry
+        # ``__js_param_count__`` from _make_func / _make_arrow.
+        if callable(obj) and prop == "length":
+            _n = getattr(obj, "__js_param_count__", None)
+            if _n is not None:
+                return _n
         # P29.2 — generator objects / toy iterators: .next / .return
         # accessed as a property then called; wrap in a closure so
         # ``it.next()`` routes through call_method.
@@ -2524,6 +2879,20 @@ class Interpreter:
                         ns = root.query_selector_all(sel or "")
                         return DomElement(ns[0], self) if ns else None
                     return qs
+                # P0 (agent report) — document property access:
+                # `document.body` / `document.documentElement` / `document.head`
+                # return the corresponding DOM node wrapped as a DomElement.
+                if prop in ("body", "documentElement", "head"):
+                    # Read the value that _document_obj cached (a live
+                    # DomElement), so mutations are reflected.
+                    cached = obj.get(prop)
+                    if cached is not None:
+                        return cached
+                    root = obj["__doc__"]
+                    for c in root.children:
+                        if c.is_element() and (c.tag or "").lower() == prop:
+                            return DomElement(c, self)
+                    return DomElement(root, self) if prop != "head" else None
                 return None
             if "__el__" in obj and prop not in ("get", "set", "prop", "__el__"):
                 if prop in ("add", "remove", "toggle", "contains"):
@@ -2534,6 +2903,21 @@ class Interpreter:
                     return None
                 if prop == "value":
                     return obj.get("value")
+                # P0 (agent report) — CSSOM-style live property lookup:
+                # the style dict caches the element, but a plain
+                # ``el.style.display`` getter must read the *current*
+                # inline-style attr (after a ``this.style.display =
+                # 'none'`` write), not a stale dict entry.
+                _el = obj.get("__el__")
+                if _el is not None and hasattr(_el, "node"):
+                    import re as _re_live
+                    _sattr = _el.node.attr("style") or ""
+                    _m = _re_live.search(
+                        rf"(?:^|;)\s*{_re_live.escape(prop)}\s*:\s*([^;]+)",
+                        _sattr, _re_live.IGNORECASE)
+                    if _m:
+                        return _m.group(1).strip()
+                    return ""
                 return obj.get(prop)
             return obj.get(prop)
         if isinstance(obj, list):
@@ -2582,11 +2966,38 @@ class Interpreter:
         if isinstance(target, Ident):
             rhs = value
             if node.op == "+=":
+                # P0 (agent report) — JS `+=`: the current value is
+                # looked up; if it is `undefined` (unbound / no value),
+                # treat it as 0 (the legacy `cur or 0` conflated a
+                # legitimate JS 0 / '' / false with the undefined
+                # fallback, corrupting `s += i` when s was '').
+                # When cur is a string, the result must use JS
+                # string-concatenation semantics (number → "0" not
+                # "0.0"), matching `+` operator behavior.
                 cur = self.env.lookup(target.name)
-                rhs = (cur or 0) + value
+                if cur is None or isinstance(cur, _UndefinedSentinel):
+                    cur = 0
+                if isinstance(cur, str) or isinstance(value, str):
+                    import math as _math
+                    def _jsnum(x):
+                        if isinstance(x, bool):
+                            return "true" if x else "false"
+                        if isinstance(x, float):
+                            if _math.isinf(x):
+                                return "Infinity" if x > 0 else "-Infinity"
+                            if _math.isnan(x):
+                                return "NaN"
+                            if x.is_integer():
+                                return str(int(x))
+                        return str(x)
+                    rhs = _jsnum(cur) + _jsnum(value)
+                else:
+                    rhs = cur + value
             elif node.op == "-=":
                 cur = self.env.lookup(target.name)
-                rhs = (cur or 0) - value
+                if cur is None or isinstance(cur, _UndefinedSentinel):
+                    cur = 0
+                rhs = cur - value
             self.env.set(target.name, rhs)
             return rhs
         raise TypeError("unsupported assignment target")
@@ -2644,13 +3055,40 @@ class Interpreter:
     def eval_while(self, node: While) -> Any:
         # P16.2 — `return` inside a while body must propagate; _Break /
         # _Continue are loop-local.
+        # P0 (agent report) — JS semantics: a *plain* `break` (no label)
+        # inside a **labeled** loop statement (`lbl: while (...)`) exits
+        # the labeled loop, NOT just the innermost loop (spec §14.13).
+        # The while loop therefore re-raises *all* plain breaks so the
+        # owning Labeled frame can consume them.  For an **unlabeled**
+        # while, the plain break is consumed here (it is the innermost
+        # loop and there is no Labeled frame above it).
+        #
+        # We detect the labeled case by checking whether the caller is
+        # a Labeled frame via a flag on the interpreter.
         try:
             while self.truthy(self.eval(node.cond)):
                 try:
                     self.eval_block(node.body)
-                except _Break:
+                except _Break as b:
+                    lbl = getattr(b, "label", None)
+                    if lbl is not None:
+                        # A `break lbl` targets a named label: only the
+                        # Labeled frame with that label may consume it.
+                        raise
+                    if self._labeled_loop_active:
+                        # P0 (agent report) — inside a labeled loop, a
+                        # plain `break` must escape to the Labeled frame
+                        # (spec §14.13), not just exit this inner loop.
+                        raise
                     break
-                except _Continue:
+                except _Continue as c:
+                    lbl = getattr(c, "label", None)
+                    if lbl is not None:
+                        raise
+                    if self._labeled_loop_active:
+                        # A plain `continue` inside a labeled loop
+                        # restarts the labeled loop, not just this one.
+                        raise
                     continue
         except _Return:
             raise
@@ -2676,9 +3114,26 @@ class Interpreter:
                     break
                 try:
                     self.eval_block(node.body)
-                except _Break:
+                except _Break as b:
+                    lbl = getattr(b, "label", None)
+                    if lbl is not None:
+                        # A `break lbl` targets a named label: only the
+                        # Labeled frame with that label may consume it.
+                        raise
+                    if self._labeled_loop_active:
+                        # P0 (agent report) — inside a labeled loop, a
+                        # plain `break` must escape to the Labeled frame
+                        # (spec §14.13), not just exit this inner loop.
+                        raise
                     break
-                except _Continue:
+                except _Continue as c:
+                    lbl = getattr(c, "label", None)
+                    if lbl is not None:
+                        raise
+                    if self._labeled_loop_active:
+                        # A plain `continue` inside a labeled loop
+                        # restarts the labeled loop, not just this one.
+                        raise
                     continue
                 if node.step is not None:
                     self.eval(node.step)
@@ -2849,9 +3304,18 @@ class Interpreter:
                 raise
             # P29.2 — `arguments`: the actual call-arg list (JS: iterable
             # indexed object).  Needed so `for (let v of arguments)` works.
-            inner.define("arguments", list(args))
+            inner.define("arguments", _ArgsObject(args))
             saved = closure.env
             closure.env = inner
+            # P0 (agent report) — event-handler `this` binding: when a
+            # JS closure is invoked as a DOM event handler (via the
+            # Host ``_js_props`` registry), the owning ``execute_event``
+            # sets ``closure.this_value`` to the target element before
+            # the call, so `this.style.display = ...` resolves to the
+            # element (P11.4 semantics, matching the inline
+            # ``onclick="…"`` attribute path).
+            if getattr(closure, "this_value", None) is not None:
+                inner.define("this", closure.this_value)
             try:
                 if isinstance(body, Block):
                     # P0 — walk the function body's statements directly
@@ -2892,6 +3356,14 @@ class Interpreter:
         # P16.2 — `return` inside a class-method body must also propagate
         # to the method-level catch (symmetric with _make_func).
         f.__is_class_method__ = True
+        # P0 (agent report) — expose the JS ``length`` property on a
+        # function value: V8 reports the declared parameter count.
+        f.__js_param_count__ = len(params)
+        # P0 (agent report) — event-handler `this` binding: expose the
+        # closure's Interpreter so Host.execute_event can set
+        # ``this_value`` before the call (P11.4 semantics for
+        # ``el.onclick = function(){ this.style… }``).
+        f._toy_closure_interp = closure
 
         return f
 
@@ -2930,9 +3402,18 @@ class Interpreter:
                 closure._recursion_depth -= 1
                 raise
             # P29.2 — arrow `arguments`: same as _make_func.
-            inner.define("arguments", list(args))
+            inner.define("arguments", _ArgsObject(args))
             saved = closure.env
             closure.env = inner
+            # P0 (agent report) — event-handler `this` binding: when a
+            # JS closure is invoked as a DOM event handler (via the
+            # Host ``_js_props`` registry), the owning ``execute_event``
+            # sets ``closure.this_value`` to the target element before
+            # the call, so `this.style.display = ...` resolves to the
+            # element (P11.4 semantics, matching the inline
+            # ``onclick="…"`` attribute path).
+            if getattr(closure, "this_value", None) is not None:
+                inner.define("this", closure.this_value)
             try:
                 if is_block:
                     # P0 — walk the arrow's block body statements
@@ -2959,7 +3440,13 @@ class Interpreter:
                 closure.env = saved
                 closure._recursion_depth -= 1
             return val
-
+        # P0 (agent report) — function.length: the declared param count.
+        f.__js_param_count__ = len(params)
+        # P0 (agent report) — event-handler `this` binding: expose the
+        # closure's Interpreter so Host.execute_event can set
+        # ``this_value`` before the call (P11.4 semantics for
+        # ``el.onclick = function(){ this.style… }``).
+        f._toy_closure_interp = closure
         return f
 
 
@@ -3021,8 +3508,14 @@ class DomElement:
 
     @property
     def tagName(self) -> str:
-        """P30.2 — the element's tag (lowercase)."""
-        return (self.node.tag or "").lower()
+        """P30.2 — the element's tag.
+
+        P0 (agent report) — V8 reports ``tagName`` in UPPERCASE
+        (``DIV``, ``BUTTON``, ``P``); the toy DOM stores tags lowercase,
+        so this property uppercases to match the real-browser reference.
+        Internal DOM consumers keep the lowercase form.
+        """
+        return (self.node.tag or "").upper()
 
     # --- P30.2 — node mutation (triggers re-layout on next render) ---------
 
@@ -3178,6 +3671,11 @@ class Host:
         self.element_table: dict = {}
         # P30.4 — listener registry: element node -> {event_name: [fn, …]}
         self._listeners: dict[DomNode, dict] = {}
+        # P0 (agent report) — JS-level event-handler property registry:
+        # element id -> {prop: callable}.  `el.onclick = function(){…}`
+        # stores the JS function value here (NOT in the DOM attribute
+        # string) so that `el.click()` can invoke it with `this` bound.
+        self._js_props: dict = {}
         self._build_element_table()
         self._class_registry: dict[str, ToyClass] = {}  # P12.2
         # P0 — JS execution budget knobs (overridable by tests).
@@ -3189,7 +3687,7 @@ class Host:
             "console": self._console_obj(),
             "setTimeout": self._set_timeout,
             "requestAnimationFrame": self._request_animation_frame,
-            "Promise": self._make_promise,
+            "Promise": self._promise_global(),
             "fetch": self._fetch,
             # P3.3 — built-in objects
             "Math": self._math_obj(),
@@ -3234,7 +3732,27 @@ class Host:
         return i
 
     def _document_obj(self) -> dict:
-        return {"__doc__": self.root}
+        # P0 (agent report) — `document.body` / `document.documentElement`
+        # resolve to the corresponding DOM nodes wrapped as DomElements,
+        # matching V8 (``document.body.innerText`` works in the browser).
+        # The dict *also* carries `__doc__` so the generic dict-member
+        # path (``document.getElementById`` etc.) still routes through
+        # ``eval_doc_method``.
+        def _find_tag(tag_name):
+            stack = [self.root]
+            while stack:
+                n = stack.pop(0)
+                if n.is_element() and (n.tag or "").lower() == tag_name:
+                    return DomElement(n, self)
+                stack.extend(n.children)
+            return None
+
+        return {
+            "__doc__": self.root,
+            "body": _find_tag("body"),
+            "documentElement": _find_tag("html"),
+            "head": _find_tag("head"),
+        }
 
     # P30.1 — full-selector document accessors (reuse css.Selector engine).
     def _doc_query_selector_all(self, selector: str):
@@ -3256,8 +3774,18 @@ class Host:
             for a in args:
                 if a is None:
                     parts.append("null")
+                elif isinstance(a, _UndefinedSentinel):
+                    # P0 (agent report) — JS console.log renders
+                    # `undefined` arguments as empty entries (V8 drops
+                    # the text; trailing empties are trimmed).
+                    parts.append("")
                 elif isinstance(a, bool):
                     parts.append("true" if a else "false")
+                elif isinstance(a, list):
+                    # P0 (agent report) — V8 console renders a nested
+                    # Array as the `[array Array]` placeholder in the
+                    # captured text (matching the real-browser reference).
+                    parts.append("[array Array]")
                 elif isinstance(a, (int, float)):
                     # P15.1 — JS-like number formatting: Infinity / NaN / whole floats.
                     import math
@@ -3272,7 +3800,7 @@ class Host:
                         parts.append(str(a))
                 else:
                     parts.append(str(a))
-            msg = " ".join(parts)
+            msg = " ".join(parts).rstrip()
             self.log(msg)
             self.logs.append(msg)  # P1.2 — collect
 
@@ -3368,15 +3896,21 @@ class Host:
 
         def parse(text: str):
             """P10.4 — recursive JSON parser: supports nested objects/arrays
-            via stdlib json.loads (pure-stdlib, no external deps)."""
+            via stdlib json.loads (pure-stdlib, no external deps).
+            P0 (agent report) — JS JSON.parse *throws* a SyntaxError on
+            invalid input (matching V8: `Uncaught SyntaxError: Unexpected
+            token ...`).  The legacy silent-None swallowed the error, so
+            `p.q[1].r` on a failed parse logged `null` instead of aborting
+            the script like the real browser.  Raise _Throw so the host's
+            execute-loop catches it and halts the remaining statements."""
             import json as _json
             text = (text or "").strip()
             if not text:
-                return None
+                raise _Throw("SyntaxError: 'null' is not valid JSON")
             try:
                 return _json.loads(text)
-            except (ValueError, TypeError):
-                return None
+            except (ValueError, TypeError) as e:
+                raise _Throw(f"SyntaxError: {e}")
 
         return {"stringify": stringify, "parse": parse}
 
@@ -3481,14 +4015,36 @@ class Host:
         class _ToyDate:
             __slots__ = ("_ts", "_dt")
 
-            def __init__(self, ts=None):
-                if ts is None:
+            def __init__(self, *args):
+                # P0 (agent report) — JS `new Date(year, month, day, h, m, s)`
+                # multi-arg constructor (month is 0-based).  A single numeric
+                # arg is milliseconds since epoch; a single string is parsed.
+                if not args:
                     self._dt = _dt.datetime.now()
                     self._ts = self._dt.timestamp() * 1000.0  # ms since epoch
+                elif len(args) == 1:
+                    v = args[0]
+                    if isinstance(v, str):
+                        parsed = parse_fn(v)
+                        self._ts = parsed if parsed is not None else float("nan")
+                    else:
+                        self._ts = float(v)
+                    self._dt = (
+                        _dt.datetime.fromtimestamp(self._ts / 1000.0)
+                        if self._ts == self._ts  # not NaN
+                        else _dt.datetime(1970, 1, 1)
+                    )
                 else:
-                    # JS semantics: a numeric arg is milliseconds since epoch.
-                    self._ts = float(ts)
-                    self._dt = _dt.datetime.fromtimestamp(self._ts / 1000.0)
+                    # JS local-time constructor: (year, month0, day, h, m, s, ms)
+                    y, mo, d, hh, mi, ss = (
+                        list(args) + [1, 0, 0, 0, 0, 0])[:6]
+                    y = int(y)
+                    # JS year folding: 0-99 → 1900+y
+                    if 0 <= y <= 99:
+                        y += 1900
+                    self._dt = _dt.datetime(int(y), int(mo) + 1, int(d),
+                                            int(hh), int(mi), int(ss))
+                    self._ts = self._dt.timestamp() * 1000.0
 
             def getTime(self):
                 # JS semantics: getTime() returns milliseconds since epoch.
@@ -3523,9 +4079,10 @@ class Host:
             def toISOString(self):
                 return self._dt.isoformat()
 
-        def date_ctor(ts=None):
-            """P4.2 — constructor: `new Date()` → a _ToyDate instance."""
-            return _ToyDate(ts)
+        def date_ctor(*args):
+            """P4.2 — constructor: `new Date()` → a _ToyDate instance.
+            P0 (agent report) — accepts JS multi-arg form (year, month, …)."""
+            return _ToyDate(*args)
 
         date_ctor.now = lambda: _ToyDate().getTime()
         # P29.3 — Date.parse / Date.UTC (toy: parse ISO-8601 subset + ms).
@@ -3584,24 +4141,42 @@ class Host:
 
         def parse_int(v):
             # P9.3 — parseInt: parse the leading integer of a string.
+            # P0 (agent report) — JS returns NaN (not null) on failure.
             import re as _re
+            import math as _math
 
             try:
                 if isinstance(v, str):
                     m = _re.match(r"\s*[-+]?\d+", v)
-                    return int(m.group(0)) if m else None
+                    return int(m.group(0)) if m else float("nan")
                 f = float(v)
-                if math.isinf(f) or math.isnan(f):
-                    return None
+                if _math.isinf(f) or _math.isnan(f):
+                    return float("nan")
                 return int(f)
             except (ValueError, TypeError):
-                return None
+                return float("nan")
 
         def parse_float(v):
-            try:
-                return float(v) if v is not None else None
-            except (ValueError, TypeError):
-                return None
+            # P0 (agent report) — JS parseFloat: parse the leading
+            # numeric prefix of a string, ignoring trailing garbage
+            # (`parseFloat('3.14abc')` → 3.14, not NaN).  Returns
+            # NaN only when no numeric prefix exists.
+            import math as _math
+            import re as _re_pf
+            if v is None:
+                return float("nan")
+            if isinstance(v, (int, float)):
+                return float(v)
+            s = str(v).lstrip()
+            # JS parseFloat grammar: optional sign, digits, optional
+            # fraction, optional exponent.
+            m = _re_pf.match(r"[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?", s)
+            if m:
+                try:
+                    return float(m.group(0))
+                except ValueError:
+                    return float("nan")
+            return float("nan")
 
         return {
             "isInteger": is_integer,
@@ -3778,8 +4353,19 @@ class Host:
                 result = [m.group(0)]
                 for i in range(1, m.re.groups + 1):
                     result.append(m.group(i))
-                result.append([m.start(), m.end()])
-                return result
+                # P0 (agent report) — JS `RegExp.exec` returns an Array with
+                # an `index` property (the start offset of the match) and an
+                # `input` property (the searched string).  Render as a dict
+                # so that `m.index` / `m.input` resolve via property access,
+                # while `m[0]` / `m[1]` / `m.length` still work through
+                # the numeric-key dict lookups in eval_member / call_method.
+                return {
+                    "0": m.group(0),
+                    **{str(i): m.group(i) for i in range(1, m.re.groups + 1)},
+                    "length": 1 + m.re.groups,
+                    "index": m.start(),
+                    "input": s or "",
+                }
 
             def match_fn(s: str):
                 """P29.1 — String.prototype.match equivalent on a regex:
@@ -3879,12 +4465,17 @@ class Host:
         """Return a dict acting as a toy Promise with .then()/.catch()/.resolve()."""
         self._promise_counter += 1
         p_id = self._promise_counter
-        state = {"resolved": None, "settled": False, "then_cbs": []}
+        # P0 (agent report) — track fulfilment vs rejection: ``ok``
+        # distinguishes a *rejected* settled promise from a fulfilled one
+        # so that a later ``.then``/``.catch`` on an already-settled
+        # promise routes to the correct handler.
+        state = {"resolved": None, "settled": False, "ok": True, "then_cbs": []}
 
         def _resolve(val):
             if state["settled"]:
                 return
             state["resolved"] = val
+            state["ok"] = True
             state["settled"] = True
             for cb in list(state["then_cbs"]):
                 cb(True, val)
@@ -3894,6 +4485,7 @@ class Host:
             if state["settled"]:
                 return
             state["resolved"] = err
+            state["ok"] = False
             state["settled"] = True
             for cb in list(state["then_cbs"]):
                 cb(False, err)
@@ -3912,32 +4504,61 @@ class Host:
             return str(r)
 
         def then(on_fulfilled=None, on_rejected=None):
-            """Return a new promise; chainable. If settled, run handler now."""
+            """Return a new promise; chainable. If settled, run handler now.
+
+            P0 (agent report) — the returned promise resolves to the
+            handler's return value (JS Promise.then semantics).  A
+            handler that returns a plain value resolves the new promise
+            with that value; the value is NOT auto-logged (the legacy
+            code called ``self.log(_log_val(r))`` here, which leaked
+            intermediate chain values into the console).  The next
+            ``.then`` in the chain picks the resolved value up.
+            """
+            np = self._make_promise()
+            n_resolve = np["__resolve__"]
+            n_reject = np["__reject__"]
+
             def _handler(settled_ok, val):
                 if settled_ok:
                     handler = on_fulfilled if callable(on_fulfilled) else (lambda v: v)
-                    r = handler(val)
+                    try:
+                        r = handler(val)
+                    except _Throw as t:
+                        n_reject(t.value)
+                        return
                     if isinstance(r, dict) and r.get("__promise__"):
-                        r["__then__"](on_rejected)
-                    elif r is not None:
-                        self.log(_log_val(r))
+                        r["__then__"](lambda v: n_resolve(v),
+                                      lambda e: n_reject(e))
+                    else:
+                        n_resolve(r)
                 else:
                     if callable(on_rejected):
-                        on_rejected(val)
+                        try:
+                            r = on_rejected(val)
+                        except _Throw as t:
+                            n_reject(t.value)
+                            return
+                        if isinstance(r, dict) and r.get("__promise__"):
+                            r["__then__"](lambda v: n_resolve(v),
+                                          lambda e: n_reject(e))
+                        else:
+                            n_resolve(r)
                     else:
-                        self.log(f"unhandled rejection: {val}")
+                        n_reject(val)
 
             if state["settled"]:
-                _handler(True, state["resolved"])
+                _handler(state["ok"], state["resolved"])
             else:
                 state["then_cbs"].append(_handler)
-            return self._make_promise()
+            return np
 
         def catch(on_rejected=None):
             return then(None, on_rejected)
 
         p = {
             "__promise__": True,
+            "then": then,
+            "catch": catch,
             "__then__": then,
             "__catch__": catch,
             "__resolve__": _resolve,
@@ -3946,11 +4567,37 @@ class Host:
         }
 
         if callable(executor):
+            # P0 (agent report) — the executor runs *before* the promise
+            # dict is returned so that a ``Promise.resolve``-style
+            # already-settled promise resolves synchronously (matching
+            # the toy's synchronous-Promise semantics).
             try:
                 executor(_resolve, _reject)
+            except _Throw as t:
+                _reject(t.value)
             except (NameError, TypeError, ZeroDivisionError, AttributeError) as e:
                 self.log(f"Promise executor error: {e}")
         return p
+
+    # P0 (agent report) — `Promise.resolve(v)` / `Promise.reject(e)`
+    # return an already-settled promise (JS semantics: the `.then`
+    # handler runs synchronously on the *next* tick; in the toy,
+    # handlers registered via `.then` on a settled promise run
+    # immediately when the promise is created).
+    def _promise_global(self) -> dict:
+        def resolve(val=None, *extra):
+            p = self._make_promise()
+            p["__resolve__"](val)
+            return p
+        def reject(err=None, *extra):
+            p = self._make_promise()
+            p["__reject__"](err)
+            return p
+        def construct(executor=None, *extra):
+            # P0 — `new Promise(executor)` / `Promise(executor)`: the dict
+            # global is called as a constructor.  Route to the factory.
+            return self._make_promise(executor)
+        return {"resolve": resolve, "reject": reject, "__construct__": construct}
 
     def _fetch(self, url: str) -> str:
         u = (url or "").lower()
@@ -3963,7 +4610,10 @@ class Host:
         if method == "getElementById":
             def get_by_id(id_str: str):
                 el = self.element_table.get(id_str)
-                return el if el else None
+                # P0 (agent report) — wrap the element with the host ref
+                # so `_listeners_of` / `add_event_listener` /
+                # `dispatch_event` route through the Host registry.
+                return DomElement(el.node, self) if el else None
             return get_by_id
         if method == "querySelectorAll":
             def qsa(sel: str):
@@ -4117,7 +4767,12 @@ class Host:
                 return _sep.join(_flat_str(v) for v in obj)
             if method == "join":
                 def _js_num(v):
-                    # P5.3 — JS-style number formatting (whole floats no decimal)
+                    # P5.3 — JS-style number formatting (whole floats no decimal).
+                    # P0 (agent report) — JS `Array.join`: `undefined` and
+                    # `null` elements render as EMPTY STRING (V8:
+                    # `[1, undefined, undefined].join(',')` → `'1,,'`).
+                    if v is None or isinstance(v, _UndefinedSentinel):
+                        return ""
                     if isinstance(v, float) and v == int(v):
                         return str(int(v))
                     return str(v)
@@ -4126,8 +4781,23 @@ class Host:
             if method == "length":
                 return len(obj)
             if method == "slice":
+                # P0 (agent report) — JS slice: negative indices count
+                # from the end; out-of-range clamps to 0 / len; empty
+                # result for start >= end.
+                n = len(obj)
                 start = args[0] if len(args) > 0 else 0
-                end = args[1] if len(args) > 1 else len(obj)
+                end = args[1] if len(args) > 1 else n
+                # Coerce to int (JS numbers are floats in the toy).
+                start = int(start) if isinstance(start, (int, float)) else 0
+                end = int(end) if isinstance(end, (int, float)) else n
+                if start < 0:
+                    start = max(0, n + start)
+                if end < 0:
+                    end = max(0, n + end)
+                start = min(start, n)
+                end = min(end, n)
+                if start >= end:
+                    return []
                 return obj[start:end]
             if method == "indexOf":
                 if args and args[0] in obj:
@@ -4154,7 +4824,10 @@ class Host:
                 return None
             if method == "join":
                 def _js_num(v):
-                    # P5.3 — JS-style number formatting (whole floats no decimal)
+                    # P5.3 — JS-style number formatting (whole floats no decimal).
+                    # P0 (agent report) — `undefined`/`null` → empty string.
+                    if v is None or isinstance(v, _UndefinedSentinel):
+                        return ""
                     if isinstance(v, float) and v == int(v):
                         return str(int(v))
                     return str(v)
@@ -4265,7 +4938,7 @@ class Host:
                     else:
                         out.append(r)
                 return out
-            # P15.1 — Array.at(index)
+            # P15.1 — Array.at(index); P0 (agent report): out-of-range → undefined.
             if method == "at":
                 if args:
                     idx = int(args[0])
@@ -4273,7 +4946,7 @@ class Host:
                         idx += len(obj)
                     if 0 <= idx < len(obj):
                         return obj[idx]
-                return None
+                return _UNDEFINED
             # P15.1 — Array.flat with Infinity depth
             if method == "flat_deep":
                 out = list(obj)
@@ -4443,6 +5116,7 @@ class Host:
                         return fn(obj)
                 return None
             # P29.3 — String tail: at / codePointAt / normalize.
+            # P0 (agent report) — out-of-range / no-arg → undefined (not null).
             if method == "at":
                 if args:
                     idx = int(args[0])
@@ -4450,13 +5124,13 @@ class Host:
                         idx += len(obj)
                     if 0 <= idx < len(obj):
                         return obj[idx]
-                return None
+                return _UNDEFINED
             if method == "codePointAt":
                 if args:
                     idx = int(args[0])
                     if 0 <= idx < len(obj):
                         return ord(obj[idx])
-                return None
+                return _UNDEFINED
             return None
 
     def eval_element_prop(self, el: DomElement, prop: str):
@@ -4465,6 +5139,24 @@ class Host:
         if prop in ("textContent", "innerText", "innerHTML"):
             # P30.2 — textContent reflects the live tree, so re-wrap the
             # element to drop any stale view and read fresh.
+            # P0 (agent report) — V8 innerText inserts ``\n`` between
+            # block-level child elements (``<div>a</div><b>B</b>`` →
+            # ``"a\nB"``).  The toy DOM has no block classification, so
+            # approximate: join *element* children's text with ``\n``.
+            # textContent keeps plain concatenation (V8 textContent has
+            # no line breaks); only innerText uses the newline join.
+            if prop == "innerText":
+                chunks: list[str] = []
+                for c in el.node.children:
+                    if c.is_element():
+                        t = c.text_content()
+                        if t:
+                            chunks.append(t)
+                    else:
+                        t = c.text or ""
+                        if t:
+                            chunks.append(t)
+                return "\n".join(chunks)
             return el.node.text_content()
         if prop == "style":
             eid = el.id or f"__anon_{id(el.node)}"
@@ -4568,6 +5260,12 @@ class Host:
         return None
 
     def eval_element_method(self, el: DomElement, method: str, args: list):
+        # P0 (agent report) — `el.click()`: real browsers dispatch a click
+        # event, which runs the element's onclick handler with `this`
+        # bound to the element.  Mirror that here.
+        if method == "click":
+            self.execute_event(el.id or "", "onclick")
+            return None
         # P15.2 — scrollIntoView() / scrollBy()
         if method == "scrollIntoView":
             # Toy: log the scroll target (no real scroll animation in headless).
@@ -4630,6 +5328,16 @@ class Host:
         elif prop in ("children", "parentElement", "tagName"):
             # P30.2 — read-only structural properties: assignment is a no-op.
             return
+        elif prop.startswith("on") and callable(value):
+            # P0 (agent report) — JS event-handler property assignment:
+            # `el.onclick = function() {...}` stores the *function value*
+            # in a Host-level registry (keyed by element id), NOT in
+            # the DOM attribute string.  The legacy fallback wrote
+            # ``str(fn)`` (``<function ...>``) into the attribute, which
+            # later failed to parse as JS ("unexpected token '<'").
+            eid = el.id or f"__anon_{id(el.node)}"
+            self._js_props.setdefault(eid, {})[prop] = value
+            return
         else:
             node.set_attr(prop, str(value))
 
@@ -4645,7 +5353,18 @@ class Host:
     def execute_all(self):
         scripts = self._collect_scripts(self.root)
         for s in scripts:
-            self.execute(s)
+            try:
+                self.execute(s)
+            except JSUncaughtError as e:
+                # P0 (agent report) — script aborted mid-execution;
+                # the GUI console should still surface it.  Stop
+                # executing the remaining scripts on this page
+                # (real-browser semantics: one uncaught error in a
+                # <script> does not abort the whole page, but the
+                # remaining scripts on the same tag would; the toy
+                # engine runs each collected script as one program,
+                # so we log and continue with the others).
+                self.log(f"uncaught throw: {e.value}")
         self.flush_timers()
         self.flush_raf()  # P1.2
 
@@ -4654,6 +5373,13 @@ class Host:
         element.  ``event_name`` selects which attribute to read (default
         ``onclick``); P13.4 extends it to ``oninput`` / ``onfocus``.
 
+        P0 (agent report) — a JS-level property assignment
+        (``el.onclick = function(){...}``) is stored in the
+        :attr:`_js_props` registry, not in the DOM attribute string.
+        If the registry has the handler, it is invoked directly with
+        ``this`` bound to the element.  Otherwise the legacy
+        attribute-string path (inline HTML ``onclick="…"``) is used.
+
         If the named handler is not set, P13.4 falls back to event
         delegation: the handler is looked up on the nearest ancestor with
         the same ``event_name`` attribute set (toy semantics — no real
@@ -4661,6 +5387,25 @@ class Host:
         """
         el = self.element_table.get(element_id)
         if el is None:
+            return
+        # P0 (agent report) — check the JS-level property registry first.
+        js_fn = self._js_props.get(element_id, {}).get(event_name)
+        if callable(js_fn):
+            # P0 (agent report) — bind `this` to the target element on
+            # the closure's interpreter so `this.style.display = …`
+            # resolves to the element (P11.4 semantics, matching the
+            # inline ``onclick="…"`` attribute path).  The closure
+            # interpreter is exposed as ``_toy_closure_interp`` on the
+            # Python callable produced by _make_func / _make_arrow.
+            closure_interp = getattr(js_fn, "_toy_closure_interp", None)
+            if closure_interp is not None:
+                closure_interp.this_value = el
+                try:
+                    js_fn()
+                finally:
+                    closure_interp.this_value = None
+            else:
+                js_fn()
             return
         handler = el.node.attr(event_name)
         if not handler:
@@ -4718,8 +5463,13 @@ class Host:
         except _Return:
             pass
         except _Throw as exc:
-            # P11.2 — uncaught throw: log the thrown value, don't crash.
-            self.log(f"uncaught throw: {exc.value}")
+            # P0 (agent report) — an uncaught throw aborts the script
+            # (real-browser semantics).  No console-log entry: surface
+            # it to the caller as JSUncaughtError so hosts that need
+            # to observe script failure (GUI console, test runners)
+            # can log / mark the run; the legacy log-and-swell
+            # behavior polluted the console log stream.
+            raise JSUncaughtError(exc.value) from exc
         except _BudgetExceeded as exc:
             # P0 (GPT report) — a script that never terminates, or
             # that exceeds the per-call step budget, must not hang
@@ -4812,7 +5562,13 @@ class Host:
     def flush_timers(self) -> None:
         while self._timers:
             code, _ = self._timers.pop(0)
-            self.execute(code)
+            try:
+                self.execute(code)
+            except JSUncaughtError as e:
+                # P0 (agent report) — timer callback throws uncaught:
+                # log it (mirrors the execute_all catch) and drain the
+                # remaining timers; do not crash the host.
+                self.log(f"uncaught throw (timer): {e.value}")
 
 
 HostGlobals = Host

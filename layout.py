@@ -17,7 +17,6 @@ from dom import Node
 from paint import Color
 import text as text_mod
 import font
-from css import resolve_length as _resolve_length
 
 
 # P33.R5 — module-level caches and constants (hot-path shortcuts).
@@ -93,6 +92,14 @@ _SPECIAL_PROPS = frozenset((
     "min-width", "max-width", "min-height", "max-height",
     "outline", "outline-width", "clip-path", "background-image",
     "text-shadow", "background",
+    # P0 (agent report) — box-sizing changes how explicit width/height are
+    # resolved (border-box subtracts padding + border), so a box carrying
+    # `box-sizing: border-box` must NOT take the fast path's content-box
+    # assumptions.  The `border`/`padding`/`margin` shorthands (and their
+    # longhand forms) likewise break the fast path's zero-edge default.
+    "box-sizing", "border", "border-width", "border-color", "border-style",
+    "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
 ))
 # P33.P1 — fast path additionally requires a small props map: a div with
 # 5+ properties is not a "plain block" and should go through the slow
@@ -185,6 +192,9 @@ class LayoutBox:
     text_align: str = "left"
     explicit_height: Optional[float] = None
     explicit_width: Optional[float] = None
+    # P0 (agent report) — box-sizing: "border-box" makes explicit
+    # width/height the border-box size (content = explicit - padding - border).
+    box_sizing: str = ""
     is_display_none: bool = False
     line_height_px: float = DEFAULT_FONT_PX
     children: list = field(default_factory=list)
@@ -547,6 +557,7 @@ def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, 
                 csn.parent_height_px = parent_h
             cb = build_box(csn, my_font, parent_font_family,
                            explicit_h if explicit_h is not None else None)
+            csn.__box = cb  # P0 (agent report) — back-link for flex sizing
             cb.parent = bx
             if csn.is_display_none():
                 cb.rect = Rect()
@@ -618,6 +629,10 @@ def build_box(sn: StyledNode, parent_font_px: float,
               parent_font_family: str = "", parent_height_px: float | None = None,
               available_w: float | None = None) -> LayoutBox:
     node = sn.dom
+    # P0 (agent report) — keep the StyledNode reachable from the box so
+    # layout-time passes (e.g. flex basis capping) can re-derive explicit
+    # width/height that the fast path below zeroes out.  Each child box
+    # back-links to its child StyledNode via ``csn.__box``.
     # P33.R5 — cache the is_element result (hot path: called 2000+ times
     # per 1000-node layout).  Node.node_type is a plain string; comparing
     # it directly is faster than the method call.
@@ -920,26 +935,27 @@ def build_box(sn: StyledNode, parent_font_px: float,
         if ff_raw is not None:
             ff_str = getattr(ff_raw, "value", ff_raw)
             font_family = font.family_from_css(str(ff_str))
-        bx = LayoutBox(
-            BoxType.BLOCK,
-            Rect(),
-            padding, border, margin,
-            text_content=text_str or None,
-            text_color=col_val,
-            background=bg_color,
-            border_color=_DEFAULT_BORDER_COLOR,
-            font_px=my_font,
-            text_align=ta,
-            explicit_width=explicit_w,
-            explicit_height=explicit_h,
-            line_height_px=my_font * 1.2,  # P33.P1 — fast-path default line height
-            children=[],
-            dom=node,
-            child_index=child_index,
-            font_family=font_family,
-        )
-        _build_children(bx, sn, my_font, parent_font_family, explicit_h, available_w)
-        return bx
+            bx = LayoutBox(
+                BoxType.BLOCK,
+                Rect(),
+                padding, border, margin,
+                text_content=text_str or None,
+                text_color=col_val,
+                background=bg_color,
+                border_color=_DEFAULT_BORDER_COLOR,
+                font_px=my_font,
+                text_align=ta,
+                explicit_width=explicit_w,
+                explicit_height=explicit_h,
+                line_height_px=my_font * 1.2,  # P33.P1 — fast-path default line height
+                children=[],
+                dom=node,
+                child_index=child_index,
+                font_family=font_family,
+            )
+            bx.dom_sn = sn  # P0 (agent report) — back-link for flex sizing
+            _build_children(bx, sn, my_font, parent_font_family, explicit_h, available_w)
+            return bx
     # P1.4 — Flexbox: read display:flex / flex-direction / justify-content / align-items.
     is_flex = False
     flex_direction = "row"
@@ -1508,6 +1524,21 @@ def build_box(sn: StyledNode, parent_font_px: float,
             if m_w:
                 font_weight = int(m_w.group(1))
 
+    # P0 (agent report) — box-sizing: border-box makes an explicit
+    # width/height the border-box size (subtract padding + border for
+    # content).  Sourced from the cascaded `box-sizing` declaration when
+    # present (author + UA), else the inline style attribute (the toy
+    # CSS cascade keeps longhands in ``sn.props``; ``*{box-sizing:…}``
+    # resets usually arrive there).
+    _bs_val = sn.props.get("box-sizing")
+    if _bs_val is not None:
+        box_sizing = str(getattr(_bs_val, "value", _bs_val)).strip().lower()
+    else:
+        _style_txt = node.attr("style") or "" if is_element else ""
+        import re as _re_bs
+        _m_bs = _re_bs.search(r"(?:^|;)\s*box-sizing\s*:\s*([^;]+)", _style_txt, _re_bs.IGNORECASE)
+        box_sizing = _m_bs.group(1).strip().lower() if _m_bs else ""
+
     bx = LayoutBox(
         box_type=(
             BoxType.INLINE
@@ -1529,6 +1560,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
         text_align=text_align,
         explicit_height=explicit_h,
         explicit_width=explicit_w,
+        box_sizing=box_sizing,
         is_display_none=sn.is_display_none(),
         line_height_px=sn.line_height_px(),
         dom=node if is_element else None,
@@ -1636,6 +1668,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
         control_tabindex=control_tabindex,
         control_required=control_required,
     )
+    bx.dom_sn = sn  # P0 (agent report) — back-link for flex sizing
 
     if is_element:
         if tag == "iframe":
@@ -1914,11 +1947,37 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
 
     padding_l = bx.padding.left
     padding_t = bx.padding.top
+    padding_r = bx.padding.right
+    padding_b = bx.padding.bottom
     margin_l = bx.margin.left
     margin_r = bx.margin.right
     # P26.5 — CSS2.1 §10.3 simplified auto-width resolution:
     #   w = max(0, containing - margin_l - margin_r - padding - border)
-    available = max(0.0, containing_w - margin_l - margin_r - padding_l * 2.0)
+    # P0 (agent report) — box-sizing:border-box: an explicit width is the
+    # BORDER-box width, so the content width subtracts padding *and* border;
+    # with content-box (default) the explicit width is the content width and
+    # the box grows outward by padding/border.
+    border_w_total = bx.border.left + bx.border.right
+    border_h_total = bx.border.top + bx.border.bottom
+    box_border_box = getattr(bx, "box_sizing", "") == "border-box"
+    if bx.explicit_width is not None:
+        if box_border_box:
+            available = max(0.0, bx.explicit_width - padding_l - padding_r
+                            - border_w_total)
+        else:
+            available = bx.explicit_width
+            # legacy content-box: content width = explicit; total width
+            # grows out by padding + border (recorded on the box below).
+    else:
+        available = max(0.0, containing_w - margin_l - margin_r - padding_l - padding_r
+                        - (border_w_total if box_border_box else 0.0))
+    if bx.explicit_height is not None:
+        if box_border_box:
+            explicit_content_h = max(0.0, bx.explicit_height - padding_t - padding_b - border_h_total)
+        else:
+            explicit_content_h = bx.explicit_height
+    else:
+        explicit_content_h = None
 
     tag = (bx.dom.tag if bx.dom and bx.dom.is_element() else None) or ""
     is_iframe = tag == "iframe"
@@ -1926,8 +1985,6 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
     is_input = tag == "input"
     is_textarea = tag == "textarea"
 
-    if bx.explicit_width is not None:
-        available = bx.explicit_width - padding_l * 2.0
     # P26.4 — CSS2.1 §10.4: min/max width clamp the computed width
     # (also applied to auto-width boxes, per the spec).
     if bx.max_width > 0:
@@ -2076,19 +2133,26 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         _layout_table(bx, content_x0, content_y0, available, containing_w)
         return
 
-    # P26.1 — margin collapse: this box's top margin collapses with its
-    # first in-flow block child's top margin (CSS2.1 §9.5.1).  The
-    # collapsed margin pokes above the box's top edge, so the caller's
-    # starting y must be advanced by the *difference* between the box's
-    # own top margin and the collapsed amount; the box's top margin is
-    # what normally separates it from the previous sibling.
-    first_block_child: LayoutBox | None = None
+    # P0 (agent report) — top margin collapse (CSS2.1 §9.5.1): when this
+    # box's first in-flow block child is laid out at the parent's content
+    # top edge (offset 0), its top margin collapses with the box's own
+    # top margin.  The collapsed amount pokes ABOVE the box's top edge,
+    # so the caller's starting y must advance by the box's top margin
+    # minus the collapse.  Flex / grid / table containers, BFCs
+    # (overflow != visible) and absolutely-positioned boxes do NOT
+    # collapse — they keep the full top margin.
+    # Padding/border also prevent collapse (CSS2.1 §9.5.1.2).
+    _first_block_child: LayoutBox | None = None
     for cb in bx.children:
         if cb.box_type == BoxType.BLOCK and not cb.is_float and not cb.is_display_none:
-            first_block_child = cb
+            _first_block_child = cb
             break
-    if first_block_child is not None:
-        collapsed = _fold_margins(bx, first_block_child)
+    if (_first_block_child is not None
+            and not bx.is_flex and not bx.is_grid and not bx.is_table
+            and not bx.is_absolute and not bx.is_relative and not bx.is_float
+            and bx.overflow_hidden in (False, "")
+            and bx.padding.top == 0 and bx.border.top == 0):
+        collapsed = _fold_margins(bx, _first_block_child)
         y += bx.margin.top - collapsed
 
     # P5.2 — CSS float: children with float:left/right are positioned at
@@ -2275,8 +2339,10 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         h = child_y
     else:
         h = _element_placeholder_height(bx)
-    if bx.explicit_height is not None:
-        h = bx.explicit_height
+    # P0 (agent report) — border-box: explicit height is the border-box
+    # height, so the content height subtracts padding + border.
+    if explicit_content_h is not None:
+        h = explicit_content_h
     if is_img and bx.explicit_width is None:
         h = LayoutBox.IMG_DEFAULT_H
     if is_iframe and h < LayoutBox.IFRAME_PLACEHOLDER_H:
@@ -2317,6 +2383,15 @@ def _element_placeholder_height(bx: LayoutBox) -> float:
     if tag == "img":
         return LayoutBox.IMG_DEFAULT_H
     return bx.line_height_px
+
+
+def _styled_node_of(bx: "LayoutBox"):
+    """P0 (agent report) — recover the StyledNode that produced *bx*.
+
+    ``build_box`` back-links ``bx.dom_sn`` on both the fast and slow
+    paths; the flex sizing pass uses it to re-derive the explicit CSS
+    width/height of items whose box-level values the fast path drops."""
+    return getattr(bx, "dom_sn", None)
 
 
 def _layout_flex(
@@ -2378,6 +2453,17 @@ def _layout_flex(
     # basis = flex-basis if set and >= 0, else main-axis size (explicit),
     # else max-content size (the natural main-axis size measured at the
     # containing width in Phase 0).
+    # P0 (agent report) — a flex item with an explicit cross-axis size
+    # (width in row / height in column) that is NOT the main axis must
+    # keep it: the legacy code ignored it and the item's cross size fell
+    # through to the text line-height.  Record those here so the
+    # stretch pass in Phase 5 can honour them.
+    cross_explicit: list[float | None] = []
+    for cb in ordered:
+        if row:
+            cross_explicit.append(cb.explicit_height)
+        else:
+            cross_explicit.append(cb.explicit_width)
     bases = []
     for i, cb in enumerate(ordered):
         if cb.flex_basis is not None and cb.flex_basis >= 0:
@@ -2392,6 +2478,41 @@ def _layout_flex(
             # no content the natural size is small, so they still absorb
             # most of the free space through flex-grow.
             bases.append(max(0.0, natural_main[i]))
+
+    # P0 (agent report) — flex items with an explicit main-axis size must
+    # not stretch to the available width: cap the flex basis at that size.
+    # build_box's fast path zeroes explicit_width for plain blocks, so
+    # when the box-level value is missing we re-derive the explicit CSS
+    # size from the item's child StyledNode (width_px / height_px),
+    # falling back to the Phase-0 natural main size otherwise.
+    _styled_children = _styled_node_of(bx)
+    _styled_by_dom = {}
+    if _styled_children is not None:
+        for csn in getattr(_styled_children, "children", []):
+            if csn.dom is not None:
+                _styled_by_dom[id(csn.dom)] = csn
+    _item_explicit = [None] * n
+    for i, cb in enumerate(ordered):
+        _cap = (cb.explicit_width if row else cb.explicit_height)
+        if _cap is not None:
+            # border-box semantics: the explicit main size is the
+            # border-box size, so the content basis subtracts the item's
+            # own padding + border (CSS box-sizing §3).
+            _pb = (cb.padding.left + cb.padding.right + cb.border.left + cb.border.right
+                   if (getattr(cb, "box_sizing", "") == "border-box")
+                   else 0.0)
+            _cap = max(0.0, _cap - _pb)
+            _item_explicit[i] = _cap
+        else:
+            _csn = _styled_by_dom.get(id(cb.dom)) if cb.dom is not None else None
+            if _csn is not None:
+                _cap2 = (_csn.width_px() if row else _csn.height_px())
+                if _cap2 is not None:
+                    _item_explicit[i] = _cap2
+        if _item_explicit[i] is None:
+            bases[i] = min(bases[i], natural_main[i])
+        else:
+            bases[i] = min(bases[i], _item_explicit[i])
 
     # --- Phase 2: flex grow/shrink (spec §9.7 simplified single-pass) ---
     total_basis = sum(bases)
@@ -2573,12 +2694,33 @@ def _layout_flex(
 
             for pos, i in enumerate(line):
                 cb = ordered[i]
+                # P0 (agent report) — main-axis sizing: an explicit main-axis
+                # size (width in row / height in column, honouring
+                # box-sizing:border-box) must beat the natural content
+                # measure, so `width:80px` items do not stretch to the
+                # available width.
                 w = sized[i]
+                _main_exp = (cb.explicit_width if row else cb.explicit_height)
+                if _main_exp is not None:
+                    if cb.box_sizing == "border-box":
+                        _bb_pad = (cb.padding.left + cb.padding.right
+                                   if row else cb.padding.top + cb.padding.bottom)
+                        _bb_brd = (cb.border.left + cb.border.right
+                                   if row else cb.border.top + cb.border.bottom)
+                        w = max(0.0, _main_exp - _bb_pad - _bb_brd)
+                    else:
+                        w = _main_exp
                 # P27.4 — cross-axis alignment for this item (item height
                 # = natural_cross; stretch fills the line height).
                 item_align = cb.align_self if cb.align_self else bx.align_items
-                ch = natural_cross[i]
-                if item_align in ("stretch", "") and (row and cb.explicit_height is None):
+                # P0 (agent report) — an explicit cross-axis size beats the
+                # natural measure (a `height` on the item).
+                ch = cross_explicit[i]
+                if ch is None:
+                    # fall back to the Phase-0 measured cross size, which for
+                    # border-box items already includes padding + border.
+                    ch = max(natural_cross[i], cb.rect.h)
+                if item_align in ("stretch", "") and cross_explicit[i] is None:
                     layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
                     if reverse:
                         item_x -= w
@@ -2722,11 +2864,23 @@ def _layout_grid(
         layout_block(cb, cx, cy, col_w)
         row_h = cb.rect.h + cb.padding.top + cb.padding.bottom
         row_max_h[row] = max(row_max_h.get(row, 0.0), row_h)
+    # P0 (agent report) — row track distribution: when the grid has an
+    # explicit height (and no fixed grid-template-rows track sizes), the
+    # available row space is split evenly across the occupied rows,
+    # mirroring `grid-template-rows: 1fr 1fr` semantics.  Without an
+    # explicit height the auto rows stay content-sized (legacy behaviour).
+    row_h_list: list[float] = []
+    for row in range(len(row_max_h)):
+        if bx.explicit_height is not None:
+            n_rows = len(row_max_h)
+            row_h_list.append(max(bx.explicit_height / n_rows, row_max_h.get(row, 0.0)))
+        else:
+            row_h_list.append(row_max_h.get(row, 0.0))
     # P33.R4 — compute cumulative row offsets for the next pass.
     total_h = 0.0
     for row in range(len(row_max_h)):
         row_y[row] = total_h
-        total_h += row_max_h.get(row, 0.0)
+        total_h += row_h_list[row]
     # Phase 3: re-position children at their correct row y-offsets.
     for idx, cb in enumerate(visible):
         row = idx // cols
@@ -2734,7 +2888,15 @@ def _layout_grid(
         cx = content_x0 + col * col_w
         cy = content_y0 + row_y.get(row, 0.0)
         layout_block(cb, cx, cy, col_w)
-    bx.rect = Rect(content_x0, content_y0, available, max(total_h, bx.line_height_px))
+        # P0 (agent report) — stretch cell content into its row track when
+        # the container height distributes the space.
+        if bx.explicit_height is not None:
+            track_h = row_h_list[row] - cb.padding.top - cb.padding.bottom
+            if track_h > cb.rect.h:
+                cb.rect.h = track_h
+    bx.rect = Rect(content_x0, content_y0, available,
+                   bx.explicit_height if bx.explicit_height is not None
+                   else max(total_h, bx.line_height_px))
 
 
 def _layout_table(
@@ -2755,7 +2917,10 @@ def _layout_table(
         bx.rect = Rect(content_x0, content_y0, available, bx.line_height_px)
         return
 
-    # Phase 1 — lay out every row child to get natural cell widths.
+    # Phase 1 — lay out every row child at the *containing* width (NOT the
+    # shrunken auto table width) so cells measure their natural text
+    # content without being pre-stretched; Phase 2 below re-lays cells at
+    # their final column width.
     for cb in bx.children:
         layout_block(cb, content_x0, content_y0, containing_w)
 
@@ -2779,9 +2944,39 @@ def _layout_table(
         bx.rect = Rect(content_x0, content_y0, available, max(child_y, bx.line_height_px))
         return
 
-    # Column widths: distribute available space equally, then let each cell's
-    # natural width participate (simplified: equal columns).
-    col_w = available / n_cols
+    # Column widths: P0 (agent report) — a table without an explicit width
+    # auto-sizes to its content: each column is the natural (unwrapped)
+    # text width of the widest cell + padding + border, like a real
+    # browser's `width:auto` table.  A table with an explicit width keeps
+    # the legacy equal-column distribution.
+    import text as _text_mod
+    col_max: list[float] = [0.0] * n_cols
+    for row in rows:
+        cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
+        for ci in range(min(n_cols, len(cells))):
+            c = cells[ci]
+            # measure the cell's natural (unwrapped) content width.
+            _t = (c.text_content or "")
+            if c.children:
+                _parts = [gc.text_content for gc in c.children
+                          if gc.box_type == BoxType.TEXT and gc.text_content]
+                if _parts:
+                    _t = " ".join(_parts)
+            _natural = _text_mod.measure(_t, c.font_px) if _t else 0.0
+            _cw = (_natural + c.padding.left + c.padding.right
+                   + c.border.left + c.border.right)
+            col_max[ci] = max(col_max[ci], _cw)
+    explicit_table_w = bx.explicit_width
+    if explicit_table_w is not None:
+        # legacy: distribute the explicit width equally across columns
+        col_w_list = [explicit_table_w / n_cols] * n_cols
+        col_w = explicit_table_w / n_cols
+    else:
+        # auto: shrink-to-fit columns at their natural content width,
+        # never wider than the containing block.
+        col_w_list = [max(w, 1.0) for w in col_max]
+        col_w = max(col_w_list) if col_w_list else 0.0
+        available = min(sum(col_w_list), containing_w)
 
     # Phase 2 — position rows and cells.
     child_y = 0.0
@@ -2795,7 +2990,7 @@ def _layout_table(
         for ci in range(n_cols):
             if ci < n_cells:
                 cell = cells[ci]
-                cw = col_w if ci < n_cols - 1 else (available - col_w * (n_cols - 1))
+                cw = col_w_list[ci]
                 # Force the cell width.
                 cell.explicit_width = cw
                 layout_block(cell, cell_x, content_y0 + child_y, cw)
@@ -2803,7 +2998,7 @@ def _layout_table(
                 row_h = max(row_h, cell.outer_height())
             else:
                 # Empty cell — just advance.
-                cell_x += col_w
+                cell_x += col_w_list[ci]
         # Finalize row.
         row.explicit_height = row_h if row_h > 0 else bx.line_height_px
         row.rect = Rect(content_x0, content_y0 + child_y, available, row_h)
@@ -2812,9 +3007,8 @@ def _layout_table(
         for ci in range(n_cells):
             cell = cells[ci]
             cell.rect.y = content_y0 + child_y
-            cw = col_w if ci < n_cols - 1 else (available - col_w * (n_cols - 1))
             cell.rect.x = cx
-            cx += cw
+            cx += col_w_list[ci]
         child_y += row_h
 
     bx.rect = Rect(content_x0, content_y0, available, max(child_y, bx.line_height_px))

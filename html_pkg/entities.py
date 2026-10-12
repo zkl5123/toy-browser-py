@@ -86,7 +86,9 @@ _NAMED_ENTITIES: dict[str, str] = {
     "ldquo": "\u201C", "rdquo": "\u201D",
     "lnot": "\u00AC", "macr": "\u00AF", "ordf": "\u00AA",
     "ordm": "\u00BA", "para": "\u00B6",
-    "times": "\u00D7", "divide": "\u00F7", "deg": "\u00B0",
+    # P0 (agent report) — the legacy duplicate `times`/`divide`/`deg`
+    # entries here (F601) are removed; the canonical definitions live in
+    # the "Currencies / math / symbols" block above (line 35).
     "plus": "+", "minus": "-",
 }
 

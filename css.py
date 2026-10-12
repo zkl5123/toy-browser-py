@@ -101,11 +101,17 @@ def parse_color(text: str) -> Color | None:
     return None
 
 
-def parse_declaration_pairs(src: str) -> dict[str, Value]:
+def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -> dict[str, Value]:
     """Parse 'color: red; font-size: 14px;' into a property map.
 
     P25.2 — supports ``!important`` suffix: ``color: red !important``
-    wraps the value in :class:`ImportantDecl`."""
+    wraps the value in :class:`ImportantDecl`.
+
+    P0 (agent report) — the earlier 1-arg duplicate at line 104 is removed;
+    this single definition carries the optional ``parent_font_px`` so
+    shorthand edge props (margin/padding/border-width) resolve in em units.
+    Callers that pass no font still work (default applies).
+    """
     out: dict[str, Value] = {}
     for decl in src.split(";"):
         if ":" not in decl:
@@ -120,6 +126,11 @@ def parse_declaration_pairs(src: str) -> dict[str, Value]:
         if val.lower().endswith("!important"):
             important = True
             val = val[: -len("!important")].strip()
+        if prop in EDGE_PROPS:
+            e = parse_shorthand(val, parent_font_px)
+            if e is not None:
+                out[prop] = ImportantDecl(e, prop, important) if important else e
+            continue
         v = parse_value(val)
         out[prop] = ImportantDecl(v, prop, important) if important else v
     return out
@@ -540,6 +551,11 @@ class Selector:
           - P8.1 pseudo-class: ``a:hover``, ``.btn:focus`` (rightmost part only)
         """
         text = text.strip()
+        # P0 (agent report) — CSS selectors allow no whitespace around the
+        # child combinator (`#row>div` == `#row > div`), so normalise
+        # before tokenising: pad every '>' that is not part of a longer
+        # operator with spaces.
+        text = re.sub(r"(?<!\d)>(?![=\d])", " > ", text)
         # Tokenize: split on spaces, but keep ".a.b" as one token.
         # Simple approach: split on whitespace; tokens starting with "."
         # that contain no spaces are multi-class selectors.
@@ -1629,35 +1645,6 @@ def parse_shorthand(src: str, parent_font_px: float) -> "EdgeList | None":
 
 # Property name normalisation (dashed CSS names used in rules/inline style).
 EDGE_PROPS = {"margin", "padding", "border-width"}
-
-
-def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -> dict[str, Value]:
-    """Parse 'color: red; font-size: 14px;' into a property map.
-
-    P25.2 — supports ``!important`` suffix: ``color: red !important``
-    wraps the value in :class:`ImportantDecl`."""
-    out: dict[str, Value] = {}
-    for decl in src.split(";"):
-        if ":" not in decl:
-            continue
-        prop, _, val = decl.partition(":")
-        prop = prop.strip().lower()
-        val = val.strip()
-        if not prop or not val:
-            continue
-        # P25.2 — detect `!important` suffix.
-        important = False
-        if val.lower().endswith("!important"):
-            important = True
-            val = val[: -len("!important")].strip()
-        if prop in EDGE_PROPS:
-            e = parse_shorthand(val, parent_font_px)
-            if e is not None:
-                out[prop] = ImportantDecl(e, prop, important) if important else e
-            continue
-        v = parse_value(val)
-        out[prop] = ImportantDecl(v, prop, important) if important else v
-    return out
 
 
 # --- StyledNode -------------------------------------------------------------------

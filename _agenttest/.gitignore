@@ -1,0 +1,9 @@
+# Node deps (puppeteer-core, used by _agenttest edge_*.js reference runners)
+node_modules/
+
+# Byte-compiled / scratch caches
+__pycache__/
+_cache_test/
+
+# Debug scratch scripts (throwaway traces, safe to delete)
+_dbg_*.py
