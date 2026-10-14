@@ -2,7 +2,7 @@
 P22 — 深化：重定向链 + gzip + chunked + 子资源并发加载（M2 网络栈第二步）。
 P23 — HTTPS + 磁盘缓存 + 协商缓存 + 加载进度事件（M2 网络栈第三步）。
 
-P23 新增（`项目未来规划.txt` §P23）：
+P23 新增（`docs/项目未来规划.txt` §P23）：
 
 * **TLS**：``ssl`` 标准库包裹（暂不手写 socket）；证书校验默认开启，
   ``HttpClient(verify_tls=False)`` 对应 ``--insecure`` 开关（关闭
@@ -37,9 +37,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # P0 (agent report) — cookie_store imports net, so a runtime import
-    # would cycle; the type-only guard keeps the annotation resolvable
-    # for static checkers without the cycle.
+    # P0 (agent report) — cookie_store imports net *at function level*
+    # (lines 111/275/321), so a module-level ``import cookie_store`` in
+    # net.py would be safe at import time, but the string annotation
+    # under ``from __future__ import annotations`` keeps it resolvable
+    # for static checkers without a runtime import at all.
     import cookie_store
 
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
@@ -345,7 +347,8 @@ class HttpResponse:
         return parse_csp_directives(csp)
 
     def is_csp_violation(self, source_kind: str,
-                         source_value: str) -> bool:
+                         source_value: str,
+                         doc_origin: str = "") -> bool:
         """P33.P2 — toy CSP check: return True when *source_value*
         would be blocked by the response's CSP *source_kind* directive
         (e.g. ``script-src``, ``img-src``, ``connect-src``).
@@ -355,6 +358,10 @@ class HttpResponse:
         ``default-src`` when the specific directive is absent) and
         returns True when *source_value* matches none of them.
         A blank directive list (no CSP header) permits everything.
+
+        P0 (retest report) — *doc_origin* (optional) makes ``'self'``
+        match the document origin instead of unconditionally permitting;
+        when blank the legacy pass-through is preserved.
         """
         csp = self.csp_directives
         if not csp:
@@ -364,30 +371,7 @@ class HttpResponse:
         values = csp.get(source_kind, csp.get("default-src", []))
         if not values:
             return False  # no constraint
-        for tok in values:
-            tok_lower = tok.lower()
-            # Strip surrounding single quotes for keyword tokens.
-            tok_bare = tok_lower.strip("'")
-            # 'self' matches when the source_value is same-origin (toy:
-            # always allow 'self' as a pass-through).
-            if tok_bare == "self":
-                # Toy: 'self' is treated as "permit" (a real browser
-                # would compare the source to the document origin).
-                return False
-            if tok_bare == "none":
-                # 'none' blocks all sources — but only when it is the
-                # sole value in the list.  If other values exist,
-                # 'none' is just a no-op token.
-                if len(values) == 1:
-                    return True
-                continue
-            # Exact string match (case-insensitive for scheme/host).
-            if tok_bare == source_value.lower().strip("'"):
-                return False
-            # wildcard "data:" permit.
-            if tok_bare == "data:" and source_value.lower().startswith("data:"):
-                return False
-        return True
+        return _csp_blocks(values, source_value, doc_origin)
 
     # ------------------------------------------------------------------
     # GPT P0-4 — unified policy enforcement
@@ -413,11 +397,15 @@ class HttpResponse:
           preserved for backward compatibility).
         * **CSP** — the response's ``Content-Security-Policy``
           ``*resource_kind*-src`` (or ``default-src``) directive is
-          matched against *resource_url*.
+          matched against *resource_url*.  P0 (retest report): the
+          ``'self'`` keyword is matched against *requesting_origin*
+          when it is a real origin (contains "://"), so that a
+          cross-origin resource with ``ACAO: *`` is still blocked by
+          ``style-src 'self'``.
 
         *resource_kind* is one of "style" (stylesheet), "script",
         "img" (image), "connect" (fetch/XHR); the directive name is
-        derived as ``<kind>-src`` with the legacy mapping
+        derived as ``<kind>-src` with the legacy mapping
         style→"style-src", script→"script-src", img→"img-src",
         connect→"connect-src" (a blank resource_kind skips the CSP
         check).
@@ -442,7 +430,10 @@ class HttpResponse:
                                  f"{resource_kind}-src"
                                  if resource_kind else "")
         if directive and resource_url:
-            if self.is_csp_violation(directive, resource_url):
+            # P0 (retest report) — pass the document origin so that
+            # 'self' matches the document origin, not unconditionally.
+            doc_origin = requesting_origin if "://" in requesting_origin else ""
+            if self.is_csp_violation(directive, resource_url, doc_origin):
                 return False
         return True
 
@@ -461,21 +452,35 @@ def _origin_str(url_str: str) -> str:
     return f"{p.scheme.lower()}://{netloc}"
 
 
-def _csp_blocks(values: list, source_value: str) -> bool:
+def _csp_blocks(values: list, source_value: str,
+                doc_origin: str = "") -> bool:
     """GPT P0-4 — return True when *source_value* is blocked by the
     CSP source-list *values* (the same token-matching logic as
     :meth:`HttpResponse.is_csp_violation`, factored out so the
     document-level CSP path in :func:`load_subresources` can reuse
-    it without constructing a throwaway HttpResponse)."""
+    it without constructing a throwaway HttpResponse).
+
+    P0 (retest report) — ``'self'`` now matches the document origin:
+    a source is permitted by ``'self'`` only when its origin equals
+    *doc_origin*.  When *doc_origin* is blank the legacy behaviour is
+    preserved (``'self'`` is a pass-through) so existing fixtures that
+    do not track origins are unaffected.
+    """
     if not values:
         return False  # no constraint
     for tok in values:
         tok_lower = tok.lower()
         tok_bare = tok_lower.strip("'")
         if tok_bare == "self":
-            # Toy: 'self' is treated as "permit" (a real browser
-            # would compare the source to the document origin).
-            return False
+            if not doc_origin:
+                # Legacy: no origin tracking → treat 'self' as permit.
+                return False
+            src_origin = _origin_str(source_value)
+            if is_origin_match(doc_origin, src_origin):
+                return False
+            # 'self' did not match; fall through to the remaining
+            # tokens (a mixed list may still permit via another entry).
+            continue
         if tok_bare == "none":
             if len(values) == 1:
                 return True
@@ -1595,10 +1600,16 @@ def base_url_from_dom(dom_root) -> "URL | None":
 
 def collect_subresources(dom_root) -> list[dict]:
     """P22.4 — walk the DOM and return a list of subresource specs:
-    ``{"kind": "stylesheet"|"image", "src": <attr value>}`` in
-    document order.  Only ``<link rel="stylesheet">`` and ``<img>``
-    are collected (the P22 spec subset).  Data URIs are included (the
-    caller may skip them)."""
+    ``{"kind": "stylesheet"|"image"|"script", "src": <attr value>}``
+    in document order.  Only ``<link rel="stylesheet">``, ``<img>``,
+    and ``<script src>`` are collected (the P22 spec subset).  Data
+    URIs are included (the caller may skip them).
+
+    P0 (retest report) — ``<script src>`` is now collected so the
+    URL pipeline can download external scripts and feed them to the
+    JS engine (the legacy pipeline only collected stylesheets and
+    images; external scripts were silently ignored).
+    """
     out: list[dict] = []
 
     def _walk(n):
@@ -1613,6 +1624,12 @@ def collect_subresources(dom_root) -> list[dict]:
             src = n.attr("src")
             if src:
                 out.append({"kind": "image", "src": src})
+        elif tag == "script":
+            # P0 (retest report) — external script: <script src>
+            # (inline <script> with no src has no subresource).
+            src = n.attr("src")
+            if src:
+                out.append({"kind": "script", "src": src})
         for c in getattr(n, "children", []):
             _walk(c)
 
@@ -1690,7 +1707,8 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         # otherwise the subresource's own response header is checked
         # (legacy behaviour).
         if enforce_policy and resp is not None:
-            kind_map = {"stylesheet": "style", "image": "img"}
+            kind_map = {"stylesheet": "style", "image": "img",
+                       "script": "script"}
             res_kind = kind_map.get(spec["kind"], spec["kind"])
             if doc_csp:
                 # Build a temporary policy view from the document's
@@ -1703,7 +1721,7 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
                         csp_directives.get("default-src", [])))
                     if values:
                         csp_blocked = _csp_blocks(
-                            values, absu.to_string())
+                            values, absu.to_string(), doc_origin)
                 cors_ok = resp.is_cors_allowed(doc_origin) \
                     if doc_origin else True
                 if not cors_ok or csp_blocked:
@@ -1725,6 +1743,7 @@ def load_subresources_parallel(dom_root, base_url,
                                timeout: float | None = None,
                                progress: "LoadEventSink | None" = None,
                                enforce_policy: bool = True,
+                               doc_csp: str = "",
                                ) -> dict:
     """P33.R2 — :func:`load_subresources` with a bounded thread pool.
 
@@ -1767,7 +1786,8 @@ def load_subresources_parallel(dom_root, base_url,
 
     # GPT P0-4 — the document's origin (for CORS cross-origin check).
     doc_origin = _origin_str(eff_base.to_string()) if eff_base else ""
-    kind_map = {"stylesheet": "style", "image": "img"}
+    kind_map = {"stylesheet": "style", "image": "img",
+               "script": "script"}
 
     def _apply_policy(resp, absu, spec_kind):
         if resp is None:
@@ -1775,6 +1795,24 @@ def load_subresources_parallel(dom_root, base_url,
         if not enforce_policy:
             return resp
         res_kind = kind_map.get(spec_kind, spec_kind)
+        if doc_csp:
+            # P0 (retest report) — gate subresources against the
+            # document's CSP header (mirrors the sequential loader);
+            # fall back to CORS for cross-origin reads.
+            csp_directives = parse_csp_directives(doc_csp)
+            csp_blocked = False
+            if csp_directives:
+                values = (csp_directives.get(
+                    f"{res_kind}-src",
+                    csp_directives.get("default-src", [])))
+                if values:
+                    csp_blocked = _csp_blocks(
+                        values, absu.to_string(), doc_origin)
+            cors_ok = resp.is_cors_allowed(doc_origin) \
+                if doc_origin else True
+            if not cors_ok or csp_blocked:
+                return None
+            return resp
         if not resp.is_policy_allowed(doc_origin, res_kind, absu.to_string()):
             return None
         return resp

@@ -1,0 +1,1553 @@
+{
+  "js_match": 28,
+  "js_total": 47,
+  "js_both_error": [
+    "js_object_methods"
+  ],
+  "js": {
+    "js_basic_arith": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "14 2.5 1 -3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "14 2.5 1 -3"
+        ]
+      }
+    },
+    "js_precedence": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "10 20 8 40"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "10 20 8 40"
+        ]
+      }
+    },
+    "js_ternary": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "yes",
+          "20"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "yes",
+          "20"
+        ]
+      }
+    },
+    "js_typeof": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "number string object undefined object object"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "number string object undefined object object"
+        ]
+      }
+    },
+    "js_string_concat": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "x:1true 11 ab2"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "x:1true 11 ab2"
+        ]
+      }
+    },
+    "js_str_escapes": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "a\nb",
+          "say \"hi\"",
+          "tab\tend"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "a\nb",
+          "say \"hi\"",
+          "tab\tend"
+        ]
+      }
+    },
+    "js_arrays": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "5 3 5 undefined",
+          "2 false [2, 3]",
+          "[2, 4, 6, 8, 10] 1-2-3-4-5"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "5 3 5",
+          "2 false [array Array]",
+          "[array Array] 1-2-3-4-5"
+        ]
+      }
+    },
+    "js_arrow_funcs": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "3 1,4,9 2,3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "3 1,4,9 2,3"
+        ]
+      }
+    },
+    "js_object_methods": {
+      "match": true,
+      "edge": {
+        "status": "ERROR: SyntaxError: Expected property name or '}' in JSON at position 9 (line 1 column 10)",
+        "logs": [
+          "a,b,c 1,2,3",
+          "{\"x\":1,\"arr\":[1,2]}"
+        ]
+      },
+      "toy": {
+        "status": "ERROR: SyntaxError: Expecting property name enclosed in double quotes: line 1 column 10 (char 9)",
+        "logs": [
+          "a,b,c 1,2,3",
+          "{\"x\":1,\"arr\":[1,2]}"
+        ]
+      }
+    },
+    "js_classes": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "Rex barks",
+          "Cow makes a sound"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "Rex barks",
+          "Cow makes a sound"
+        ]
+      }
+    },
+    "js_templates": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "x is 10 and true",
+          "total=3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "x is 10 and true",
+          "total=3"
+        ]
+      }
+    },
+    "js_optional_nullish": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 undefined dflt 0 "
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1  dflt 0"
+        ]
+      }
+    },
+    "js_try_catch": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "Infinity",
+          "done"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "Infinity",
+          "done"
+        ]
+      }
+    },
+    "js_errors": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "false Infinity NaN A 65"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "false Infinity NaN A 65"
+        ]
+      }
+    },
+    "js_numbers": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true false 42 3.14 3 2 9"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true false 42 3.14 3 2 9"
+        ]
+      }
+    },
+    "js_promise": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "prom: 42"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "prom: 42"
+        ]
+      }
+    },
+    "js_destructuring": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "30 -10",
+          "1 2 3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "30 -10",
+          "1 2 3"
+        ]
+      }
+    },
+    "js_spread": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 2",
+          "1,2,3,4,5"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1 2",
+          "1,2,3,4,5"
+        ]
+      }
+    },
+    "js_for_loops": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "01234",
+          "10"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "01234",
+          "10"
+        ]
+      }
+    },
+    "js_dom_bind": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "DIV clicked!\nB"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "DIV clicked!\nB"
+        ]
+      }
+    },
+    "js_event_click": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "clicks: 1",
+          "clicks: 2",
+          "final: 2"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "clicks: 1",
+          "clicks: 2",
+          "final: 2"
+        ]
+      }
+    },
+    "js_set_timeout": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "before: sync"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "before: sync",
+          "JS error: object of type 'function' has no len()",
+          "JS error: object of type 'function' has no len()"
+        ]
+      }
+    },
+    "js_while_break": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "break at 14",
+          "n = 14"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "break at 14",
+          "n = 14"
+        ]
+      }
+    },
+    "js_generators": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 2 false"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1 2 false"
+        ]
+      }
+    },
+    "js_regexp": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "abc b 0",
+          "-1-2-3",
+          "aBc a+b+c"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "abc b 0",
+          "-1-2-3",
+          "aBc a+b+c"
+        ]
+      }
+    },
+    "js_date": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "2024 1 15 10"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "2024 1 15 10"
+        ]
+      }
+    },
+    "js_infinity_nan": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true Infinity NaN false true"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true Infinity NaN false true"
+        ]
+      }
+    },
+    "js_functions_args": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1,, 1,2,3",
+          "0/3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1,, 1,2,3",
+          "0/3"
+        ]
+      }
+    },
+    "js_string_methods": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "hi abcabcabc ....hello 5 a|b|c"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "hi abcabcabc ....hello 5 a|b|c"
+        ]
+      }
+    },
+    "probe_microtasks": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "start",
+          "end",
+          "promise"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "start",
+          "promise",
+          "end"
+        ]
+      }
+    },
+    "probe_timer_order": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "early",
+          "late"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "JS error: object of type 'function' has no len()",
+          "JS error: object of type 'function' has no len()"
+        ]
+      }
+    },
+    "probe_event_bubble": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "button",
+          "body"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": []
+      }
+    },
+    "probe_dom_live": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "new"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "null"
+        ]
+      }
+    },
+    "probe_json_numbers": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[null,null,null,0]"
+        ]
+      },
+      "toy": {
+        "status": "ERROR: ValueError: cannot convert float NaN to integer",
+        "logs": []
+      }
+    },
+    "probe_equality": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[true,true,true,true,false]"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "[false,false,true,true,true]"
+        ]
+      }
+    },
+    "probe_api_types": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "function function function function function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "function undefined undefined undefined undefined"
+        ]
+      }
+    },
+    "probe_fetch_contract": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "object"
+        ]
+      }
+    },
+    "probe_async": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "42"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": []
+      }
+    },
+    "probe_dom_create": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "hello"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "null"
+        ]
+      }
+    },
+    "probe_const_write": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "ERROR: RuntimeError: Assignment to constant variable 'a'",
+        "logs": []
+      }
+    },
+    "probe_tdz": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "JS error: Cannot access 'x' before initialization"
+        ]
+      }
+    },
+    "probe_reference_error": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          ""
+        ]
+      }
+    },
+    "probe_array_json": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[2,4,6]"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "[2,4,6]"
+        ]
+      }
+    },
+    "probe_object_identity": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true false"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true true"
+        ]
+      }
+    },
+    "probe_remove_dom": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "false"
+        ]
+      }
+    },
+    "probe_unsupported_css": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "object function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "undefined object"
+        ]
+      }
+    },
+    "probe_string_timer": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "timer"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "timer"
+        ]
+      }
+    }
+  },
+  "layout": {
+    "layout_blocks": {
+      "a": {
+        "edge": {
+          "x": 18,
+          "y": 10,
+          "w": 200,
+          "h": 50
+        },
+        "toy": {
+          "x": 23.0,
+          "y": 5.0,
+          "w": 190.0,
+          "h": 40.0
+        },
+        "max_delta_px": 10.0
+      },
+      "b": {
+        "edge": {
+          "x": 8,
+          "y": 80,
+          "w": 100,
+          "h": 40
+        },
+        "toy": {
+          "x": 8.0,
+          "y": 70.0,
+          "w": 100.0,
+          "h": 40.0
+        },
+        "max_delta_px": 10.0
+      }
+    },
+    "layout_margin_collapse": {
+      "t": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 30
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "b": {
+        "edge": {
+          "x": 0,
+          "y": 60,
+          "w": 100,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 60.0,
+          "w": 100.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_flex": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 60.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 22,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 22.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c2": {
+        "edge": {
+          "x": 110,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 110.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c3": {
+        "edge": {
+          "x": 198,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 198.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_grid": {
+      "g": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 120
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 120.0
+        },
+        "max_delta_px": 0.0
+      },
+      "g1": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 60.0
+        },
+        "max_delta_px": 0.0
+      },
+      "g4": {
+        "edge": {
+          "x": 0,
+          "y": 60,
+          "w": 100,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 60.0,
+          "w": 100.0,
+          "h": 60.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_table": {
+      "tab": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 70.078125,
+          "h": 61
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 137.14,
+          "h": 58.4
+        },
+        "max_delta_px": 67.06187499999999
+      }
+    },
+    "layout_abs": {
+      "p": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 100
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 200.0,
+          "h": 100.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c": {
+        "edge": {
+          "x": 30,
+          "y": 20,
+          "w": 50,
+          "h": 40
+        },
+        "toy": {
+          "x": 30.0,
+          "y": 20.0,
+          "w": 50.0,
+          "h": 40.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_text_wrap": {
+      "w": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 150,
+          "h": 120
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 150.0,
+          "h": 120.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "flex_reverse": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 256,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 108.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 148.0
+      },
+      "c2": {
+        "edge": {
+          "x": 208,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 60.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 148.0
+      },
+      "c3": {
+        "edge": {
+          "x": 160,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 12.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 148.0
+      }
+    },
+    "flex_reverse_center": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 178,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 42.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      },
+      "c2": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": -6.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      },
+      "c3": {
+        "edge": {
+          "x": 82,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": -54.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      }
+    },
+    "flex_reverse_end": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 100,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": -36.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      },
+      "c2": {
+        "edge": {
+          "x": 52,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": -84.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      },
+      "c3": {
+        "edge": {
+          "x": 4,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": -132.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 136.0
+      }
+    },
+    "flex_gap": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 4,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c2": {
+        "edge": {
+          "x": 62,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 52.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 10.0
+      },
+      "c3": {
+        "edge": {
+          "x": 120,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 100.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 20.0
+      }
+    },
+    "flex_single_around": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 126.0
+      }
+    },
+    "flex_single_evenly": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 126.0
+      }
+    },
+    "flex_padding_border": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 61,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 87.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 26.0
+      },
+      "c2": {
+        "edge": {
+          "x": 123,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 145.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 22.0
+      },
+      "c3": {
+        "edge": {
+          "x": 185,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 203.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 18.0
+      }
+    },
+    "flex_column": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 4,
+          "y": 37,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 45.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 8.0
+      },
+      "c2": {
+        "edge": {
+          "x": 4,
+          "y": 65,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 65.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c3": {
+        "edge": {
+          "x": 4,
+          "y": 93,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 85.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 8.0
+      }
+    },
+    "grid_unequal": {
+      "g": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      },
+      "g1": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 96.65625,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 150.0,
+          "h": 20.0
+        },
+        "max_delta_px": 53.34375
+      },
+      "g2": {
+        "edge": {
+          "x": 106.65625,
+          "y": 0,
+          "w": 193.34375,
+          "h": 20
+        },
+        "toy": {
+          "x": 150.0,
+          "y": 0.0,
+          "w": 150.0,
+          "h": 20.0
+        },
+        "max_delta_px": 43.34375
+      }
+    },
+    "percent_height": {
+      "p": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 200
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 200.0,
+          "h": 200.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 100.0
+        },
+        "max_delta_px": 0.0
+      }
+    }
+  },
+  "render": {
+    "render_basic": {
+      "whole_diff_pct": 6.018958333333333,
+      "foreground_union_diff_pct": 77.650476036792,
+      "foreground_union_pixels": 37182
+    },
+    "render_cjk": {
+      "whole_diff_pct": 3.3627083333333334,
+      "foreground_union_diff_pct": 98.376324980087,
+      "foreground_union_pixels": 16321
+    },
+    "render_emoji_symbols": {
+      "whole_diff_pct": 0.745,
+      "foreground_union_diff_pct": 99.5798319327731,
+      "foreground_union_pixels": 3570
+    },
+    "render_forms": {
+      "whole_diff_pct": 2.192083333333333,
+      "foreground_union_diff_pct": 99.81881533101046,
+      "foreground_union_pixels": 7175
+    }
+  },
+  "perf": {
+    "100": {
+      "toy_render_median_ms": 240.93089997768402,
+      "toy_png_total_median_ms": 1094.7225999843795,
+      "edge_layout_median_ms": 2.6683000000011816,
+      "edge_screenshot_total_median_ms": 33.408400000000256
+    },
+    "1000": {
+      "toy_render_median_ms": 1150.5895000009332,
+      "toy_png_total_median_ms": 2015.0039999862202,
+      "edge_layout_median_ms": 8.572000000000116,
+      "edge_screenshot_total_median_ms": 45.256499999999505
+    },
+    "5000": {
+      "toy_render_median_ms": 5644.049099995755,
+      "toy_png_total_median_ms": 6546.496800001478,
+      "edge_layout_median_ms": 38.347999999999956,
+      "edge_screenshot_total_median_ms": 82.84589999999844
+    }
+  }
+}

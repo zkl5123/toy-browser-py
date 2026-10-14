@@ -1,0 +1,64 @@
+{
+  "js_current": {
+    "match": 28,
+    "total": 47,
+    "both_error": [
+      "js_object_methods"
+    ]
+  },
+  "js_same_39": {
+    "previous": 26,
+    "current": 26
+  },
+  "layout_current": {
+    "matched_cases": 6,
+    "cases": 17,
+    "matched_elements": 24,
+    "elements": 48,
+    "case_matches": {
+      "layout_blocks": false,
+      "layout_margin_collapse": true,
+      "layout_flex": true,
+      "layout_grid": true,
+      "layout_table": false,
+      "layout_abs": true,
+      "layout_text_wrap": true,
+      "flex_reverse": false,
+      "flex_reverse_center": false,
+      "flex_reverse_end": false,
+      "flex_gap": false,
+      "flex_single_around": false,
+      "flex_single_evenly": false,
+      "flex_padding_border": false,
+      "flex_column": false,
+      "grid_unequal": false,
+      "percent_height": true
+    }
+  },
+  "layout_same_7": {
+    "previous": 4,
+    "current": 5
+  },
+  "source_hashes": {
+    "browser.py": "56f68644ecb50ab0547fb3800f1692f168ede4386526ba4be0437e67edd9ce54",
+    "cookie_store.py": "5ad744986c4d8ef6a7ac0d62985e87b29aa4c700343ea928f7f1fb24cc4df02b",
+    "css.py": "cf537e938654ee253ae1b044509e67c07258f47b5da94871c08236a7a659218b",
+    "dom.py": "6493aaff7c5c9ea7f3798ee38bcc14b0f903e08478938506d955992ecadc9775",
+    "font.py": "72f9f4239e6b3cad4602aa80697f54303449a5e57339f3efdd1bba04160e7eed",
+    "gui.py": "6b725db8bcf56b5de809e98d4b88fbdb2fcd011c231c8ee49766ed3ff18b14eb",
+    "js.py": "803fe558a868c7855f4a46e9ad7414612e421bc331021b1a00e03b7309048ba6",
+    "layout.py": "add470b245eefd3efa02682dba7e9b9501c88beaefd259ddba9f9b752a64d02f",
+    "main.py": "db056a94e0bcc03bc11882709fc0b199c700b4b20945969e6c28d8bd686c58b1",
+    "mem_guard.py": "233a936c464da77aa17d075cbe77d171e66de0ee89ddb485f37e0ae2c676fa9d",
+    "net.py": "393b563fd4b98793d154c1218141d0264adca127fb09f2a2895cae27fc529a74",
+    "paint.py": "3f288e3bb9c64f671b540b4ab8a4b58307a9baccdbf354c319961da785eea57a",
+    "paint_engine.py": "c2ed491479293b1911eb210a2e60db79a8cf90663ab2fcdbff41a0e40f1836b7",
+    "rasterize.py": "90437eebe7914afaec0383b938067085c898c50c658496f97426b629bfb875fa",
+    "session.py": "e6798604f7fbef6c84acdadeab1c4619b6f2b84fa0d56b0c17c422258185edb4",
+    "test.py": "c9a2ce72bc34ceeea9b566e22de873181f9ef777bdb0c0e57f95b29989d5134d",
+    "text.py": "db606d0577a9030e28d92407bf996242b27b78e865ed04fe2cd1c542b44adb09",
+    "transition.py": "734af7049583521c9ef51846ec5e6e2db1d922431b05bc476b3ab2b462c72fd7",
+    "ttf_font.py": "746cb8c83015d96c484f4aee331b9ec895f8bdbab301fa8cd20d71608a138459",
+    "web_api.py": "0201146e8e020871bf48cc5c171b54befb19fc54e0611206b29551679842b5b9"
+  }
+}

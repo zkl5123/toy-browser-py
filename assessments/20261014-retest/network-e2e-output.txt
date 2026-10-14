@@ -1,0 +1,1 @@
+{'cross_css': {'pixel_50_50': '0xffffff'}, 'csp_self': {'pixel_50_50': '0xff00'}, 'csp_inline': {'pixel_50_50': '0xffffff'}, 'external_script': {'pixel_50_50': '0xffffff'}}

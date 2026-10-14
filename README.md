@@ -28,63 +28,30 @@
 | 动画（@keyframes） | 部分支持 | 可解析并驱动帧推进，但不与 compositor 合成（玩具过渡引擎 `transition.py`） |
 | `scroll` / 滚动行为 | 基础实现 | 布局可计算滚动尺寸，GUI 支持全内容滚动（P33.R2），但 `scroll-behavior: smooth` 等细节未实现 |
 
-**测试基线**：`python test.py` → **920/925 通过**（5 个失败为环境相关：
-R5 性能基准 ×3 + P34 R2 CJK 字体 ×2，与 P1-2 拆分前基线一致）。
-测试已从单一 `test.py`（11k 行）拆分为 7 个模块文件（GPT P1-2），
-`test.py` 现为薄编排器（99 行）。
+**本次验证**：2026 年 10 月 14 日目录整理后，`python test.py` → **925/925 通过**
+（本机 Python 3.12.14，允许访问本机测试服务器）。完整输出见
+`assessments/20261014/structure-validation.txt`。测试及辅助模块集中在 `tests/`，
+`test.py` 保留为完整测试编排入口。
 
 ## 架构
 
-```
+```text
 toy-browser-py/
-├── main.py            CLI 入口（--a11y / --links / --png / --animate / P23 --insecure / --cache / --progress / P32 --devtools）
-├── dom.py             P24 兼容 shim（转发 html_pkg；import dom / from dom import Node 不变）
-├── html_pkg/          P24 HTML 解析器子模块（node / entities / tokenize / build，字节流输入）
-├── css.py             CSS 解析 + 级联 + 选择器（后代/子/多类/tag.class 复合）+ @keyframes
-├── layout.py          盒模型布局（块/内联/文本/占位/flex/grid + 命中测试）
-├── paint.py           位图 + 颜色混合
-├── paint_engine.py    显示列表 + CPU 光栅化 + 图片像素渲染
-├── text.py            8×8 位图字体 + 文本测量/换行/绘制（P17 TTF 度量 + P33.R1 CJK 逐字回退 + 8-bit mask 缓存）
-├── font.py            内建 ASCII 字体表 + P17 真实 TTF 度量注册 + P33.R1 CJK 回退面注册
-├── ttf_font.py        P17 TTF/OTF 解析器（head/cmap/hmtx/glyf/loca/OS/2）+ P33.R1 TTC/CFF/资源治理
-├── rasterize.py       P20 二次贝塞尔曲线光栅化（扫描线 + 抗锯齿 + 合成粗体 + P33.R1 blit_glyph_mask 整型混合）
-├── mem_guard.py       P33.R1 内存治理：6 GB 进程堆硬上限 + 12 MiB 单面文件门控（tracemalloc，纯 stdlib）
-├── net.py             P21/P22/P23/P32 URL + HTTP/1.1 + 重定向/gzip/chunked + 缓存 + TLS + 进度 + Cookie 挂载 + 错误页分类
-├── js.py              玩具 JS 引擎（词法 + Pratt 解析 + Math/JSON/Date/RegExp）
-├── browser.py         公开 API + 失效区域 + a11y + links + PNG + transition + animate + P32 DevTools
-├── transition.py      P3.4 CSS 过渡引擎（属性插值 + 帧推进 + 统一 lerp）
-├── session.py         P32 会话层：HistoryStore + BookmarkStore（JSON 原子持久化）
-├── cookie_store.py    P32 Cookie 玩具：parse_set_cookie + CookieJar（无安全边界）
-├── web_api.py         P33.P1 Web API：localStorage / WebSocket / navigator / location / history / URL / URLSearchParams
-├── gui.py             P31/P32/P33 tkinter GUI 外壳（多标签页；http 加载；about/bookmarks/view-source；历史/书签；事件模型 + 焦点 + 表单）
-├── ARCHITECTURE.md    P32 M4 架构文档 + P33.R1 CJK 渲染层 + 内存治理（模块边界 + 数据流 + 扩展点）
-├── test.py            薄编排器（99 行；python test.py → 925 条测试，GPT P1-2 拆分）
-├── test_r1.py         P33.R1 CJK 渲染 28 条测试
-├── test_mem.py        P33.R1 内存治理 12 条测试
-├── test_r2.py         P33.R2 网络并发 + GUI 滚动 12 条测试
-├── test_r3.py         P33.R3 JS 块作用域 + TDZ 12 条测试
-├── test_r4.py         P33.R4 布局验证（position/z-index/transform/overflow/grid）24 条测试
-├── test_r5.py         P33.R5 增量布局 + 区域光栅化 + 布局优化 9 条测试
-├── test_web_api.py    P33.P1 Web API 22 条测试（localStorage/WebSocket/navigator/location/history/URL）
-├── test_p2.py         P33.P2 CORS/CSP + Canvas 2D + 性能基准 21 条测试
-├── test_p3.py         P33.P3 @font-face + SVG/媒体占位渲染 10 条测试
-├── test_dom.py        P1-2 拆分：DOM 解析 + 命中测试 3 条
-├── test_css.py        P1-2 拆分：CSS 级联 + 选择器 + @media + @supports + calc 69 条
-├── test_js.py         P1-2 拆分：JS 引擎测试 146 条
-├── test_layout.py     P1-2 拆分：flex/grid/表格/定位/浮动/溢出 42 条
-├── test_paint.py      P1-2 拆分：PNG/过渡/@keyframes/透明度/滤镜 36 条
-├── test_net.py        P1-2 拆分：网络测试 5 条
-├── test_browser.py    P1-2 拆分：浏览器级测试 357 条
-├── test_helpers.py    P1-2 拆分：23 个共享辅助函数
-├── test_p0_js_budget.py  P0 JS 预算 + 递归守卫 8 条
-├── test_p0_policy.py   P0-4 CORS/CSP 策略 16 条
-├── test_p1_supports.py  P1-1 @supports 属性检查 19 条
-├── LICENSE            MIT 许可证
-├── CONTRIBUTING.md    贡献指南（代码风格 + 测试规范 + 里程碑标签）
-├── CHANGELOG.md       变更记录（P33.R1–R5 + P1–P3）
-├── fonts/            P17 TTF 测试夹具（arial.ttf + arialbd.ttf）
-├── ROADMAP.md         改进路线图（P0–P32 + P33.R1/R2/R3/R4/R5/P1/P2/P3 全部完成，920/925）
-└── demo.html          示例文档
+├── main.py / gui.py     CLI 与 GUI 入口
+├── test.py              完整测试入口（兼容原有命令）
+├── *.py                 浏览器核心模块（保留原有 import 接口）
+├── html_pkg/            HTML 解析器
+├── tests/               27 个测试及共享辅助模块
+├── tools/benchmarks/    4 个分阶段性能脚本
+├── fonts/               字体与测试夹具
+├── demo.html            示例页面
+├── docs/                架构、路线图、变更记录及历史文档
+├── assessments/
+│   ├── 20261014/         本次实测报告、复现脚本、JSON 与截图证据
+│   └── legacy/           历史评估输入、脚本与结果
+├── README.md
+├── CONTRIBUTING.md
+└── LICENSE
 ```
 
 ## 管线
@@ -1061,7 +1028,7 @@ python test.py
 
 ## 改进路线图
 
-见 [ROADMAP.md](ROADMAP.md) — 按优先级（P0/P1/P2）列出改进项，含验收标准与预计工作量。
+见 [ROADMAP.md](docs/ROADMAP.md) — 按优先级（P0/P1/P2）列出改进项，含验收标准与预计工作量。
 
 已完成：
 
@@ -1227,7 +1194,7 @@ python test.py
 - [x] P32.4 迷你 DevTools（`browser.devtools_report` + `main.py --devtools`：DOM 树 + computed style + 选择器命中来源）
 - [x] P32.5 统一错误页（`net.categorize_fetch_error` + `error_page_html`：DNS/连接/超时/非法URL/重定向/HTTP 分类文案）
 - [x] P32.6 `about:blank` / `view-source:` 玩具（`gui._about_page` / `_view_source_page`）
-- [x] P32.7 M4 架构文档（`ARCHITECTURE.md`：模块边界 + 数据流 + 扩展点 + 边界不变式）
+- [x] P32.7 M4 架构文档（`docs/ARCHITECTURE.md`：模块边界 + 数据流 + 扩展点 + 边界不变式）
 - [x] P32.8 测试总数 623 → **657**（M4 收官）
 
 ## 与 Rust 版的对应关系
@@ -1269,10 +1236,10 @@ python test.py
 
 
 - **托管**：Gitee 私有仓库 <https://gitee.com/zklzkl11111/toy-browser-py>，默认分支 `main`。
-- **本仓库只含源码与文档**（约 0.6MB）：14 个 `.py` 模块、`README.md`、`ROADMAP.md`、
-  `demo.html`，以及 `a11y.json` / `links.json` / `links.txt` 等小体积测试数据。
-  P17 起仓库额外携带 `fonts/`（arial.ttf + arialbd.ttf 测试夹具，~2MB）——
-  纯标准库项目无安装步骤，测试夹具随仓库分发使 `python test.py` 开箱即跑。
+- **目录结构**：根目录保留浏览器核心模块及运行入口，测试在 `tests/`，性能脚本在 `tools/benchmarks/`，文档在 `docs/`，评估资料在 `assessments/`。
+  `fonts/` 中的 Arial 字体是有效资源与测试夹具，随仓库保留。
+  根目录的 `a11y.json`、`links.json`、`links.txt` 属于生成物，已清理并加入忽略规则。
+- **目录整理与清理记录**：见 [整理记录](docs/PROJECT_STRUCTURE.md)。
 - **已排除的生成物**（可由 CLI 重新生成，见 [.gitignore](.gitignore)）：
 
   | 已排除 | 体积 | 恢复方式 |
@@ -1283,5 +1250,5 @@ python test.py
   | `anim_test/` | — | `python main.py demo.html --animate` 的帧输出目录 |
 
 - **运行环境**：Python 3.11.9，零外部依赖（纯标准库）。
-- **自测**：`python test.py` → **920/925 通过**（5 个失败为环境相关：R5 性能基准 ×3 + P34 R2 CJK 字体 ×2）。
+- **自测**：目录整理后本机 `python test.py` → **925/925 通过**，验证输出保存在 `assessments/20261014/structure-validation.txt`。
 - **姊妹项目**：[toy-browser](https://gitee.com/zklzkl11111/toy-browser)（Rust 版，同一管线的原生实现）。

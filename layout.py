@@ -214,10 +214,20 @@ class LayoutBox:
     flex_basis: float | None = None  # None = auto (use content/explicit size)
     flex_order: int = 0
     align_self: str = ""  # P27 — per-item cross-axis override; "" = inherit align-items
+    # P0 (retest report) — flex gap (column-gap on the main axis for row,
+    # row-gap for column); the `gap` shorthand sets both.
+    flex_gap: float = 0.0
     # P4.3 — CSS Grid
     is_grid: bool = False
     grid_columns: int = 0  # number of column tracks
     grid_rows: int = 0  # number of row tracks (0 = auto)
+    # P0 (retest report) — grid track fractions + gap (1fr 2fr →
+    # [(1.0,'fr'),(2.0,'fr')]); grid_gap = column-gap, grid_row_gap =
+    # row-gap (cross-axis).
+    grid_cols_frac: list = field(default_factory=list)
+    grid_rows_frac: list = field(default_factory=list)
+    grid_gap: float = 0.0
+    grid_row_gap: float = 0.0
     # P5.1 — CSS visual effects
     border_radius: float = 0.0  # px corner radius
     shadow_offset_x: float = 0.0  # box-shadow x
@@ -972,23 +982,155 @@ def build_box(sn: StyledNode, parent_font_px: float,
     # P27 — read flex-wrap / align-content on the flex container.
     flex_wrap = sn.get_keyword("flex-wrap", "nowrap")
     align_content = sn.get_keyword("align-content", "stretch")
+    # P0 (retest report) — flex gap: the `gap` / `column-gap` / `row-gap`
+    # shorthands.  `gap: 10px` parses to Length(10.0,"px"); `gap: 10px 20px`
+    # parses to Keyword("10px 20px").  For a row container the main-axis
+    # gap is column-gap; for column it is row-gap.  Read via sn.props
+    # directly (get_number handles Length; get_keyword handles the
+    # multi-token Keyword form).
+    flex_gap = 0.0
+    _fd = flex_direction
+    _def_gap = sn.get_number("gap", -1.0)
+    if _def_gap >= 0.0:
+        # `gap: 10px` (single value) → both axes = 10px.
+        flex_gap = _def_gap
+    else:
+        # `gap: 10px 20px` (multi-token Keyword) → split.
+        _gap_kw = sn.get_keyword("gap", "")
+        if _gap_kw:
+            _gp = _gap_kw.split()
+            if len(_gp) >= 2:
+                flex_gap = float(_gp[1].strip()[:-2]) if _gp[1].strip().endswith("px") else float(_gp[1] or 0)
+            else:
+                flex_gap = float(_gap_kw.strip()[:-2]) if _gap_kw.strip().endswith("px") else 0.0
+        else:
+            flex_gap = 0.0
+    if _fd == "column":
+        # row-gap beats the `gap` shorthand for the main (vertical) axis.
+        _rg = sn.get_number("row-gap", -1.0)
+        if _rg >= 0.0:
+            flex_gap = _rg
+        else:
+            _rg_kw = sn.get_keyword("row-gap", "")
+            if _rg_kw and _rg_kw.strip().endswith("px"):
+                flex_gap = float(_rg_kw.strip()[:-2])
+    else:
+        _cg = sn.get_number("column-gap", -1.0)
+        if _cg >= 0.0:
+            flex_gap = _cg
+        else:
+            _cg_kw = sn.get_keyword("column-gap", "")
+            if _cg_kw and _cg_kw.strip().endswith("px"):
+                flex_gap = float(_cg_kw.strip()[:-2])
     # P4.3 — CSS Grid: read display:grid / grid-template-columns / grid-template-rows.
     is_grid = False
     grid_columns = 0
     grid_rows = 0
+    grid_cols_frac: list = []
+    grid_rows_frac: list = []
+    grid_gap = 0.0
+    grid_row_gap = 0.0
     if disp == "grid":
         is_grid = True
         gtc = sn.get_keyword("grid-template-columns", "")
         if gtc:
             grid_columns = len(gtc.split())
+            for _tok in gtc.split():
+                _tok = _tok.strip()
+                if _tok.endswith("fr"):
+                    try:
+                        grid_cols_frac.append((float(_tok[:-2]), "fr"))
+                    except ValueError:
+                        grid_cols_frac.append((1.0, "fr"))
+                elif _tok.endswith("px"):
+                    try:
+                        grid_cols_frac.append((float(_tok[:-2]), "px"))
+                    except ValueError:
+                        grid_cols_frac.append((1.0, "px"))
+                else:
+                    grid_cols_frac.append((1.0, "fr"))
         gtr = sn.get_keyword("grid-template-rows", "")
         if gtr:
             grid_rows = len(gtr.split())
+            for _tok in gtr.split():
+                _tok = _tok.strip()
+                if _tok.endswith("fr"):
+                    try:
+                        grid_rows_frac.append((float(_tok[:-2]), "fr"))
+                    except ValueError:
+                        grid_rows_frac.append((1.0, "fr"))
+                elif _tok.endswith("px"):
+                    try:
+                        grid_rows_frac.append((float(_tok[:-2]), "px"))
+                    except ValueError:
+                        grid_rows_frac.append((1.0, "px"))
+                else:
+                    grid_rows_frac.append((1.0, "fr"))
+        # P0 (retest report) — grid gap.
+        def _px_of(raw: str) -> float:
+            raw = raw.strip()
+            if raw.endswith("px"):
+                try:
+                    return float(raw[:-2])
+                except ValueError:
+                    return 0.0
+            try:
+                return float(raw)
+            except ValueError:
+                return 0.0
+        _cg_num = sn.get_number("column-gap", -1.0)
+        if _cg_num >= 0.0:
+            grid_gap = _cg_num
+        else:
+            _gap_raw = sn.get_keyword("column-gap", "")
+            grid_gap = _px_of(_gap_raw) if _gap_raw else 0.0
+            if grid_gap == 0.0:
+                _gap_raw = sn.get_keyword("row-gap", "")
+                grid_gap = _px_of(_gap_raw) if _gap_raw else 0.0
+            if grid_gap == 0.0:
+                _gap_num = sn.get_number("gap", -1.0)
+                if _gap_num >= 0.0:
+                    grid_gap = _gap_num
+                else:
+                    _gap_raw = sn.get_keyword("gap", "")
+                    if _gap_raw:
+                        _gp = _gap_raw.split()
+                        grid_gap = _px_of(_gp[0]) if _gp else 0.0
+        _rg_num = sn.get_number("row-gap", -1.0)
+        if _rg_num >= 0.0:
+            grid_row_gap = _rg_num
+        else:
+            _rgap_raw = sn.get_keyword("row-gap", "")
+            grid_row_gap = _px_of(_rgap_raw) if _rgap_raw else grid_gap
+            if grid_row_gap == 0.0:
+                _gap_num = sn.get_number("gap", -1.0)
+                if _gap_num >= 0.0:
+                    grid_row_gap = _gap_num
+                else:
+                    _gap_raw = sn.get_keyword("gap", "")
+                    if _gap_raw:
+                        _gp = _gap_raw.split()
+                        if len(_gp) >= 2:
+                            grid_row_gap = _px_of(_gp[1])
+                        else:
+                            grid_row_gap = _px_of(_gap_raw)
 
     # P7.2 — display:table / table-row / table-cell + border-collapse.
-    is_table = disp == "table"
-    is_table_row = tag == "tr" or (disp == "table-row")
-    is_table_cell = tag in ("td", "th")
+    # P0 (retest report) — honour UA-style `display: table`/`table-row`/
+    # `table-cell` (used by browser._default_css), not just tag names:
+    # the toy DOM parser keeps tag names lowercase, but documents that
+    # style table rows/cells with display only (no tag) must still
+    # route through _layout_table.
+    # P7.2 — display:table / table-row / table-cell + border-collapse.
+    # P0 (retest report) — fall back to the tag name when the computed
+    # display is a plain block: the UA stylesheet (browser._default_css)
+    # supplies ``display: table``/``table-row``/``table-cell`` on the
+    # render_document path, but the bare css.apply route (layout probes
+    # and unit tests) leaves table tags with the default block display,
+    # so the tag-name check keeps _layout_table reachable in both cases.
+    is_table = disp in ("table", "inline-table") or tag == "table"
+    is_table_row = tag == "tr" or disp in ("table-row",)
+    is_table_cell = tag in ("td", "th") or disp in ("table-cell",)
     border_collapse = sn.get_keyword("border-collapse", "") == "collapse"
     # P27 — flex shrink / basis (read even on non-flex items; used when
     # the parent is flex).  flex_basis None means "auto": fall back to
@@ -1575,9 +1717,14 @@ def build_box(sn: StyledNode, parent_font_px: float,
         flex_basis=flex_basis,
         flex_order=flex_order,
         align_self=align_self,
+        flex_gap=flex_gap,
         is_grid=is_grid,
         grid_columns=grid_columns,
         grid_rows=grid_rows,
+        grid_cols_frac=grid_cols_frac,
+        grid_rows_frac=grid_rows_frac,
+        grid_gap=grid_gap,
+        grid_row_gap=grid_row_gap,
         border_radius=border_radius,
         shadow_offset_x=shadow_offset_x,
         shadow_offset_y=shadow_offset_y,
@@ -2649,48 +2796,94 @@ def _layout_flex(
             line_y = content_y0 + line_ys[li]
             line_h = line_heights[li]
             eff_line_y = line_y
-            # main axis within line
-            line_total = sum(sized[i] for i in line)
-            free_main = available - line_total
+            # P1 (agent report) — flex item margins: compute the *margin-box*
+            # main-axis size of every item in this line.  ``sized[i]`` is
+            # the content main size; add padding + border + margin to get
+            # the margin-box size that real browsers distribute.
+            _line_margin_box_total = 0.0
+            _mb_main: list[float] = []
+            for i in line:
+                _cb = ordered[i]
+                if row:
+                    _mb_main.append(
+                        sized[i]
+                        + _cb.padding.left + _cb.padding.right
+                        + _cb.border.left + _cb.border.right
+                        + _cb.margin.left + _cb.margin.right
+                    )
+                else:
+                    _mb_main.append(
+                        sized[i]
+                        + _cb.padding.top + _cb.padding.bottom
+                        + _cb.border.top + _cb.border.bottom
+                        + _cb.margin.top + _cb.margin.bottom
+                    )
+                _line_margin_box_total += _mb_main[-1]
+            # P0 (retest report) — the flex `gap` property: fixed space
+            # between items (m-1 gaps on the main axis) that does NOT
+            # participate in justify-content free-space distribution.
+            _m_line = len(line)
+            _gap_main = bx.flex_gap if _m_line > 1 else 0.0
+            _gap_total = _gap_main * (_m_line - 1)
+            free_main = available - _line_margin_box_total - _gap_total
             jc = bx.justify_content
-            if reverse:
-                # P27.5 — row-reverse: main axis starts at the right edge.
-                # Default justify-content is "start" (flex-start = right
-                # edge for row-reverse).  Items pack from the right.
-                x_off = content_x0 + available - free_main
-                if free_main > 0:
-                    if jc == "center":
-                        x_off = content_x0 + free_main / 2.0
-                    elif jc in ("end", "flex-end"):
-                        x_off = content_x0
-            else:
-                x_off = content_x0
-                if free_main > 0:
-                    if jc in ("start", "flex-start"):
-                        x_off = content_x0
-                    elif jc == "center":
-                        x_off = content_x0 + free_main / 2.0
-                    elif jc in ("end", "flex-end"):
-                        x_off = content_x0 + free_main
-
-            item_x = x_off
-            m = len(line)
+            # P0 (retest report) — compute the block's left edge *x_off* in
+            # a forward coordinate system, then mirror for reverse
+            # directions (spec: row-reverse packs from the right edge;
+            # item 0 in DOM order is the rightmost item).
+            x_off = content_x0
+            m = _m_line
             step_space = 0.0
             if free_main > 0:
-                if jc == "space-between" and m > 1:
-                    step_space = free_main / (m - 1)
-                elif jc == "space-around" and m > 0:
+                if jc == "center":
+                    x_off = content_x0 + free_main / 2.0
+                elif jc in ("end", "flex-end"):
+                    x_off = content_x0 + free_main
+                elif jc == "space-between":
+                    step_space = free_main / (m - 1) if m > 1 else 0.0
+                elif jc == "space-around":
                     step_space = free_main / m
-                    if not reverse:
-                        item_x = content_x0 + step_space / 2.0
-                    else:
-                        item_x = content_x0 + available - step_space / 2.0
-                elif jc == "space-evenly" and m > 0:
+                    x_off = content_x0 + step_space / 2.0
+                elif jc == "space-evenly":
                     step_space = free_main / (m + 1)
-                    if not reverse:
-                        item_x = content_x0 + step_space
+                    x_off = content_x0 + step_space
+            # P0 (retest report) — mirror for reverse directions:
+            # start(reverse) packs right → block left edge =
+            # content_x0 + free_main; center → content_x0 + free_main/2;
+            # end(reverse) packs left → content_x0.  (Note: the reverse
+            # "start" maps to the forward "end" x_off, and vice versa.)
+            _step_main = _gap_main + step_space  # advance between mb left edges
+            if reverse:
+                # P0 (retest report) — mirror for reverse directions:
+                # start(reverse) packs right → block left edge =
+                # content_x0 + free_main; center → content_x0 + free_main/2;
+                # end(reverse) packs left → content_x0.  (The reverse
+                # "start" maps to the forward "end" x_off, and vice versa.)
+                if jc == "center":
+                    x_off = content_x0 + free_main / 2.0
+                elif jc in ("end", "flex-end"):
+                    x_off = content_x0
+                elif jc in ("space-around", "space-evenly"):
+                    # Same distribution, mirrored: the block spans
+                    # [content_x0, content_x0 + total]; x_off stays.
+                    pass
+                else:
+                    # start (default) + space-between: pack from the
+                    # right edge.
+                    x_off = content_x0 + free_main
+                # DOM item k's mb-left = x_off + Σ_{j>k}(mb_j + step_main)
+                # (items to the left of k in the reverse layout are the
+                # DOM items after k).
+                _mb_main_list = _mb_main
+                _suffix: list[float] = [0.0] * m
+                for k in range(m - 1, -1, -1):
+                    if k == m - 1:
+                        _suffix[k] = 0.0
                     else:
-                        item_x = content_x0 + available - step_space
+                        _suffix[k] = _suffix[k + 1] + _mb_main_list[k + 1] + _step_main
+                item_x = x_off + _suffix[0]
+            else:
+                item_x = x_off
 
             for pos, i in enumerate(line):
                 cb = ordered[i]
@@ -2710,6 +2903,9 @@ def _layout_flex(
                         w = max(0.0, _main_exp - _bb_pad - _bb_brd)
                     else:
                         w = _main_exp
+                # P1 (agent report) — flex item margins: item_x is the
+                # margin-box left edge; layout_block adds margin_l internally
+                # to compute content_x0, so no extra offset is needed here.
                 # P27.4 — cross-axis alignment for this item (item height
                 # = natural_cross; stretch fills the line height).
                 item_align = cb.align_self if cb.align_self else bx.align_items
@@ -2720,25 +2916,83 @@ def _layout_flex(
                     # fall back to the Phase-0 measured cross size, which for
                     # border-box items already includes padding + border.
                     ch = max(natural_cross[i], cb.rect.h)
-                if item_align in ("stretch", "") and cross_explicit[i] is None:
-                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
-                    if reverse:
-                        item_x -= w
-                    cb.rect.h = line_h
-                elif item_align in ("start", "flex-start"):
-                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
-                elif item_align in ("center", "baseline"):
-                    layout_block(cb, item_x - w if reverse else item_x,
-                                 eff_line_y + max(0.0, (line_h - ch) / 2.0), w)
-                elif item_align in ("end", "flex-end"):
-                    layout_block(cb, item_x - w if reverse else item_x,
-                                 eff_line_y + max(0.0, line_h - ch), w)
+                # P0 (retest report) — item_x is the margin-box left edge.
+                # layout_block adds margin_l + padding_l internally to
+                # compute content_x0, so pass item_x directly (the legacy
+                # `item_x - w` for reverse was a content-box correction
+                # that double-subtracted the item width).
+                _content_x = item_x
+                # cross-axis y (row: align within the line; column: x-align)
+                if row:
+                    if item_align in ("stretch", "") and cross_explicit[i] is None:
+                        layout_block(cb, _content_x, eff_line_y, w)
+                        cb.rect.h = line_h
+                    elif item_align in ("start", "flex-start"):
+                        layout_block(cb, _content_x, eff_line_y, w)
+                    elif item_align in ("center", "baseline"):
+                        layout_block(cb, _content_x,
+                                     eff_line_y + max(0.0, (line_h - ch) / 2.0), w)
+                    elif item_align in ("end", "flex-end"):
+                        layout_block(cb, _content_x,
+                                     eff_line_y + max(0.0, line_h - ch), w)
+                    else:
+                        layout_block(cb, _content_x, eff_line_y, w)
                 else:
-                    layout_block(cb, item_x - w if reverse else item_x, eff_line_y, w)
+                    # column: main axis = vertical; cross axis = horizontal.
+                    if item_align in ("stretch", "") and cross_explicit[i] is None:
+                        layout_block(cb, content_x0, item_x, w)
+                        cb.rect.w = available
+                    elif item_align in ("start", "flex-start"):
+                        layout_block(cb, content_x0, item_x, w)
+                    elif item_align in ("center", "baseline"):
+                        layout_block(cb,
+                                     content_x0 + max(0.0, (available - ch) / 2.0),
+                                     item_x, w)
+                    elif item_align in ("end", "flex-end"):
+                        layout_block(cb, content_x0 + max(0.0, available - ch),
+                                     item_x, w)
+                    else:
+                        layout_block(cb, content_x0, item_x, w)
+                # P1 (agent report) — advance to the next item's margin-box
+                # left edge: current item's margin-box width (content +
+                # padding + border + margin on both sides) + gap + step space.
+                _mb_adv = (
+                    w
+                    + cb.padding.left + cb.padding.right
+                    + cb.border.left + cb.border.right
+                    + cb.margin.left + cb.margin.right
+                ) if row else (
+                    w
+                    + cb.padding.top + cb.padding.bottom
+                    + cb.border.top + cb.border.bottom
+                    + cb.margin.top + cb.margin.bottom
+                )
+                # P0 (retest report) — reverse-direction advance: DOM item
+                # k's items-to-the-left are DOM items after k, so the step
+                # to the next DOM item subtracts mb_{k+1} (+gap+step), not
+                # mb_k.  The legacy `item_x -= mb_current` left a
+                # margin-box offset of mb_k - mb_{k+1} between adjacent
+                # items whenever the items had unequal margin-box sizes
+                # (the column-reverse adjacency test failed exactly that
+                # way: b_bottom was 20 px below a.y).
+                _mb_adv_next = _mb_adv
+                if reverse and pos + 1 < len(line):
+                    _nxt = ordered[line[pos + 1]]
+                    _mb_adv_next = (
+                        sized[line[pos + 1]]
+                        + _nxt.padding.left + _nxt.padding.right
+                        + _nxt.border.left + _nxt.border.right
+                        + _nxt.margin.left + _nxt.margin.right
+                    ) if row else (
+                        sized[line[pos + 1]]
+                        + _nxt.padding.top + _nxt.padding.bottom
+                        + _nxt.border.top + _nxt.border.bottom
+                        + _nxt.margin.top + _nxt.margin.bottom
+                    )
                 if reverse:
-                    item_x -= w + step_space
+                    item_x -= _mb_adv_next + _step_main
                 else:
-                    item_x += w + step_space
+                    item_x += _mb_adv + _step_main
         # row direction: finalize container rect
         if bx.explicit_height is not None:
             final_h = bx.explicit_height
@@ -2750,72 +3004,97 @@ def _layout_flex(
         # Single line (column wrap is rare); cross-size = container width.
         cross_size = available
         main_avail = bx.explicit_height if bx.explicit_height is not None else sum(sized)
-        # P27.5 — column-reverse: the flex-start edge is the BOTTOM of
-        # the container.  Items stack bottom-to-top: item 0 (first in
-        # DOM) sits at the very bottom, item 1 above it, etc.
-        # place_order = [0, 1, ...] — we walk UPWARD from the bottom.
-        place_order = list(range(n))
-        # justify-content distributes items along the main (vertical) axis.
-        free_main = main_avail - sum(sized)
-        y_off = content_y0
-        if free_main > 0:
-            jc = bx.justify_content
-            if reverse:
-                # P27.5 — column-reverse: flex-start = bottom.
-                # start: first item's bottom edge sits at the container bottom.
-                #   y_off = main_avail - h_0  (item 0's top)
-                # end: first item's top edge sits at the container top.
-                #   y_off = 0
-                if jc in ("start", "flex-start"):
-                    y_off = content_y0 + main_avail - sized[0]
-                elif jc == "center":
-                    # center the whole stack; y_off = top of first item
-                    stack_h = sum(sized)
-                    y_off = content_y0 + (main_avail - stack_h) / 2.0
-                elif jc in ("end", "flex-end"):
-                    y_off = content_y0
-            else:
-                if jc == "center":
-                    y_off = content_y0 + free_main / 2.0
-                elif jc in ("end", "flex-end"):
-                    y_off = content_y0 + free_main
+        # P0 (retest report) — margin-box main sizes + flex gap for the
+        # column main axis.  ``_mb_col[i]`` is the i-th item's margin-box
+        # height (content + padding + border + margin, top and bottom).
+        _mb_col: list[float] = []
+        _mb_col_total = 0.0
+        for i in range(n):
+            cb = ordered[i]
+            _mb = (sized[i]
+                   + cb.padding.top + cb.padding.bottom
+                   + cb.border.top + cb.border.bottom
+                   + cb.margin.top + cb.margin.bottom)
+            _mb_col.append(_mb)
+            _mb_col_total += _mb
+        _gap_col = bx.flex_gap if n > 1 else 0.0
+        _gap_col_total = _gap_col * (n - 1)
+        free_main = main_avail - _mb_col_total - _gap_col_total
+        jc = bx.justify_content
+        # P0 (retest report) — forward column: compute the *first* item's
+        # margin-box top (content_y0-relative) per justify-content; the
+        # item's margin-box top advances downward by mb + gap + step.
+        _y_start = 0.0
         step_space = 0.0
         if free_main > 0:
-            jc = bx.justify_content
-            if jc == "space-between" and n > 1:
+            if jc == "center":
+                _y_start = free_main / 2.0
+            elif jc in ("end", "flex-end"):
+                _y_start = free_main
+            elif jc == "space-between" and n > 1:
                 step_space = free_main / (n - 1)
-            elif jc == "space-around" and n > 0:
+            elif jc == "space-around":
                 step_space = free_main / n
-            elif jc == "space-evenly" and n > 0:
+                _y_start = step_space / 2.0
+            elif jc == "space-evenly":
                 step_space = free_main / (n + 1)
-                if not reverse:
-                    y_off = content_y0 + step_space
+                _y_start = step_space
+        _step_col = _gap_col + step_space
+        # P27.5 — column-reverse: the flex-start edge is the BOTTOM.
+        # Items walk UPWARD from the bottom; the DOM-first item sits at
+        # the very bottom (its margin-box bottom edge is at the
+        # container's content bottom edge).
+        place_order = list(range(n))
+        if reverse:
+            # P0 (retest report) — column-reverse: item 0 (DOM-first)
+            # sits at the BOTTOM.  Its margin-box bottom edge is at the
+            # content bottom (main_avail); margin-box top =
+            # main_avail - mb_0.  Items walk UPWARD: DOM item k's
+            # mb-top = main_avail - prefix_mb(k) - k*(gap+step), where
+            # prefix_mb(k) = Σ_{i≤k} mb_i.
+            _prefix: list[float] = [0.0] * n
+            for k in range(n):
+                _prefix[k] = (_prefix[k - 1] if k > 0 else 0.0) + _mb_col[k]
+            y_off = main_avail - _mb_col[0]
+            for pi in place_order:
+                cb = ordered[pi]
+                h = sized[pi]
+                _flow_y = content_y0 + y_off
+                item_align = cb.align_self if cb.align_self else bx.align_items
+                cw = natural_cross[pi]
+                if item_align in ("stretch", "") and cb.explicit_width is None:
+                    layout_block(cb, content_x0, _flow_y, cross_size)
+                    cb.rect.w = available
+                elif item_align == "center":
+                    layout_block(cb, content_x0 + max(0.0, (cross_size - cw) / 2.0), _flow_y, cross_size)
+                elif item_align in ("end", "flex-end"):
+                    layout_block(cb, content_x0 + max(0.0, cross_size - cw), _flow_y, cross_size)
                 else:
-                    y_off = content_y0 + main_avail - step_space
-        for pi in place_order:
-            cb = ordered[pi]
-            h = sized[pi]
-            # cross-axis alignment: stretch fills the container width.
-            item_align = cb.align_self if cb.align_self else bx.align_items
-            cw = natural_cross[pi]
-            if item_align in ("stretch", "") and cb.explicit_width is None:
-                layout_block(cb, content_x0, y_off, cross_size)
-            elif item_align == "center":
-                layout_block(cb, content_x0 + max(0.0, (cross_size - cw) / 2.0), y_off, cross_size)
-            elif item_align in ("end", "flex-end"):
-                layout_block(cb, content_x0 + max(0.0, cross_size - cw), y_off, cross_size)
-            else:  # start / flex-start / baseline
-                layout_block(cb, content_x0, y_off, cross_size)
-            if reverse:
-                # P27.5 — column-reverse: walk upward.  The next item
-                # (above the current one) starts at  current.y - next.h.
-                nxt_pi = pi + 1
-                if nxt_pi < n:
-                    y_off -= sized[nxt_pi] + step_space
+                    layout_block(cb, content_x0, _flow_y, cross_size)
+                # Next item (above): mb-top = current mb-top - mb_next
+                # - gap - step (margin-box adjacency in the packed stack).
+                if pi + 1 < n:
+                    y_off -= _mb_col[pi + 1] + _gap_col + step_space
                 else:
-                    y_off -= h + step_space
-            else:
-                y_off += h + step_space
+                    y_off -= _mb_col[pi] + _gap_col + step_space
+        else:
+            y_off = _y_start
+            for pi in place_order:
+                cb = ordered[pi]
+                h = sized[pi]
+                _flow_y = content_y0 + y_off + cb.margin.top
+                item_align = cb.align_self if cb.align_self else bx.align_items
+                cw = natural_cross[pi]
+                if item_align in ("stretch", "") and cb.explicit_width is None:
+                    layout_block(cb, content_x0, _flow_y, cross_size)
+                    cb.rect.w = available
+                elif item_align == "center":
+                    layout_block(cb, content_x0 + max(0.0, (cross_size - cw) / 2.0), _flow_y, cross_size)
+                elif item_align in ("end", "flex-end"):
+                    layout_block(cb, content_x0 + max(0.0, cross_size - cw), _flow_y, cross_size)
+                else:
+                    layout_block(cb, content_x0, _flow_y, cross_size)
+                y_off += _mb_col[pi] + _step_col
         final_h = main_avail if bx.explicit_height is not None else sum(sized)
         bx.rect = Rect(content_x0, content_y0, cross_size,
                        max(final_h, bx.line_height_px))
@@ -2831,8 +3110,10 @@ def _layout_grid(
     """P4.3 — toy CSS Grid layout.
 
     Children are placed into a grid-template-columns × auto-rows matrix.
-    Each column track has equal width (available / grid_columns).
-    Row height is determined by the tallest child in that row.
+    P0 (retest report) — column tracks honour the 1fr 2fr fraction
+    ratios from ``grid-template-columns`` (and the ``gap`` shorthand)
+    instead of the legacy equal-width split.  Row height is determined
+    by the tallest child in that row.
     P33.R4 — children are positioned at their row's cumulative y offset
     (not all at content_y0), so grid cells in later rows are placed
     below those in earlier rows.
@@ -2842,6 +3123,45 @@ def _layout_grid(
         return
 
     cols = bx.grid_columns if bx.grid_columns > 0 else 1
+    col_gap = bx.grid_gap
+    row_gap = bx.grid_row_gap
+
+    # P0 (retest report) — proportional track sizing (1fr 2fr + gap).
+    # Each entry in grid_cols_frac is (value, unit): ("fr" → fractional,
+    # "px" → fixed).  Free space (available − (cols−1)*col_gap) is
+    # distributed: px tracks take their fixed width, fr tracks share the
+    # remainder proportionally.  Legacy equal-split when no track list.
+    fracs = getattr(bx, "grid_cols_frac", None) or []
+    if len(fracs) == cols:
+        free = max(0.0, available - (cols - 1) * col_gap)
+        # Separate px (fixed) from fr (proportional) tracks.
+        px_sum = sum(v for v, u in fracs if u == "px")
+        fr_sum = sum(v for v, u in fracs if u == "fr")
+        # If all tracks are fr, distribute the full free space.
+        # If mixed, px tracks take their value and fr tracks share the rest.
+        col_widths: list[float] = []
+        if fr_sum > 0 and px_sum > 0:
+            # Mixed: px tracks fixed, fr tracks share (free - px_sum).
+            fr_free = max(0.0, free - px_sum)
+            for v, u in fracs:
+                if u == "px":
+                    col_widths.append(v)
+                else:
+                    col_widths.append(fr_free * (v / fr_sum))
+        elif fr_sum > 0:
+            # All fr: distribute the full free space.
+            for v, u in fracs:
+                col_widths.append(free * (v / fr_sum))
+        else:
+            # All px (or no fr): use the px values directly.
+            for v, u in fracs:
+                col_widths.append(v if u == "px" else free / cols)
+        col_widths = [max(0.0, w) for w in col_widths]
+    else:
+        # Legacy equal-split (no fraction list).
+        col_w = (available - (cols - 1) * col_gap) / cols
+        col_widths = [col_w] * cols
+
     # Phase 1: lay out each child at its natural size to get intrinsic dims.
     for cb in bx.children:
         if cb.is_display_none:
@@ -2850,7 +3170,6 @@ def _layout_grid(
         layout_block(cb, content_x0, content_y0, available / cols)
 
     # Phase 2: place children into the grid, tracking cumulative row height.
-    col_w = available / cols
     visible = [cb for cb in bx.children if not cb.is_display_none]
     n = len(visible)
     # P33.R4 — accumulate row heights so each row starts below the previous.
@@ -2859,35 +3178,67 @@ def _layout_grid(
     for idx, cb in enumerate(visible):
         row = idx // cols
         col = idx % cols
-        cx = content_x0 + col * col_w
-        cy = content_y0 + row_y.get(row, 0.0)
-        layout_block(cb, cx, cy, col_w)
+        cx = content_x0
+        for c2 in range(col):
+            cx += col_widths[c2]
+            cx += col_gap
+        cy = content_y0 + row_y.get(row, 0.0) + row * row_gap
+        cw = col_widths[col] if col < len(col_widths) else 0.0
+        layout_block(cb, cx, cy, cw)
         row_h = cb.rect.h + cb.padding.top + cb.padding.bottom
         row_max_h[row] = max(row_max_h.get(row, 0.0), row_h)
-    # P0 (agent report) — row track distribution: when the grid has an
-    # explicit height (and no fixed grid-template-rows track sizes), the
-    # available row space is split evenly across the occupied rows,
-    # mirroring `grid-template-rows: 1fr 1fr` semantics.  Without an
-    # explicit height the auto rows stay content-sized (legacy behaviour).
-    row_h_list: list[float] = []
-    for row in range(len(row_max_h)):
+    # P0 (agent report) — row track distribution: when the grid has row
+    # track fractions (grid-template-rows: 50px 50px / 1fr 2fr), use
+    # them; otherwise fall back to the legacy even-split / content-sized.
+    row_fracs = getattr(bx, "grid_rows_frac", None) or []
+    if len(row_fracs) == len(row_max_h) and any(f > 0 for f, u in row_fracs):
+        # P0 (retest report) — proportional row sizing (mirrors columns).
+        px_sum_r = sum(v for v, u in row_fracs if u == "px")
+        fr_sum_r = sum(v for v, u in row_fracs if u == "fr")
         if bx.explicit_height is not None:
-            n_rows = len(row_max_h)
-            row_h_list.append(max(bx.explicit_height / n_rows, row_max_h.get(row, 0.0)))
+            free_h = max(0.0, bx.explicit_height - (len(row_fracs) - 1) * row_gap)
         else:
-            row_h_list.append(row_max_h.get(row, 0.0))
-    # P33.R4 — compute cumulative row offsets for the next pass.
+            free_h = None  # content-sized rows
+        row_h_list: list[float] = []
+        for idx_r, (v, u) in enumerate(row_fracs):
+            if u == "px":
+                row_h_list.append(v)
+            elif fr_sum_r > 0 and free_h is not None:
+                # fr track: share the remaining space.
+                fr_free = max(0.0, free_h - px_sum_r)
+                row_h_list.append(fr_free * (v / fr_sum_r))
+            else:
+                row_h_list.append(row_max_h.get(idx_r, 0.0))
+        # Ensure each row is at least its content height.
+        for idx_r in range(len(row_h_list)):
+            if idx_r in row_max_h:
+                row_h_list[idx_r] = max(row_h_list[idx_r], row_max_h[idx_r])
+    else:
+        row_h_list: list[float] = []
+        for row in range(len(row_max_h)):
+            if bx.explicit_height is not None:
+                n_rows = len(row_max_h)
+                row_h_list.append(max(bx.explicit_height / n_rows, row_max_h.get(row, 0.0)))
+            else:
+                row_h_list.append(row_max_h.get(row, 0.0))
+    # P33.R4 — compute cumulative row offsets for the next pass (include
+    # row_gap between rows).
     total_h = 0.0
     for row in range(len(row_max_h)):
         row_y[row] = total_h
-        total_h += row_h_list[row]
+        total_h += row_h_list[row] + row_gap
+    total_h = max(0.0, total_h - row_gap)  # strip trailing gap
     # Phase 3: re-position children at their correct row y-offsets.
     for idx, cb in enumerate(visible):
         row = idx // cols
         col = idx % cols
-        cx = content_x0 + col * col_w
-        cy = content_y0 + row_y.get(row, 0.0)
-        layout_block(cb, cx, cy, col_w)
+        cx = content_x0
+        for c2 in range(col):
+            cx += col_widths[c2]
+            cx += col_gap
+        cy = content_y0 + row_y.get(row, 0.0) + row * row_gap
+        cw = col_widths[col] if col < len(col_widths) else 0.0
+        layout_block(cb, cx, cy, cw)
         # P0 (agent report) — stretch cell content into its row track when
         # the container height distributes the space.
         if bx.explicit_height is not None:
@@ -2955,16 +3306,24 @@ def _layout_table(
         cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         for ci in range(min(n_cols, len(cells))):
             c = cells[ci]
-            # measure the cell's natural (unwrapped) content width.
-            _t = (c.text_content or "")
-            if c.children:
+            # P1 (agent report) — natural width uses the cell's own
+            # font family + line-height so TTF vertical metrics are
+            # honoured; border-collapse halves the shared cell borders.
+            # P0 (retest report) — collect the cell's text ONCE: prefer
+            # the aggregated text_content (which already includes TEXT
+            # descendants); fall back to the TEXT children's text joined
+            # by a space only when text_content is empty (a cell with
+            # only inline-element children, no direct text node).
+            _fam = c.font_family if hasattr(c, "font_family") else "monospace"
+            _t = c.text_content or ""
+            if not _t and c.children:
                 _parts = [gc.text_content for gc in c.children
                           if gc.box_type == BoxType.TEXT and gc.text_content]
                 if _parts:
                     _t = " ".join(_parts)
-            _natural = _text_mod.measure(_t, c.font_px) if _t else 0.0
-            _cw = (_natural + c.padding.left + c.padding.right
-                   + c.border.left + c.border.right)
+            _natural = _text_mod.measure(_t, c.font_px, _fam) if _t else 0.0
+            _bw_lr = (c.border.left + c.border.right) / 2.0 if bx.border_collapse else (c.border.left + c.border.right)
+            _cw = _natural + c.padding.left + c.padding.right + _bw_lr
             col_max[ci] = max(col_max[ci], _cw)
     explicit_table_w = bx.explicit_width
     if explicit_table_w is not None:
@@ -2973,13 +3332,23 @@ def _layout_table(
         col_w = explicit_table_w / n_cols
     else:
         # auto: shrink-to-fit columns at their natural content width,
-        # never wider than the containing block.
+        # never wider than the containing block.  P0 (retest report) —
+        # with border-collapse the shared cell borders are halved; the
+        # table border-box includes the left/right outer borders once
+        # each.  Edge 2x2 single-char table ≈ 70 px, so the legacy
+        # "fill the containing block" fallback over-reported 300 px.
         col_w_list = [max(w, 1.0) for w in col_max]
         col_w = max(col_w_list) if col_w_list else 0.0
         available = min(sum(col_w_list), containing_w)
 
     # Phase 2 — position rows and cells.
     child_y = 0.0
+    # P1 (agent report) — table auto-width: the table's rect width is the
+    # sum of the column widths (shrink-to-fit), NOT the containing block
+    # width.  The legacy code set ``available = containing_w`` which made
+    # every table fill its parent, so the 2×2 table with single-digit
+    # cells reported w=800 instead of w≈70 (Edge layout probe §4).
+    _table_total_w = sum(col_w_list) if not explicit_table_w else explicit_table_w
     for row in rows:
         row.cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         cells = row.cells
@@ -3001,7 +3370,7 @@ def _layout_table(
                 cell_x += col_w_list[ci]
         # Finalize row.
         row.explicit_height = row_h if row_h > 0 else bx.line_height_px
-        row.rect = Rect(content_x0, content_y0 + child_y, available, row_h)
+        row.rect = Rect(content_x0, content_y0 + child_y, _table_total_w, row_h)
         # Reposition cells with the final row y.
         cx = content_x0
         for ci in range(n_cells):
@@ -3011,7 +3380,8 @@ def _layout_table(
             cx += col_w_list[ci]
         child_y += row_h
 
-    bx.rect = Rect(content_x0, content_y0, available, max(child_y, bx.line_height_px))
+    bx.rect = Rect(content_x0, content_y0, _table_total_w,
+                   max(child_y, bx.line_height_px))
 
 
 # --- hit testing ---------------------------------------------------------------------

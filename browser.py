@@ -53,7 +53,7 @@ def render_document_from_url(
     client=None,
     timeout: float | None = None,
     use_cache: "str | bool" = False,
-    progress: "net.LoadEventSink | None" = None,
+    progress: "net.LoadEventSink | None" = None,  # noqa: F821
 ) -> Bitmap:
     """P22 — load an http(s) *url* and render it, plus fetch its
     subresources (``<link rel=stylesheet>`` / ``<img src>``) against
@@ -116,13 +116,14 @@ def render_document_from_url(
     author_css, ua_css = _full_css(tree, css_text)
 
     # P22.4/P22.5 — load subresources against the document base.
+    doc_csp = ""
+    loaded: dict = {}
     if load_subresources:
         base = net.parse_url(resp.final_url or url)
         # GPT P0-4 — the document's CSP header gates subresource
         # loading (the real browser uses the document's CSP, not
         # each subresource's own header).  CORS is enforced via
         # the subresource's ACAO header (is_policy_allowed).
-        doc_csp = ""
         for k, v in resp.headers.items():
             if k.lower() == "content-security-policy":
                 doc_csp = v
@@ -143,7 +144,17 @@ def render_document_from_url(
             # Subresource loading must never break page rendering (P22.4).
             pass
 
-    host = _run_scripts(tree)
+    # P0 (retest report) — run scripts with CSP gating + external scripts.
+    import js as _js_mod
+    csp_directives = net.parse_csp_directives(doc_csp) if doc_csp else None
+    external_scripts: list = []
+    for _u, r in (loaded.get("script") or {}).items():
+        if r is not None and r.ok:
+            external_scripts.append(
+                (_u, r.body.decode("utf-8", errors="replace")))
+    host = _js_mod.Host(tree, lambda _s: None)
+    host.execute_all(csp_directives=csp_directives,
+                    external_scripts=external_scripts)
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(

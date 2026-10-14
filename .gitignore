@@ -5,6 +5,10 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# 验证探针（本地临时文件）
+_verify_all.py
+_intro.md
+
 # 渲染输出（可用 main.py 重新生成）
 *.ppm
 out*.png
@@ -14,6 +18,17 @@ anim_test/
 # 日志与临时文件
 *.log
 *.tmp
+
+# Local dependencies, HTTP caches and regenerated CLI exports
+node_modules/
+_cache_test/
+.toy_cache/
+/a11y.json
+/links.json
+/links.txt
+/.toy_history.json
+/.toy_bookmarks.json
+/assessments/*/perf_*.png
 
 # 外部报告（临时存档，不属于源码发布包）
 改进建议来自ChatGPT.txt

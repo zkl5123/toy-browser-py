@@ -1948,12 +1948,6 @@ class SymbolIteratorMarker:
     KEY = "@@iterator"
 
 
-# P29.2 — yield sentinel: raised inside a generator body to pause it.
-class _Yield(Exception):
-    def __init__(self, value):
-        self.value = value
-
-
 @dataclass
 class Labeled(JNode):
     """P0 (agent report) — `label: stmt` (e.g. `outer: while (...) {...}`).
@@ -2559,6 +2553,28 @@ class Interpreter:
                 self.env = old
             else:
                 raise
+        # P0 (retest report) — JS-level errors raised *inside* the try
+        # body must be catchable by the JS catch block: the legacy path
+        # let Python's TDZError / RuntimeError (const re-assignment)
+        # / NameError escape eval_try and abort the whole script.
+        # Wrap them in _Throw so the catch handler receives them.
+        except (TDZError, RuntimeError, NameError) as exc:
+            if node.catch_body is not None:
+                old = self.env
+                self.env = Env({}, old)
+                if node.catch_param:
+                    _name = type(exc).__name__
+                    if _name == "TDZError":
+                        _msg = f"ReferenceError: {exc}"
+                    elif _name == "RuntimeError":
+                        _msg = f"TypeError: {exc}"
+                    else:
+                        _msg = f"ReferenceError: {exc}"
+                    self.env.set(node.catch_param, _msg)
+                result = self.eval_block(node.catch_body)
+                self.env = old
+            else:
+                raise
         finally:
             if node.finally_body is not None:
                 self.eval_block(node.finally_body)
@@ -2584,6 +2600,20 @@ class Interpreter:
         # of int/float representation (0 === 0.0, 1 === 1.0).
         if isinstance(l, (int, float)) and isinstance(r, (int, float)):
             return l == r
+        # P0 (retest report) — JS `===` for objects is *reference*
+        # identity, not structural equality: `({}) === ({})` is false
+        # (two distinct objects).  Python's `==` on dicts is value
+        # equality, so use `is` for the dict / list (array) / function
+        # / object types.  Primitives (str, numbers) keep `==`.
+        if isinstance(l, (dict, list)) and isinstance(r, (dict, list)):
+            # Same-type object pair → identity (JS semantics).  A
+            # dict-vs-list pair is distinct types → False in JS.
+            if type(l) is type(r):
+                return l is r
+            return False
+        if callable(l) or callable(r):
+            # Functions compare by identity in JS.
+            return l is r
         if type(l) is type(r):
             return l == r
         # null === undefined is False in JS (distinct values).
@@ -4441,6 +4471,16 @@ class Host:
 
         walk(self.root)
 
+    def _remove_element_from_table(self, node: DomNode) -> None:
+        """P0 (retest report) — after a DOM mutation (removeChild /
+        replaceChild / remove), re-scan the tree so ``getElementById``
+        no longer returns a detached element.  A full rebuild is cheap
+        (the table is small) and simpler than an incremental removal,
+        which would have to walk the element's *former* subtree to
+        drop every descendant id.
+        """
+        self._build_element_table()
+
     def _set_timeout(self, code: str, delay: Any = 0):
         self._timers.append((code, 0))
 
@@ -4660,24 +4700,34 @@ class Host:
                 child = args[0]
                 if isinstance(child, DomElement):
                     obj.append_child(child)
+                    # P0 (retest report) — rebuild the element table so
+                    # getElementById sees the newly attached id.
+                    self._build_element_table()
                     return child
                 return None
             if method == "removeChild" and args:
                 child = args[0]
                 if isinstance(child, DomElement):
                     removed = obj.remove_child(child)
+                    # P0 (retest report) — a removed element (and its
+                    # subtree) must no longer resolve via getElementById.
+                    self._build_element_table()
                     return removed
                 return None
             if method == "insertBefore" and len(args) >= 1:
                 child = args[0]
                 ref = args[1] if len(args) > 1 else None
                 if isinstance(child, DomElement):
-                    return obj.insert_before(child, ref)
+                    result = obj.insert_before(child, ref)
+                    self._build_element_table()
+                    return result
                 return None
             if method == "replaceChild" and len(args) >= 2:
                 new_node, old_node = args[0], args[1]
                 if isinstance(new_node, DomElement) and isinstance(old_node, DomElement):
-                    return obj.replace_child(new_node, old_node)
+                    result = obj.replace_child(new_node, old_node)
+                    self._build_element_table()
+                    return result
                 return None
             if method == "setAttribute" and len(args) >= 2:
                 obj.set_attribute(args[0], args[1])
@@ -4692,6 +4742,9 @@ class Host:
                 return obj.dispatch_event(args[0], detail)
             if method == "remove":
                 obj.remove()
+                # P0 (retest report) — a removed element must no longer
+                # resolve via getElementById.
+                self._build_element_table()
                 return None
             # classList add/remove/toggle/contains live on the classList
             # dict, not the element — but `el.classList.add(...)` reaches us
@@ -5350,21 +5403,52 @@ class Host:
 
     # --- execution entry points ---
 
-    def execute_all(self):
-        scripts = self._collect_scripts(self.root)
-        for s in scripts:
-            try:
-                self.execute(s)
-            except JSUncaughtError as e:
-                # P0 (agent report) — script aborted mid-execution;
-                # the GUI console should still surface it.  Stop
-                # executing the remaining scripts on this page
-                # (real-browser semantics: one uncaught error in a
-                # <script> does not abort the whole page, but the
-                # remaining scripts on the same tag would; the toy
-                # engine runs each collected script as one program,
-                # so we log and continue with the others).
-                self.log(f"uncaught throw: {e.value}")
+    def execute_all(self, csp_directives: dict | None = None,
+                    external_scripts: list | None = None):
+        """Execute inline <script> blocks + optional external scripts.
+
+        P0 (retest report) — *csp_directives* (the document's parsed
+        CSP, from ``net.parse_csp_directives``) gates inline script
+        execution: when ``script-src`` resolves to ``'none'`` (or to
+        a source-list that does not match ``'unsafe-inline'``) the
+        inline <script> blocks are skipped, matching the real
+        browser.  *external_scripts* is a list of ``(src, code)``
+        tuples for ``<script src>`` bodies fetched by the URL
+        pipeline; they run in document order after the inline pass.
+        """
+        # P0 (retest report) — CSP gate on inline scripts.
+        inline_allowed = True
+        if csp_directives:
+            script_values = csp_directives.get(
+                "script-src", csp_directives.get("default-src", []))
+            if script_values:
+                # 'none' as the sole value → no inline scripts.
+                bare = [v.lower().strip("'") for v in script_values]
+                if bare == ["none"]:
+                    inline_allowed = False
+                else:
+                    # Inline script requires 'unsafe-inline' in the
+                    # source list (CSP3 §3.3).  A source-list without
+                    # 'unsafe-inline' blocks inline scripts.
+                    if "unsafe-inline" not in bare:
+                        inline_allowed = False
+        if inline_allowed:
+            scripts = self._collect_scripts(self.root)
+            for s in scripts:
+                try:
+                    self.execute(s)
+                except JSUncaughtError as e:
+                    self.log(f"uncaught throw: {e.value}")
+        # P0 (retest report) — external scripts (<script src> bodies
+        # fetched by the URL pipeline) run in document order.
+        if external_scripts:
+            for _src, code in external_scripts:
+                if not code:
+                    continue
+                try:
+                    self.execute(code)
+                except JSUncaughtError as e:
+                    self.log(f"uncaught throw (external {_src}): {e.value}")
         self.flush_timers()
         self.flush_raf()  # P1.2
 
@@ -5483,8 +5567,24 @@ class Host:
             # own try/except stack is deep enough (a pathological
             # case).  Log and recover instead of crashing the host.
             self.log(f"JS recursion error: {e}")
-        except (NameError, TypeError, SyntaxError, ZeroDivisionError) as e:
-            self.log(f"JS error: {e}")
+        except (NameError, TypeError, SyntaxError,
+                ZeroDivisionError) as e:
+            # P0 (retest report) — surface as a JS-catchable throw so
+            # that a ReferenceError / TypeError raised inside a try
+            # body is caught by the JS catch block (the legacy path
+            # logged the error and continued, silently swallowing
+            # the exception).  Python-level exceptions that escape
+            # the interpreter are wrapped in _Throw with a message
+            # that names the JS error type.
+            _name = type(e).__name__
+            if _name == "NameError":
+                raise _Throw(f"ReferenceError: {e}") from e
+            elif _name == "TypeError":
+                raise _Throw(f"TypeError: {e}") from e
+            elif _name == "SyntaxError":
+                raise _Throw(f"SyntaxError: {e}") from e
+            else:
+                raise _Throw(f"{_name}: {e}") from e
 
     def eval(self, code: str):
         """P9.3 — Evaluate a JS expression and return the result value.

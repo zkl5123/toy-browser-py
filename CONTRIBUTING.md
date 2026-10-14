@@ -11,9 +11,9 @@ HTML → DOM parse → CSS cascade → Layout → Paint → Rasterize → Bitmap
 ## Getting started
 
 1. Clone the repo.
-2. Run the test suite: `python test.py` (807+ tests, all pure stdlib).
-3. Read `README.md` for the module map, `ARCHITECTURE.md` for
-   pipeline details, and `ROADMAP.md` for the priority list.
+2. Run the test suite: `python test.py` (925 tests, all pure stdlib).
+3. Read `README.md` for the module map, `docs/ARCHITECTURE.md` for
+   pipeline details, and `docs/ROADMAP.md` for the priority list.
 
 ## Code style
 
@@ -29,8 +29,9 @@ HTML → DOM parse → CSS cascade → Layout → Paint → Rasterize → Bitmap
 
 ## Testing
 
-All tests live in `test.py` (the main suite) and the `test_r*.py` /
-`test_p*.py` / `test_web_api.py` files (per-milestone feature tests).
+The full suite is orchestrated by `test.py`. Test modules and shared helpers
+live in `tests/`; stage benchmarks live in `tools/benchmarks/`.
+Individual test scripts also resolve project imports and fixtures from their new locations.
 Run the full suite:
 
 ```bash
@@ -43,7 +44,7 @@ When adding a feature:
 
 1. Add functional tests for the new behaviour.
 2. Add a regression test for any bug fix.
-3. Update the test count in `README.md` and `ROADMAP.md`.
+3. Update the test count in `README.md` and `docs/ROADMAP.md`.
 
 ## Commit conventions
 

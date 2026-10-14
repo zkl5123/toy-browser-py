@@ -127,6 +127,34 @@ def parse_declaration_pairs(src: str, parent_font_px: float = DEFAULT_FONT_PX) -
             important = True
             val = val[: -len("!important")].strip()
         if prop in EDGE_PROPS:
+            if prop == "border":
+                # P0 (retest report) — `border: <width> <style> <color>`
+                # shorthand: the first token is the border width; the
+                # remaining tokens are the style and color (consumed
+                # by the border-style / border-color longhands).
+                _parts = val.split()
+                if _parts:
+                    _w = _parts[0]
+                    # Parse the width token as a length.
+                    _w_val = parse_value(_w)
+                    _w_num = resolve_length(_w_val, parent_font_px)
+                    if _w_num is not None:
+                        _el = EdgeList.all(_w_num)
+                        out[prop] = ImportantDecl(_el, prop, important) if important else _el
+                        # Also emit the border-width longhand so
+                        # _edges_for(sn, "border-width") finds it.
+                        out["border-width"] = _el
+                        # If a style token is present, set border-style.
+                        if len(_parts) >= 2:
+                            _style = _parts[1].lower()
+                            _style_val = parse_value(_style)
+                            out["border-style"] = _style_val
+                        # If a color token is present, set border-color.
+                        if len(_parts) >= 3:
+                            _color = " ".join(_parts[2:])
+                            _color_val = parse_value(_color)
+                            out["border-color"] = _color_val
+                continue
             e = parse_shorthand(val, parent_font_px)
             if e is not None:
                 out[prop] = ImportantDecl(e, prop, important) if important else e
@@ -1644,7 +1672,7 @@ def parse_shorthand(src: str, parent_font_px: float) -> "EdgeList | None":
 
 
 # Property name normalisation (dashed CSS names used in rules/inline style).
-EDGE_PROPS = {"margin", "padding", "border-width"}
+EDGE_PROPS = {"margin", "padding", "border-width", "border"}
 
 
 # --- StyledNode -------------------------------------------------------------------

@@ -1,0 +1,1 @@
+{'gui_inline_script_text': 'BEFORE', 'expected': 'AFTER', 'long_scroll': {'content_height': 16000, 'max_offset': 15900, 'actual_offset': 15900, 'expected_content_at_least': 17000}, 'tabs_initial': 1, 'tabs_after_new': 2, 'tabs_after_close': 1, 'about_navigation_error': 'AttributeError("\'NoneType\' object has no attribute \'render_document\'")'}

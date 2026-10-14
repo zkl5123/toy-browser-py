@@ -1,0 +1,14 @@
+{
+  "cross_css": {
+    "text": "SAFE",
+    "color": "rgb(0, 255, 0)"
+  },
+  "csp_self": {
+    "text": "SAFE",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "csp_inline": {
+    "text": "SAFE",
+    "color": "rgba(0, 0, 0, 0)"
+  }
+}

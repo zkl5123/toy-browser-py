@@ -138,13 +138,14 @@ class PageInstance:
 
     def load_html(self, html: str, css: str = "", w: int = 800, h: int = 600,
                   full_page: bool = True,
-                  interaction_state: dict | None = None):
+                  interaction_state: dict | None = None,
+                  run_scripts: bool = True):
         """Render *html* via the toy browser pipeline; store the bitmap.
 
         P33.R2 — when *full_page* (default), the page is rendered at
         full content height (the layout root's content height) so long
         documents are not truncated to the viewport; the scroll
-        offset clamps to the content.  A rendering cap of 16000 px
+        offset clamps to the content.  A rendering cap of 32000 px
         keeps a pathological page from allocating a multi-GB bitmap
         (6 GB memory governance).  ``full_page=False`` keeps the
         legacy viewport-only render (faster for small pages, no
@@ -154,17 +155,30 @@ class PageInstance:
         and ``"focus"`` keys) feeds into ``css.apply`` for
         :hover/:focus pseudo-class rules.  When omitted, the page's
         own :attr:`hover_id` / :attr:`focus_id` are used.
+
+        P0 (retest report) — *run_scripts* executes the page's inline
+        <script> blocks (and external <script src> bodies when loaded
+        via the URL pipeline) against a *shared* Host bound to this
+        page's DOM tree, so DOM mutations made by the script are
+        visible to the layout / hit-test / focus chain built below
+        (the legacy path rendered the bitmap first and never ran the
+        script — ``BEFORE``/``AFTER`` page states came out wrong).
         """
         import browser
+        import dom as _dom_mod
+        import js as _js_mod
         self.width = w
         self.height = h
         if not full_page:
+            if run_scripts:
+                _tree = _dom_mod.parse(html)
+                _host = _js_mod.Host(_tree, lambda _s: None)
+                _host.execute_all()
             self.bitmap = browser.render_document(html, css, w, h)
             self.content_height = self.bitmap.height
             self._full_bitmap = None
             self.scroll_to(0)
             return
-        import dom as _dom_mod
         import css as _css_mod
         import layout as _layout_mod
         import paint_engine as _paint_mod
@@ -186,6 +200,13 @@ class PageInstance:
         author_css, ua_css = browser._full_css(tree, css)
         media = _css_mod.parse_media_queries(author_css)
         supports = _css_mod.parse_supports_blocks(author_css)
+        # P0 (retest report) — run the page's scripts against *this*
+        # tree (shared Document lifecycle) so script mutations land in
+        # the DOM the layout below builds.
+        if run_scripts:
+            _host = _js_mod.Host(tree, lambda _s: None)
+            self._script_host = _host
+            _host.execute_all()
         styled = _css_mod.apply(tree, author_css, ua_css=ua_css,
                                 interaction_state=interaction_state or None,
                                 media_rules=media, supports_rules=supports,
@@ -197,9 +218,10 @@ class PageInstance:
         # is the bounding box of the root's children (max y + h).
         probe = _layout_mod.layout(styled, float(w), 10_000_000.0)
         content_h = self._content_height_probe(probe)
-        # P33.R2 — cap the full-document height (16000 px ≈ 16 MP
-        # bitmap ≈ 48 MB, safe under the 6 GB governance cap).
-        full_h = min(max(content_h, h), 16000)
+        # P33.R2 — cap the full-document height (32000 px ≈ 32 MP
+        # bitmap ≈ 96 MB, safe under the 6 GB governance cap; the
+        # legacy 16000 px cap truncated long pages at row 160).
+        full_h = min(max(content_h, h), 32000)
         root2 = _layout_mod.layout(styled, float(w), float(full_h))
         self._layout_root = root2
         dl = _paint_mod.emit_commands(root2)
@@ -366,7 +388,7 @@ class PageInstance:
                                 viewport_h=float(self.height))
         probe = _layout_mod.layout(styled, float(self.width), 10_000_000.0)
         content_h = self._content_height_probe(probe)
-        full_h = min(max(content_h, self.height), 16000)
+        full_h = min(max(content_h, self.height), 32000)
         root2 = _layout_mod.layout(styled, float(self.width), float(full_h))
         self._layout_root = root2
         dl = _paint_mod.emit_commands(root2)
@@ -425,7 +447,7 @@ class PageInstance:
 
     def load_url(self, url: str, w: int = 800, h: int = 600,
                  record_history: bool = True,
-                 client: "net.HttpClient | None" = None,
+                 client: "net.HttpClient | None" = None,  # noqa: F821
                  parallel: bool = True):
         """Dispatch: local file, about: page, inline HTML, or network.
 
@@ -476,18 +498,45 @@ class PageInstance:
             self.title = url
             try:
                 html, resp = net.fetch_html(url, timeout=10.0, client=client)
-                # P33.R2 — fetch subresources (stylesheets / images)
-                # against the document DOM, using the shared keep-alive
-                # client (the parallel loader when *parallel*).
+                # P33.R2 — fetch subresources (stylesheets / images /
+                # scripts) against the document DOM, using the shared
+                # keep-alive client (the parallel loader when *parallel*).
+                # P0 (retest report) — the legacy path only joined
+                # stylesheets and re-parsed the document in load_html,
+                # so the document's CSP was never applied and external
+                # <script src> bodies were downloaded but never run.
                 tree = _dom_mod.parse(html)
+                self._dom_tree = tree
+                self._last_html = html
                 loader = (net.load_subresources_parallel
                           if parallel else net.load_subresources)
-                sub = loader(tree, base_url=url, client=client)
+                _enforce_policy = True
+                _doc_csp = getattr(resp, "content_security_policy", "") or ""
+                sub = loader(
+                    tree, base_url=url, client=client,
+                    enforce_policy=_enforce_policy, doc_csp=_doc_csp,
+                )
                 extra_css = "".join(
                     (r.body or b"").decode("utf-8", "replace")
                     for r in sub.get("stylesheet", {}).values()
-                    if r is not None)
-                self.load_html(html, extra_css, w, h)
+                    if r is not None and getattr(r, "ok", True))
+                # P0 (retest report) — run the document's scripts against
+                # the *shared* tree: inline blocks gated by the document's
+                # CSP (script-src / default-src) plus the fetched
+                # external <script src> bodies, mirroring
+                # browser.render_document_from_url.
+                import js as _js_mod
+                _host = _js_mod.Host(tree, lambda _s: None)
+                self._script_host = _host
+                _csp_directives = net.parse_csp_directives(_doc_csp) if _doc_csp else []
+                _ext_scripts = [
+                    (url_key,
+                     (r.body or b"").decode("utf-8", "replace"))
+                    for url_key, r in sub.get("script", {}).items()
+                    if r is not None and getattr(r, "ok", True)]
+                _host.execute_all(csp_directives=_csp_directives,
+                                  external_scripts=_ext_scripts or None)
+                self.load_html(html, extra_css, w, h, run_scripts=False)
                 self._maybe_record_history(record_history)
             except net.FetchError as e:
                 # P32.5 — per-kind error-page copy.
@@ -587,7 +636,7 @@ class PageInstance:
         self.load_html(html, "", w, h)
 
     def _about_page(self, url: str, w: int, h: int) -> paint.Bitmap:
-        import browser
+        import browser as _browser_mod
         lower = url.lower()
         if "blank" in lower:
             html = '<html><body style="background:#ffffff"></body></html>'
@@ -601,8 +650,14 @@ class PageInstance:
         elif "history" in lower:
             # P32.1 — prefer the *global* persisted history when the owning
             # browser has one attached; fall back to the tab's in-memory stacks.
-            browser = getattr(self, "_browser", None)
-            hist = getattr(browser, "history", None) if browser else None
+            # P0 (retest report) — use a non-shadowing name: the legacy
+            # `browser = getattr(self, "_browser", None)` overwrote the
+            # module import, so the trailing
+            # `browser.render_document(html, "", w, h)` resolved to the
+            # owning TabBrowser (or None → AttributeError on the
+            # bookmarks page).
+            _owning = getattr(self, "_browser", None)
+            hist = getattr(_owning, "history", None) if _owning else None
             if hist is not None:
                 entries = hist.recent(50)
                 items = "".join(
@@ -617,8 +672,8 @@ class PageInstance:
                 html = f"<html><body><h1>History</h1><ul>{items}</ul></body></html>"
         elif "bookmarks" in lower:
             # P32.2 — render the persisted bookmarks store.
-            browser = getattr(self, "_browser", None)
-            bmarks = getattr(browser, "bookmarks", None) if browser else None
+            _owning = getattr(self, "_browser", None)
+            bmarks = getattr(_owning, "bookmarks", None) if _owning else None
             html = session.bookmarks_page_html(bmarks) if bmarks is not None else (
                 '<html><body><h1>Bookmarks</h1><p>No bookmarks store attached.</p>'
                 '</body></html>'
@@ -629,7 +684,7 @@ class PageInstance:
             html = self._view_source_page(w, h)
         else:
             html = f"<html><body><h1>{url}</h1></body></html>"
-        return browser.render_document(html, "", w, h)
+        return _browser_mod.render_document(html, "", w, h)
 
     def _view_source_page(self, w: int, h: int) -> str:
         """P32.6 — a minimal ``view-source:`` page.

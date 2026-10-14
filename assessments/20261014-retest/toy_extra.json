@@ -1,0 +1,58 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "perf": {
+    "100": [
+      {
+        "renderMs": 436.4914000034332,
+        "totalWithPngMs": 1299.3921000161208
+      },
+      {
+        "renderMs": 240.93089997768402,
+        "totalWithPngMs": 1094.7225999843795
+      },
+      {
+        "renderMs": 236.03070000535809,
+        "totalWithPngMs": 1071.678400010569
+      }
+    ],
+    "1000": [
+      {
+        "renderMs": 1115.248000016436,
+        "totalWithPngMs": 1977.19629999483
+      },
+      {
+        "renderMs": 1150.5895000009332,
+        "totalWithPngMs": 2015.0039999862202
+      },
+      {
+        "renderMs": 1154.132399999071,
+        "totalWithPngMs": 2063.7772000045516
+      }
+    ],
+    "5000": [
+      {
+        "renderMs": 5644.049099995755,
+        "totalWithPngMs": 6530.851699993946
+      },
+      {
+        "renderMs": 5676.954099995783,
+        "totalWithPngMs": 6546.496800001478
+      },
+      {
+        "renderMs": 5637.318799999775,
+        "totalWithPngMs": 6594.012199988356
+      }
+    ]
+  },
+  "gui_page_scroll": {
+    "content_height": 2000,
+    "max": 1800,
+    "actual": 1800,
+    "bitmap": [
+      400,
+      200
+    ]
+  },
+  "gui_start": "OK (hidden window initialized and updated)"
+}

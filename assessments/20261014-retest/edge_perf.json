@@ -1,0 +1,44 @@
+{
+  "100": [
+    {
+      "layoutMs": 2.7132999999994354,
+      "totalWithScreenshotMs": 33.4336000000003
+    },
+    {
+      "layoutMs": 2.6683000000011816,
+      "totalWithScreenshotMs": 33.408400000000256
+    },
+    {
+      "layoutMs": 2.470899999998437,
+      "totalWithScreenshotMs": 32.90479999999843
+    }
+  ],
+  "1000": [
+    {
+      "layoutMs": 9.872999999999593,
+      "totalWithScreenshotMs": 50.50840000000062
+    },
+    {
+      "layoutMs": 8.572000000000116,
+      "totalWithScreenshotMs": 45.256499999999505
+    },
+    {
+      "layoutMs": 8.430299999999988,
+      "totalWithScreenshotMs": 37.32759999999871
+    }
+  ],
+  "5000": [
+    {
+      "layoutMs": 38.347999999999956,
+      "totalWithScreenshotMs": 82.84589999999844
+    },
+    {
+      "layoutMs": 37.28780000000006,
+      "totalWithScreenshotMs": 67.13640000000123
+    },
+    {
+      "layoutMs": 45.17290000000139,
+      "totalWithScreenshotMs": 100.1859999999997
+    }
+  ]
+}
