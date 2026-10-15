@@ -2474,9 +2474,43 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.P1 + P33.P2 + P33.P3 已完成（**807/807** 测试通过）。
+## P33.R2-2 — P2 遗留几何 diff（D1/D2/D3）消除 ✅
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。后续按用户方向继续。
+> 依据 `assessments/20261015/P2布局几何改进记录.md` 下轮建议顺序：
+> 先修 D1/D2（首子顶边距折叠贯通），再修 D3（表格 collapse 边框
+> 分配）。`toy_layout_runner.py` 布局几何对照 Edge 45/48 → **48/48**
+> （0.6px 容差）；`test.py` 保持 925/925。
+
+### R2-2.1 D1/D2 — 首子顶边距折叠贯通到 body 流起点（`layout.py`）✅
+
+- [x] `layout_block`：父为 `<body>` 且顶边可折叠（无 padding/border、
+  非 flex/grid/table/BFC/abs/rel）时，首个流内块级子的内容原点推进
+  `child.margin.top`（body 自身顶边距 UA 8px 不被 body 子循环消耗，
+  子边距"替换"它；`body{margin:0}` 时回退 P26.1 基线模型，表格
+  用例 y=0 保持精确）。
+- [x] 父级子循环：首子布局后同步推进 `child_y += cb.margin.top`
+  （同条件），后续兄弟自首子实际边框盒顶量起。
+- [x] 结果：`layout_blocks.a` y 0→10、`layout_blocks.b` y 70→80
+  （Edge 10/80）；P26.1 三条 margin-collapse 测试无回归。
+- [x] 连带修正：`test_js_event_loop` 点击坐标 (15,25)→(15,35)
+  （button 边框盒顶 19.2→27.2，CSS 正确位置）。
+
+### R2-2.2 D3 — `border-collapse: collapse` 表格列宽分配（`layout.py`）✅
+
+- [x] collapse 模式下每列自然宽 = 文本 + 全 padding − 半边框对
+  （共享边框只绘制一次，边框像素计入列间空隙/表格外缘，不计列内容）；
+- [x] 表格外缘 = 最外列边框对剩余半段（`(table.b.l+b.r)/2`），
+  表格自身边框与单元格共享、不单独计数；
+- [x] 表格 `rect.w` 存"总宽 − 完整边框对"，`border_rect()` 回加后
+  报出正确边框盒宽（75.12 → 70.12，Edge 70.08）；
+- [x] `bx.border_collapse` 为 False 时探测 row/cell 计算样式补置
+  标志（cascade 不把 collapse 继承进 `<tr>`/`<td>`）。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 已完成（**925/925** 测试通过；P2 布局几何对照 Edge **48/48** 在 0.6px 内）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。后续按用户方向继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

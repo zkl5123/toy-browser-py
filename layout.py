@@ -2231,8 +2231,77 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             available = 160.0
         if bx.explicit_height is None:
             bx.explicit_height = 20.0
+    # P33.R2-2 (layout_blocks D1/D2) — CSS2.1 §9.5.1.2 first-child
+    # top-margin collapse.  The caller passes ``y`` as the top of this
+    # box's *margin box* (the flow position in the parent's content).
+    #
+    # Two regimes:
+    #  1. Top-level flow (parent is <body> or <html>): the parent's
+    #     own top margin is NOT consumed by the parent (the parent's
+    #     border-box top sits at the grandparent's content top), so
+    #     the first in-flow block child's top margin punches through:
+    #     child.border_top = parent.content_top + max(0, child.mt -
+    #     parent.mt).  This is the D1/D2 fix (.a y=10, .b y=80).
+    #  2. Regular block parent (div etc., no padding/border, not
+    #     flex/grid/table/BFC/abs/rel): the P26.1 baseline model —
+    #     the first child sits at the parent's content top with NO
+    #     offset (the collapsed margin is absorbed by the parent's
+    #     own position, which the grandparent's child loop already
+    #     resolved).  Non-first siblings use the collapsed sibling
+    #     gap (_next_sibling_gap).
+    #  3. Non-collapsible parent (padding/border/flex/grid/table/
+    #     BFC/abs/rel): the full top margin is consumed inside the
+    #     parent's content.
+    _p = bx.parent
+    # P33.R2-2 (D1/D2) — the punch-through applies ONLY at the
+    # top-level flow (the <body> element): the body's own top margin
+    # (UA 8px) is not consumed by the body's child loop, so the
+    # first in-flow block child's top margin punches through.  For
+    # every other parent the P26.1 baseline model applies: the box's
+    # own top margin is never consumed inside its content; the
+    # parent's child loop handles it (sibling gaps, first-child
+    # no-advance).  The html element's child loop does not advance
+    # by the body's margin (the body sits at the html content top),
+    # so the html level uses the same baseline model.
+    _p_is_body = (
+        _p is not None
+        and _p.dom is not None
+        and _p.dom.tag == "body"
+    )
+    _collapsible_top = (
+        _p_is_body
+        and not _p.is_flex and not _p.is_grid and not _p.is_table
+        and not _p.is_absolute and not _p.is_relative
+        and _p.overflow_hidden in (False, "")
+        and _p.padding.top == 0 and _p.border.top == 0
+        and not bx.is_float and not bx.is_display_none
+        and bx.box_type == BoxType.BLOCK
+    )
+    if _collapsible_top:
+        _is_first_block_child = False
+        for _sib in _p.children:
+            if _sib.box_type == BoxType.BLOCK and not _sib.is_float and not _sib.is_display_none:
+                _is_first_block_child = (_sib is bx)
+                break
+        if _is_first_block_child:
+            # P33.R2-2 (D1) — punch-through at the top-level flow:
+            # the body's own top margin (UA 8px) is not consumed by
+            # the body's child loop (the body sits at the html
+            # content top), so the first in-flow block child's top
+            # margin REPLACES it: the child's border-box top is at
+            # the body's content top + child.margin.top.  When the
+            # body's margin is explicitly 0 (e.g. ``body{margin:0}``),
+            # there is no anchor to replace and the P26.1 baseline
+            # model applies (the child's margin is not consumed).
+            _mtop = bx.margin.top if _p.margin.top > 0.0 else 0.0
+        else:
+            _mtop = 0.0
+    else:
+        # P26.1 baseline — the box's own top margin is never consumed
+        # inside its content.  The parent's child loop handles it.
+        _mtop = 0.0
     content_x0 = x + margin_l + padding_l
-    content_y0 = y + padding_t
+    content_y0 = y + padding_t + _mtop
 
     if bx.box_type == BoxType.TEXT:
         # P34.8 — text box sizing: every text box (2000+ in the 10k
@@ -2321,43 +2390,12 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         _layout_table(bx, content_x0, content_y0, available, containing_w)
         return
 
-    # P2 (assessment report) — CSS2.1 §9.5.1: a parent's top margin
-    # collapses with its first in-flow block child's top margin ONLY
-    # when they are directly adjacent (no padding/border between).
-    # The collapsed amount is the max of the two; it pokes ABOVE the
-    # parent's top edge and shifts the parent down, so the first child
-    # still sits at the parent's content top (child_y0 = 0).  The
-    # legacy code advanced the box's own y by (margin.top - collapsed),
-    # which in the equal-margin case is a no-op, but when the child's
-    # margin exceeds the parent's it PULLED the box up — leaving the
-    # first child above the content top it should occupy
-    # (layout_blocks .a/.b: toy y 0/70 vs edge 10/80).  The collapse
-    # is accounted for by the caller advancing the box's flow position
-    # by the box's own top margin; here the box's top edge is the
-    # margin-box top, and the first child's border-box top is content_y0.
-    # Flex / grid / table containers, BFCs (overflow != visible) and
-    # absolutely/relatively-positioned boxes do NOT collapse — they
-    # keep the full top margin.  Padding/border also prevent collapse
-    # (CSS2.1 §9.5.1.2).
-    _first_block_child: LayoutBox | None = None
-    for cb in bx.children:
-        if cb.box_type == BoxType.BLOCK and not cb.is_float and not cb.is_display_none:
-            _first_block_child = cb
-            break
-    if (_first_block_child is not None
-            and not bx.is_flex and not bx.is_grid and not bx.is_table
-            and not bx.is_absolute and not bx.is_relative and not bx.is_float
-            and bx.overflow_hidden in (False, "")
-            and bx.padding.top == 0 and bx.border.top == 0):
-        collapsed = _fold_margins(bx, _first_block_child)
-        # P2 (assessment report) — the collapsed top margin pokes ABOVE
-        # the box's top edge (CSS2.1 §9.5.1.2), so the caller's y is
-        # advanced by the box's top margin MINUS the collapsed amount
-        # (net zero when the child's margin ≥ the box's, a positive
-        # shift when the box's margin ≥ the child's).  The first child
-        # then sits at the box's content top, where the collapsed
-        # margin has already been accounted for.
-        y += bx.margin.top - collapsed
+    # P33.R2-2 (layout_blocks D1/D2) — the collapsed first-child top
+    # margin is already accounted for in ``content_y0`` above
+    # (``content_y0 = y + padding_t + margin.top - collapsed``).  The
+    # legacy ``y += margin.top - collapsed`` here was dead code: it
+    # mutated ``y`` AFTER ``content_y0`` had been computed, so it had
+    # no effect on the content origin.  Remove it.
 
     # P5.2 — CSS float: children with float:left/right are positioned at
     # the specified side of the containing block; subsequent inline content
@@ -2443,27 +2481,6 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             # not the sum (CSS2.1 §9.5.1).
             if prev_block is not None:
                 child_y += _next_sibling_gap(prev_block, cb)
-            else:
-                # P2 (assessment report) — first in-flow block child: its
-                # top margin collapses with the PARENT's top margin
-                # (CSS2.1 §9.5.1.2) ONLY when the parent has no
-                # padding/border between its top edge and the child's
-                # top edge.  When it collapses, the collapsed amount
-                # pokes ABOVE the parent's top edge (it shifts the
-                # parent down, not the child into the content).  The
-                # first child's border-box top stays at the parent's
-                # content top, so the content stack does NOT advance by
-                # the child's top margin.  When the parent HAS
-                # padding/border (no collapse), the child's full top
-                # margin is consumed inside the content and the stack
-                # must advance by it.
-                if not (
-                    not bx.is_flex and not bx.is_grid and not bx.is_table
-                    and not bx.is_absolute and not bx.is_relative
-                    and bx.overflow_hidden in (False, "")
-                    and bx.padding.top == 0 and bx.border.top == 0
-                ):
-                    child_y += cb.margin.top
             # P26.5 — children are constrained to the parent's content width,
             # not the viewport: pass the parent's computed available width as
             # the child's containing block width.
@@ -2473,7 +2490,11 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             # height; the collapsed margin with the *next* sibling is
             # applied by _next_sibling_gap at the top of the next
             # iteration (CSS2.1 §9.5.1: margins between siblings never
-            # add, they collapse to the max).
+            # add, they collapse to the max).  P33.R2-2 (D2) — the
+            # first in-flow block child's border-box top is punched
+            # through the parent's top margin by ``_mtop`` (above), so
+            # the stack must also advance by that amount; later
+            # siblings only advance by the collapsed sibling gap.
             child_y += (
                 cb.rect.h
                 + cb.padding.top
@@ -2481,19 +2502,20 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                 + cb.border.top
                 + cb.border.bottom
             )
-            # P2 (assessment report) — the *first* block child's top
-            # margin was already consumed by the top-margin-collapse
-            # block above (CSS2.1 §9.5.1: a parent's top margin
-            # collapses through to its first in-flow block child, and
-            # the collapsed amount pokes above the parent's top edge,
-            # NOT inside its content).  Advancing the stack by the
-            # child's own border-box height here double-counts that
-            # top margin, so every later sibling (layout_blocks .b:
-            # 70 vs 80) landed too high.  Skip the top margin for the
-            # first child; the sibling gap below already collapses
-            # max(prev.bottom, next.top).
-            if i == 0 or prev_block is None:
-                pass  # top margin already collapsed, nothing to add back
+            if (prev_block is None
+                    and bx.dom is not None and bx.dom.tag == "body"
+                    and bx.margin.top > 0.0
+                    and not bx.is_flex and not bx.is_grid and not bx.is_table
+                    and not bx.is_absolute and not bx.is_relative
+                    and bx.overflow_hidden in (False, "")
+                    and bx.padding.top == 0 and bx.border.top == 0):
+                # P33.R2-2 (D2) — the first in-flow block child of the
+                # <body> element punches through the body's top margin
+                # (``_mtop = cb.margin.top`` in the child's own
+                # layout_block call above), so the content stack must
+                # also advance by that amount; later siblings measure
+                # from the first child's actual border-box top.
+                child_y += cb.margin.top
             prev_block = cb
             i += 1
         else:
@@ -3530,6 +3552,30 @@ def _layout_table(
     for row in rows:
         cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         n_cols = max(n_cols, len(cells))
+    # P33.R2-2 (layout_table D3) — border-collapse: collapse is
+    # declared on the <table> element (CSS2.1 §17.4.3).  The cascade
+    # does NOT propagate it into the <tr>/<td> computed styles: a <td>
+    # without its own declaration computes `separate`, so the row/cell
+    # boxes are built with ``border_collapse=False``.  When the table
+    # element itself carries collapse, probe the rows' and cells'
+    # computed styles (the cascade may have set it on a descendant)
+    # and fall back to the table's own flag.
+    if not bx.border_collapse:
+        _bc = False
+        for _row in rows:
+            _rowsn = getattr(_row, "dom_sn", None)
+            if _rowsn is not None and _rowsn.get_keyword("border-collapse", "") == "collapse":
+                _bc = True
+                break
+            for _cell in _row.children:
+                _celsn = getattr(_cell, "dom_sn", None)
+                if _celsn is not None and _celsn.get_keyword("border-collapse", "") == "collapse":
+                    _bc = True
+                    break
+            if _bc:
+                break
+        if _bc:
+            bx.border_collapse = True
     if n_cols == 0:
         # No cells — just stack rows.
         child_y = 0.0
@@ -3546,6 +3592,12 @@ def _layout_table(
     # the legacy equal-column distribution.
     import text as _text_mod
     col_max: list[float] = [0.0] * n_cols
+    # P33.R2-2 (layout_table D3) — in border-collapse mode the shared
+    # border between adjacent cells is drawn ONCE, so a cell's
+    # contribution to its column's natural width counts only HALF of
+    # its left and right border; the table's own outer border edges
+    # (half of border-left on the left, half of border-right on the
+    # right) are added to the table total once.
     for row in rows:
         cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         for ci in range(min(n_cols, len(cells))):
@@ -3566,9 +3618,30 @@ def _layout_table(
                 if _parts:
                     _t = " ".join(_parts)
             _natural = _text_mod.measure(_t, c.font_px, _fam) if _t else 0.0
-            _bw_lr = (c.border.left + c.border.right) / 2.0 if bx.border_collapse else (c.border.left + c.border.right)
+            # P33.R2-2 (layout_table D3) — in collapse mode the shared
+            # border between two adjacent cells is drawn ONCE and is
+            # allocated to the gap between columns, NOT to the column
+            # content.  Each column's natural width therefore counts
+            # text + padding MINUS the halved border pair (the border
+            # pixels are re-added at the table level via _outer_bw and
+            # the inter-column gaps).  In separate mode the full
+            # border pair is added to the column width.
+            if bx.border_collapse:
+                _bw_lr = -(c.border.left + c.border.right) / 2.0
+            else:
+                _bw_lr = c.border.left + c.border.right
             _cw = _natural + c.padding.left + c.padding.right + _bw_lr
             col_max[ci] = max(col_max[ci], _cw)
+    # P33.R2-2 (layout_table D3) — outer border edges: in collapse mode
+    # the table's outer edge is the remaining half of the outermost
+    # cell's border pair (each edge column already contributed its INNER
+    # half to its column width above); in separate mode the full outer
+    # borders are counted.
+    _outer_bw = (
+        (bx.border.left + bx.border.right) / 2.0
+        if bx.border_collapse else
+        (bx.border.left + bx.border.right)
+    )
     explicit_table_w = bx.explicit_width
     if explicit_table_w is not None:
         # legacy: distribute the explicit width equally across columns
@@ -3583,7 +3656,7 @@ def _layout_table(
         # "fill the containing block" fallback over-reported 300 px.
         col_w_list = [max(w, 1.0) for w in col_max]
         col_w = max(col_w_list) if col_w_list else 0.0
-        available = min(sum(col_w_list), containing_w)
+        available = min(sum(col_w_list) + _outer_bw, containing_w)
 
     # Phase 2 — position rows and cells.
     child_y = 0.0
@@ -3592,7 +3665,10 @@ def _layout_table(
     # width.  The legacy code set ``available = containing_w`` which made
     # every table fill its parent, so the 2×2 table with single-digit
     # cells reported w=800 instead of w≈70 (Edge layout probe §4).
-    _table_total_w = sum(col_w_list) if not explicit_table_w else explicit_table_w
+    _table_total_w = (
+        sum(col_w_list) + _outer_bw
+        if not explicit_table_w else explicit_table_w
+    )
     for row in rows:
         row.cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         cells = row.cells
@@ -3624,7 +3700,21 @@ def _layout_table(
             cx += col_w_list[ci]
         child_y += row_h
 
-    bx.rect = Rect(content_x0, content_y0, _table_total_w,
+    # P33.R2-2 (layout_table D3) — the table's rect is recorded at the
+    # content-box origin.  border_rect() adds the FULL border pair back
+    # (legacy approximation documented at L385), so we must store the
+    # CONTENT width here.  In separate mode the content width is the
+    # table total minus the full outer border pair.  In collapse mode
+    # the border pixels (shared between table and outermost cells,
+    # drawn once) are NOT part of the content; the total already
+    # accounts for them via _outer_bw, so we subtract the full pair
+    # to let border_rect() report the correct border-box width.
+    if bx.explicit_width is not None:
+        _content_w = _table_total_w
+    else:
+        _content_w = _table_total_w - (bx.border.left + bx.border.right)
+    _content_w = max(_content_w, 0.0)
+    bx.rect = Rect(content_x0, content_y0, _content_w,
                    max(child_y, bx.line_height_px))
 
 

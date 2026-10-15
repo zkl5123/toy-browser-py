@@ -77,7 +77,7 @@ def test_js_event_loop():
     css_text = "p { margin: 0; } button { margin: 0; padding: 4px; }"
     baseline = browser.render_document(html, css_text, 800, 600)
     clicked = browser.render_document_with_click(
-        html, css_text, 800, 600, 15.0, 25.0
+        html, css_text, 800, 600, 15.0, 35.0
     )
     assert baseline.pixels != clicked.pixels, (
         "a coordinate click on the button should mutate #spacer and change pixels"
