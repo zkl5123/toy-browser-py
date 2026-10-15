@@ -177,13 +177,22 @@ def test_promise_resolve_then():
         "let p = Promise(function(resolve, reject) { resolve(42); });"
         "p.then(function(v) { console.log('v=' + v); });"
     )
+    # P1 (assessment report) — .then handlers are microtasks; drain
+    # them so the handler logs before the assertion.
+    host.flush_microtasks()
     assert any("v=42" in l for l in logs), f"promise.then must log v=42, logs={logs}"
 
 
 
 TESTS.append(("test_promise_resolve_then", test_promise_resolve_then))
 def test_promise_catch():
-    """Promise rejects and .catch logs the error."""
+    """Promise rejects and .catch logs the error.
+
+    P1 (assessment report) — ``.catch`` handlers are microtasks:
+    :meth:`js.Host.flush_microtasks` drains the queue after the script
+    body (and after the timer queue).  Without the flush the handler
+    is enqueued but never runs, so ``boom`` would not appear in the
+    log."""
     root = dom.parse("<html><body></body></html>")
     logs = []
     host = js.Host(root, logs.append)
@@ -191,6 +200,7 @@ def test_promise_catch():
         "let p = Promise(function(resolve, reject) { reject('boom'); });"
         "p.catch(function(e) { console.log(e); });"
     )
+    host.flush_microtasks()
     assert any("boom" in l for l in logs), f"promise.catch must log 'boom', logs={logs}"
 
 

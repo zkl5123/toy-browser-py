@@ -410,8 +410,16 @@ class HttpResponse:
         connect→"connect-src" (a blank resource_kind skips the CSP
         check).
         """
-        # --- CORS check (cross-origin only) ---
-        if requesting_origin and resource_url:
+        # --- CORS check (cross-origin, cors-mode resources only) ---
+        # P1 (assessment report) — a stylesheet / image subresource
+        # loads in ``no-cors`` mode in browsers: a cross-origin
+        # response without ``Access-Control-Allow-Origin`` is still
+        # usable for rendering.  Only ``script`` / ``connect`` kinds
+        # are cors-mode (their JS read paths need the ACAO header).
+        _CORS_MODE_KINDS = {"script", "connect"}
+        _res_kind_norm = resource_kind.lower()
+        _needs_cors = _res_kind_norm in _CORS_MODE_KINDS
+        if _needs_cors and requesting_origin and resource_url:
             res_origin = _origin_str(resource_url)
             req_origin = _origin_str(requesting_origin) if "://" in requesting_origin \
                          else requesting_origin
@@ -1706,6 +1714,23 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         # used to gate the subresource (the real browser behaviour);
         # otherwise the subresource's own response header is checked
         # (legacy behaviour).
+        # P1 (assessment report) — per-resource-kind CORS mode:
+        # * stylesheets (``<link rel=stylesheet>``) are loaded as
+        #   *no-cors* subresources in browsers; they do NOT need
+        #   ``Access-Control-Allow-Origin`` to apply (the green-
+        #   background cross-origin CSS case in the report).
+        # * scripts are loaded as *cors* when fetched via
+        #   ``<script src>``; a cross-origin fetch without ACAO is
+        #   blocked (CSP ``script-src`` is the primary gate).
+        # * images are *no-cors* (like stylesheets).
+        # ``is_cors_needed[spec["kind"]]`` controls whether the
+        # CORS cross-origin read check applies.
+        _cors_needed = {
+            "stylesheet": False,
+            "image": False,
+            "script": True,
+            "connect": True,
+        }
         if enforce_policy and resp is not None:
             kind_map = {"stylesheet": "style", "image": "img",
                        "script": "script"}
@@ -1722,8 +1747,15 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
                     if values:
                         csp_blocked = _csp_blocks(
                             values, absu.to_string(), doc_origin)
-                cors_ok = resp.is_cors_allowed(doc_origin) \
-                    if doc_origin else True
+                # P1 (assessment report) — the CORS cross-origin check
+                # applies only to kinds that are read as ``cors``
+                # mode (scripts, fetch/XHR).  Stylesheets and images
+                # load in ``no-cors`` mode: a cross-origin response
+                # without ACAO is still usable for rendering.
+                needs_cors = _cors_needed.get(spec["kind"], True)
+                cors_ok = True
+                if needs_cors and doc_origin:
+                    cors_ok = resp.is_cors_allowed(doc_origin)
                 if not cors_ok or csp_blocked:
                     resp = None  # policy-blocked → treat as failed
             else:
@@ -1795,10 +1827,17 @@ def load_subresources_parallel(dom_root, base_url,
         if not enforce_policy:
             return resp
         res_kind = kind_map.get(spec_kind, spec_kind)
+        # P1 (assessment report) — CSS / image subresources load in
+        # ``no-cors`` mode: cross-origin responses without ACAO are
+        # still usable.  Only script / connect kinds need a CORS read.
+        _cors_needed = {"stylesheet": False, "image": False,
+                       "script": True, "connect": True}
+        needs_cors = _cors_needed.get(spec_kind, True)
         if doc_csp:
             # P0 (retest report) — gate subresources against the
             # document's CSP header (mirrors the sequential loader);
-            # fall back to CORS for cross-origin reads.
+            # fall back to CORS for cross-origin reads (cors-mode kinds
+            # only, P1 assessment report).
             csp_directives = parse_csp_directives(doc_csp)
             csp_blocked = False
             if csp_directives:
@@ -1808,8 +1847,9 @@ def load_subresources_parallel(dom_root, base_url,
                 if values:
                     csp_blocked = _csp_blocks(
                         values, absu.to_string(), doc_origin)
-            cors_ok = resp.is_cors_allowed(doc_origin) \
-                if doc_origin else True
+            cors_ok = True
+            if needs_cors and doc_origin:
+                cors_ok = resp.is_cors_allowed(doc_origin)
             if not cors_ok or csp_blocked:
                 return None
             return resp

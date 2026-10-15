@@ -147,14 +147,24 @@ def render_document_from_url(
     # P0 (retest report) — run scripts with CSP gating + external scripts.
     import js as _js_mod
     csp_directives = net.parse_csp_directives(doc_csp) if doc_csp else None
-    external_scripts: list = []
+    # P0 (assessment report) — resource download cache: the fetched
+    # response for a <script src> is reused when the same URL appears
+    # more than once, but the *execution* of each script element is
+    # managed independently (a duplicated tag still runs its body
+    # once per element — the HTML scripting model, not a URL-level
+    # dedup).  The cache is {absolute_url: code-or-None}; None means
+    # the fetch failed / was policy-blocked.
+    script_cache: dict = {}
     for _u, r in (loaded.get("script") or {}).items():
         if r is not None and r.ok:
-            external_scripts.append(
-                (_u, r.body.decode("utf-8", errors="replace")))
+            script_cache[_u] = r.body.decode("utf-8", errors="replace")
+        else:
+            script_cache[_u] = None
     host = _js_mod.Host(tree, lambda _s: None)
-    host.execute_all(csp_directives=csp_directives,
-                    external_scripts=external_scripts)
+    # P1 (assessment report) — carry the document origin so CSP 'self'
+    # matches the document origin, not unconditionally.
+    host.doc_origin = net._origin_str(resp.final_url or url)
+    host.execute_scripts_in_order(script_cache, csp_directives)
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(

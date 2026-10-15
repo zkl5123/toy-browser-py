@@ -1,0 +1,1598 @@
+{
+  "js_match": 33,
+  "js_total": 47,
+  "js_both_error": [
+    "js_object_methods"
+  ],
+  "js": {
+    "js_basic_arith": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "14 2.5 1 -3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "14 2.5 1 -3"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_precedence": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "10 20 8 40"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "10 20 8 40"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_ternary": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "yes",
+          "20"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "yes",
+          "20"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_typeof": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "number string object undefined object object"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "number string object undefined object object"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_string_concat": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "x:1true 11 ab2"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "x:1true 11 ab2"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_str_escapes": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "a\nb",
+          "say \"hi\"",
+          "tab\tend"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "a\nb",
+          "say \"hi\"",
+          "tab\tend"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_arrays": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "5 3 5 undefined",
+          "2 false [2, 3]",
+          "[2, 4, 6, 8, 10] 1-2-3-4-5"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "5 3 5",
+          "2 false [array Array]",
+          "[array Array] 1-2-3-4-5"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_arrow_funcs": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "3 1,4,9 2,3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "3 1,4,9 2,3"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_object_methods": {
+      "match": true,
+      "edge": {
+        "status": "ERROR: SyntaxError: Expected property name or '}' in JSON at position 9 (line 1 column 10)",
+        "logs": [
+          "a,b,c 1,2,3",
+          "{\"x\":1,\"arr\":[1,2]}"
+        ]
+      },
+      "toy": {
+        "status": "ERROR: SyntaxError: Expecting property name enclosed in double quotes: line 1 column 10 (char 9)",
+        "logs": [
+          "a,b,c 1,2,3",
+          "{\"x\":1,\"arr\":[1,2]}"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_classes": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "Rex barks",
+          "Cow makes a sound"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "Rex barks",
+          "Cow makes a sound"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_templates": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "x is 10 and true",
+          "total=3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "x is 10 and true",
+          "total=3"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_optional_nullish": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 undefined dflt 0 "
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1  dflt 0"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_try_catch": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "Infinity",
+          "done"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "Infinity",
+          "done"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_errors": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "false Infinity NaN A 65"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "false Infinity NaN A 65"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_numbers": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true false 42 3.14 3 2 9"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true false 42 3.14 3 2 9"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_promise": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "prom: 42"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "prom: 42"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_destructuring": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "30 -10",
+          "1 2 3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "30 -10",
+          "1 2 3"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_spread": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 2",
+          "1,2,3,4,5"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1 2",
+          "1,2,3,4,5"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_for_loops": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "01234",
+          "10"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "01234",
+          "10"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_dom_bind": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "DIV clicked!\nB"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "DIV clicked!\nB"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_event_click": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "clicks: 1",
+          "clicks: 2",
+          "final: 2"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "clicks: 1",
+          "clicks: 2",
+          "final: 2"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_set_timeout": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "before: sync"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "before: sync"
+        ],
+        "drain_error": "_Throw(\"TypeError: object of type 'function' has no len()\")"
+      }
+    },
+    "js_while_break": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "break at 14",
+          "n = 14"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "break at 14",
+          "n = 14"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_generators": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1 2 false"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1 2 false"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_regexp": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "abc b 0",
+          "-1-2-3",
+          "aBc a+b+c"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "abc b 0",
+          "-1-2-3",
+          "aBc a+b+c"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_date": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "2024 1 15 10"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "2024 1 15 10"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_infinity_nan": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true Infinity NaN false true"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true Infinity NaN false true"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_functions_args": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "1,, 1,2,3",
+          "0/3"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "1,, 1,2,3",
+          "0/3"
+        ],
+        "drain_error": null
+      }
+    },
+    "js_string_methods": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "hi abcabcabc ....hello 5 a|b|c"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "hi abcabcabc ....hello 5 a|b|c"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_const_write": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_tdz": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_reference_error": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "caught"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          ""
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_array_json": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[2,4,6]"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "[2,4,6]"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_object_identity": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true false"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "true false"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_remove_dom": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "true"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "false"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_unsupported_css": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "object function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "undefined object"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_string_timer": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "timer"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "timer"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_microtasks": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "start",
+          "end",
+          "promise"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "start",
+          "promise",
+          "end"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_timer_order": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "early",
+          "late"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "sync"
+        ],
+        "drain_error": "_Throw(\"TypeError: object of type 'function' has no len()\")"
+      }
+    },
+    "probe_event_bubble": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "button",
+          "body"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [],
+        "drain_error": null
+      }
+    },
+    "probe_dom_live": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "new"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "null"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_json_numbers": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[null,null,null,0]"
+        ]
+      },
+      "toy": {
+        "status": "ERROR: ValueError: cannot convert float NaN to integer",
+        "logs": [],
+        "drain_error": null
+      }
+    },
+    "probe_equality": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "[true,true,true,true,false]"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "[false,false,true,true,false]"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_api_types": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "function function function function function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "function undefined undefined undefined undefined"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_fetch_contract": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "function"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "object"
+        ],
+        "drain_error": null
+      }
+    },
+    "probe_async": {
+      "match": false,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "42"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [],
+        "drain_error": null
+      }
+    },
+    "probe_dom_create": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "hello"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "hello"
+        ],
+        "drain_error": null
+      }
+    }
+  },
+  "layout": {
+    "layout_blocks": {
+      "a": {
+        "edge": {
+          "x": 18,
+          "y": 10,
+          "w": 200,
+          "h": 50
+        },
+        "toy": {
+          "x": 23.0,
+          "y": 5.0,
+          "w": 186.0,
+          "h": 36.0
+        },
+        "max_delta_px": 14.0
+      },
+      "b": {
+        "edge": {
+          "x": 8,
+          "y": 80,
+          "w": 100,
+          "h": 40
+        },
+        "toy": {
+          "x": 8.0,
+          "y": 70.0,
+          "w": 100.0,
+          "h": 40.0
+        },
+        "max_delta_px": 10.0
+      }
+    },
+    "layout_margin_collapse": {
+      "t": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 30
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "b": {
+        "edge": {
+          "x": 0,
+          "y": 60,
+          "w": 100,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 60.0,
+          "w": 100.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_flex": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 60.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 22,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 22.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c2": {
+        "edge": {
+          "x": 110,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 110.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c3": {
+        "edge": {
+          "x": 198,
+          "y": 15,
+          "w": 80,
+          "h": 30
+        },
+        "toy": {
+          "x": 198.0,
+          "y": 15.0,
+          "w": 80.0,
+          "h": 30.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_grid": {
+      "g": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 120
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 120.0
+        },
+        "max_delta_px": 0.0
+      },
+      "g1": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 98.0,
+          "h": 60.0
+        },
+        "max_delta_px": 2.0
+      },
+      "g4": {
+        "edge": {
+          "x": 0,
+          "y": 60,
+          "w": 100,
+          "h": 60
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 60.0,
+          "w": 98.0,
+          "h": 60.0
+        },
+        "max_delta_px": 2.0
+      }
+    },
+    "layout_table": {
+      "tab": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 70.078125,
+          "h": 61
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 73.12,
+          "h": 58.4
+        },
+        "max_delta_px": 3.0418750000000045
+      }
+    },
+    "layout_abs": {
+      "p": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 100
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 200.0,
+          "h": 100.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c": {
+        "edge": {
+          "x": 30,
+          "y": 20,
+          "w": 50,
+          "h": 40
+        },
+        "toy": {
+          "x": 30.0,
+          "y": 20.0,
+          "w": 50.0,
+          "h": 40.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "layout_text_wrap": {
+      "w": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 150,
+          "h": 120
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 150.0,
+          "h": 120.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "flex_reverse": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 256,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 256.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c2": {
+        "edge": {
+          "x": 208,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 208.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c3": {
+        "edge": {
+          "x": 160,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 160.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_reverse_center": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 178,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 178.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c2": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 130.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c3": {
+        "edge": {
+          "x": 82,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 82.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_reverse_end": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 100,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 100.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c2": {
+        "edge": {
+          "x": 52,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 52.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c3": {
+        "edge": {
+          "x": 4,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_gap": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 4,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c2": {
+        "edge": {
+          "x": 62,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 62.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      },
+      "c3": {
+        "edge": {
+          "x": 120,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 120.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_single_around": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 130.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_single_evenly": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 130,
+          "y": 4,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 130.0,
+          "y": 0.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 4.0
+      }
+    },
+    "flex_padding_border": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 61,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 81.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 20.0
+      },
+      "c2": {
+        "edge": {
+          "x": 123,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 143.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 20.0
+      },
+      "c3": {
+        "edge": {
+          "x": 185,
+          "y": 4,
+          "w": 54,
+          "h": 34
+        },
+        "toy": {
+          "x": 205.0,
+          "y": 5.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 20.0
+      }
+    },
+    "flex_column": {
+      "row": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 150
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 150.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c1": {
+        "edge": {
+          "x": 4,
+          "y": 37,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 37.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c2": {
+        "edge": {
+          "x": 4,
+          "y": 65,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 65.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c3": {
+        "edge": {
+          "x": 4,
+          "y": 93,
+          "w": 40,
+          "h": 20
+        },
+        "toy": {
+          "x": 4.0,
+          "y": 93.0,
+          "w": 40.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      }
+    },
+    "grid_unequal": {
+      "g": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 300,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 300.0,
+          "h": 20.0
+        },
+        "max_delta_px": 0.0
+      },
+      "g1": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 96.65625,
+          "h": 20
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 96.67,
+          "h": 20.0
+        },
+        "max_delta_px": 0.013750000000001705
+      },
+      "g2": {
+        "edge": {
+          "x": 106.65625,
+          "y": 0,
+          "w": 193.34375,
+          "h": 20
+        },
+        "toy": {
+          "x": 106.67,
+          "y": 0.0,
+          "w": 193.33,
+          "h": 20.0
+        },
+        "max_delta_px": 0.013750000000001705
+      }
+    },
+    "percent_height": {
+      "p": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 200,
+          "h": 200
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 200.0,
+          "h": 200.0
+        },
+        "max_delta_px": 0.0
+      },
+      "c": {
+        "edge": {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100
+        },
+        "toy": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 100.0
+        },
+        "max_delta_px": 0.0
+      }
+    }
+  },
+  "render": {
+    "render_basic": {
+      "whole_diff_pct": 6.259166666666666,
+      "foreground_union_diff_pct": 81.13987677007891,
+      "foreground_union_pixels": 37004
+    },
+    "render_cjk": {
+      "whole_diff_pct": 3.4154166666666668,
+      "foreground_union_diff_pct": 98.40120663650076,
+      "foreground_union_pixels": 16575
+    },
+    "render_emoji_symbols": {
+      "whole_diff_pct": 0.745,
+      "foreground_union_diff_pct": 99.5798319327731,
+      "foreground_union_pixels": 3570
+    },
+    "render_forms": {
+      "whole_diff_pct": 2.379583333333333,
+      "foreground_union_diff_pct": 99.81495188749075,
+      "foreground_union_pixels": 8106
+    }
+  },
+  "perf": {
+    "100": {
+      "toy_render_median_ms": 247.08240000018122,
+      "toy_png_total_median_ms": 1103.4275000001799,
+      "edge_layout_median_ms": 2.4747000000006665,
+      "edge_screenshot_total_median_ms": 33.650400000000445
+    },
+    "1000": {
+      "toy_render_median_ms": 1207.3700000000827,
+      "toy_png_total_median_ms": 2079.2376000008517,
+      "edge_layout_median_ms": 9.539899999999761,
+      "edge_screenshot_total_median_ms": 44.89440000000104
+    },
+    "5000": {
+      "toy_render_median_ms": 5842.028199999731,
+      "toy_png_total_median_ms": 6720.723700000235,
+      "edge_layout_median_ms": 50.056800000000294,
+      "edge_screenshot_total_median_ms": 78.10930000000008
+    }
+  }
+}

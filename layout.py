@@ -382,6 +382,34 @@ class LayoutBox:
             + self.margin.bottom
         )
 
+    def border_rect(self) -> "Rect":
+        """P2 (assessment report) — the box's *border-box* geometry,
+        matching a real browser's ``getBoundingClientRect()``.
+
+        The internal ``self.rect`` is recorded at the *content-box*
+        origin: the toy's single-pass layout places content at
+        ``x + margin_l + padding_l`` (the legacy offset drops the
+        border, a known approximation) and the width is the content
+        width.  ``getBoundingClientRect()`` reports the border-box
+        instead: the origin is the border-box top-left corner
+        (margin-box top-left shifted in by the margin — which the
+        internal origin already is, plus one padding back from the
+        content edge) and the size spans border + padding + content.
+        The internal content-box ``self.rect`` stays untouched (235
+        consumers — paint, hit-test, tests — read it in content
+        coordinates); only this reporting seam converts.
+        """
+        return Rect(
+            self.rect.x - self.padding.left,
+            self.rect.y - self.padding.top,
+            self.rect.w
+            + self.padding.left + self.padding.right
+            + self.border.left + self.border.right,
+            self.rect.h
+            + self.padding.top + self.padding.bottom
+            + self.border.top + self.border.bottom,
+        )
+
 
 def shorthand_edges(value, font_px: float) -> EdgeSizes:
     """Resolve a margin/padding/border-width value into EdgeSizes."""
@@ -2014,16 +2042,21 @@ def layout_dirty_only(root: LayoutBox) -> bool:
 def _fold_margins(parent: LayoutBox, first_child: LayoutBox | None) -> float:
     """P26.1 — CSS margin collapsing (toy, block-level only).
 
-    Returns the effective top gap between *parent*'s top edge and its first
-    block child's content: the parent's top margin collapses with the child's
-    top margin (max of the two); same for the pair's bottom vs next
-    sibling.  Collapsed margins never affect the parent's own *inner*
-    height, only its position relative to its own parent — which is handled
-    by the caller feeding ``parent.margin.top`` into the parent's layout.
+    P2 (assessment report) — parent-top vs first-child-top collapse
+    (CSS2.1 §9.5.1.2): when a parent box's top edge meets its first
+    in-flow block child's top edge (no padding/border between them),
+    the two top margins collapse to ``max(parent.margin.top,
+    child.margin.top)`` and the collapsed amount pokes ABOVE the
+    parent's top edge — it is NOT consumed inside the parent's
+    content.  This is the amount the parent's flow position advances
+    past its own top edge, which ``layout_block`` uses to reposition
+    the parent relative to its own parent.  (The child's own top
+    margin does NOT advance the content stack: the first child is
+    laid out at the parent's content top, see the child pass below.)
 
-    Empty blocks (no in-flow block children) also collapse their top and
-    bottom margins (CSS2.1 §9.3.3) — the caller clamps to 0 when the
-    parent has padding/border that prevents collapse.
+    Empty blocks (no in-flow block children) also collapse their top
+    and bottom margins to one (CSS2.1 §9.3.3) — the caller clamps to
+    0 when the parent has padding/border that prevents collapse.
     """
     if first_child is None:
         # P26.1 — empty block: top+bottom margins collapse to one.
@@ -2112,9 +2145,17 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             available = max(0.0, bx.explicit_width - padding_l - padding_r
                             - border_w_total)
         else:
+            # P2 (assessment report) — content-box semantics: an explicit
+            # `width` is the CONTENT width, not the border-box width.
+            # The legacy code subtracted padding + border for every box,
+            # so a content-box `width:200px;padding:5px;border:2px`
+            # (layout_blocks .a) reported a 186px content width instead
+            # of 200px, and `width:100px` (layout_blocks .b) was
+            # 10px narrow.  The CSS box model (§10.3.1) defines the
+            # content width as the `width` value itself; padding and
+            # border grow the box outward, and `border_rect()` already
+            # expands the rect by padding + border for the browser.
             available = bx.explicit_width
-            # legacy content-box: content width = explicit; total width
-            # grows out by padding + border (recorded on the box below).
     else:
         available = max(0.0, containing_w - margin_l - margin_r - padding_l - padding_r
                         - (border_w_total if box_border_box else 0.0))
@@ -2280,15 +2321,24 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
         _layout_table(bx, content_x0, content_y0, available, containing_w)
         return
 
-    # P0 (agent report) — top margin collapse (CSS2.1 §9.5.1): when this
-    # box's first in-flow block child is laid out at the parent's content
-    # top edge (offset 0), its top margin collapses with the box's own
-    # top margin.  The collapsed amount pokes ABOVE the box's top edge,
-    # so the caller's starting y must advance by the box's top margin
-    # minus the collapse.  Flex / grid / table containers, BFCs
-    # (overflow != visible) and absolutely-positioned boxes do NOT
-    # collapse — they keep the full top margin.
-    # Padding/border also prevent collapse (CSS2.1 §9.5.1.2).
+    # P2 (assessment report) — CSS2.1 §9.5.1: a parent's top margin
+    # collapses with its first in-flow block child's top margin ONLY
+    # when they are directly adjacent (no padding/border between).
+    # The collapsed amount is the max of the two; it pokes ABOVE the
+    # parent's top edge and shifts the parent down, so the first child
+    # still sits at the parent's content top (child_y0 = 0).  The
+    # legacy code advanced the box's own y by (margin.top - collapsed),
+    # which in the equal-margin case is a no-op, but when the child's
+    # margin exceeds the parent's it PULLED the box up — leaving the
+    # first child above the content top it should occupy
+    # (layout_blocks .a/.b: toy y 0/70 vs edge 10/80).  The collapse
+    # is accounted for by the caller advancing the box's flow position
+    # by the box's own top margin; here the box's top edge is the
+    # margin-box top, and the first child's border-box top is content_y0.
+    # Flex / grid / table containers, BFCs (overflow != visible) and
+    # absolutely/relatively-positioned boxes do NOT collapse — they
+    # keep the full top margin.  Padding/border also prevent collapse
+    # (CSS2.1 §9.5.1.2).
     _first_block_child: LayoutBox | None = None
     for cb in bx.children:
         if cb.box_type == BoxType.BLOCK and not cb.is_float and not cb.is_display_none:
@@ -2300,6 +2350,13 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             and bx.overflow_hidden in (False, "")
             and bx.padding.top == 0 and bx.border.top == 0):
         collapsed = _fold_margins(bx, _first_block_child)
+        # P2 (assessment report) — the collapsed top margin pokes ABOVE
+        # the box's top edge (CSS2.1 §9.5.1.2), so the caller's y is
+        # advanced by the box's top margin MINUS the collapsed amount
+        # (net zero when the child's margin ≥ the box's, a positive
+        # shift when the box's margin ≥ the child's).  The first child
+        # then sits at the box's content top, where the collapsed
+        # margin has already been accounted for.
         y += bx.margin.top - collapsed
 
     # P5.2 — CSS float: children with float:left/right are positioned at
@@ -2386,6 +2443,27 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             # not the sum (CSS2.1 §9.5.1).
             if prev_block is not None:
                 child_y += _next_sibling_gap(prev_block, cb)
+            else:
+                # P2 (assessment report) — first in-flow block child: its
+                # top margin collapses with the PARENT's top margin
+                # (CSS2.1 §9.5.1.2) ONLY when the parent has no
+                # padding/border between its top edge and the child's
+                # top edge.  When it collapses, the collapsed amount
+                # pokes ABOVE the parent's top edge (it shifts the
+                # parent down, not the child into the content).  The
+                # first child's border-box top stays at the parent's
+                # content top, so the content stack does NOT advance by
+                # the child's top margin.  When the parent HAS
+                # padding/border (no collapse), the child's full top
+                # margin is consumed inside the content and the stack
+                # must advance by it.
+                if not (
+                    not bx.is_flex and not bx.is_grid and not bx.is_table
+                    and not bx.is_absolute and not bx.is_relative
+                    and bx.overflow_hidden in (False, "")
+                    and bx.padding.top == 0 and bx.border.top == 0
+                ):
+                    child_y += cb.margin.top
             # P26.5 — children are constrained to the parent's content width,
             # not the viewport: pass the parent's computed available width as
             # the child's containing block width.
@@ -2403,6 +2481,19 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                 + cb.border.top
                 + cb.border.bottom
             )
+            # P2 (assessment report) — the *first* block child's top
+            # margin was already consumed by the top-margin-collapse
+            # block above (CSS2.1 §9.5.1: a parent's top margin
+            # collapses through to its first in-flow block child, and
+            # the collapsed amount pokes above the parent's top edge,
+            # NOT inside its content).  Advancing the stack by the
+            # child's own border-box height here double-counts that
+            # top margin, so every later sibling (layout_blocks .b:
+            # 70 vs 80) landed too high.  Skip the top margin for the
+            # first child; the sibling gap below already collapses
+            # max(prev.bottom, next.top).
+            if i == 0 or prev_block is None:
+                pass  # top margin already collapsed, nothing to add back
             prev_block = cb
             i += 1
         else:
@@ -2584,16 +2675,39 @@ def _layout_flex(
     ordered = [cb for _, cb in indexed]
 
     # Measure each child at natural size
+    # P1 (assessment report) — the natural main/cross sizes must include
+    # the item's own padding + border on BOTH axes.  The legacy version
+    # only added padding on the main axis and ignored the item's border
+    # (and cross padding), so items carrying ``padding:5px;border:2px``
+    # (flex_padding_border) or a cross-axis margin measured too small:
+    # the flex_cross_margin probe in the report expected y=4 (top margin)
+    # but the item landed at y=0.  Now:
+    #   natural_main  = content + main_padding + main_border
+    #   natural_cross = content + cross_padding + cross_border
+    # (the margin is handled separately via the margin-box totals in
+    # Phase 4; it does NOT belong in the natural size).
     natural_main: list[float] = []
     natural_cross: list[float] = []
     for cb in ordered:
         layout_block(cb, content_x0, content_y0, containing_w)
         if row:
-            natural_main.append(cb.rect.w + cb.padding.left + cb.padding.right)
-            natural_cross.append(cb.rect.h + cb.padding.top + cb.padding.bottom)
+            natural_main.append(
+                cb.rect.w
+                + cb.padding.left + cb.padding.right
+                + cb.border.left + cb.border.right)
+            natural_cross.append(
+                cb.rect.h
+                + cb.padding.top + cb.padding.bottom
+                + cb.border.top + cb.border.bottom)
         else:
-            natural_main.append(cb.rect.h + cb.padding.top + cb.padding.bottom)
-            natural_cross.append(cb.rect.w + cb.padding.left + cb.padding.right)
+            natural_main.append(
+                cb.rect.h
+                + cb.padding.top + cb.padding.bottom
+                + cb.border.top + cb.border.bottom)
+            natural_cross.append(
+                cb.rect.w
+                + cb.padding.left + cb.padding.right
+                + cb.border.left + cb.border.right)
     n = len(ordered)
 
     # --- Phase 1: flex basis (spec §9.2.3) ---
@@ -2616,9 +2730,31 @@ def _layout_flex(
         if cb.flex_basis is not None and cb.flex_basis >= 0:
             bases.append(cb.flex_basis)
         elif row and cb.explicit_width is not None:
-            bases.append(cb.explicit_width - cb.padding.left - cb.padding.right)
-        elif not row and cb.explicit_height is not None:
-            bases.append(cb.explicit_height - cb.padding.top - cb.padding.bottom)
+            # P2 (assessment report) — box-sizing semantics for the
+            # content flex basis (CSS box-sizing §3 + flexbox §9.2.3):
+            #   * content-box (default): an explicit `width` is the
+            #     *content* size, so it is the flex basis directly —
+            #     padding + border grow the box outward and are NOT
+            #     subtracted.  The legacy code subtracted padding here,
+            #     so a `width:40px;padding:5px` item measured a 30px
+            #     basis, and the justify-content centring + every
+            #     main-axis margin-box total built on `sized` shrank by
+            #     the item's padding (flex_padding_border c*.x: 81 vs
+            #     61 — a 3×5px shift).
+            #   * border-box: an explicit `width` is the *border-box*
+            #     size, so the content basis subtracts the item's own
+            #     padding + border.
+            _bb = getattr(cb, "box_sizing", "") == "border-box"
+            if _bb:
+                _pb = (cb.padding.left + cb.padding.right if row
+                       else cb.padding.top + cb.padding.bottom)
+                _bd = (cb.border.left + cb.border.right if row
+                       else cb.border.top + cb.border.bottom)
+            else:
+                _pb = 0.0
+                _bd = 0.0
+            _exp = cb.explicit_width if row else cb.explicit_height
+            bases.append(max(0.0, _exp - _pb - _bd))
         else:
             # P27 — auto basis: fall back to the item's natural main size
             # (spec §9.2.3 "max-content size").  For grow-only items with
@@ -2642,14 +2778,21 @@ def _layout_flex(
     for i, cb in enumerate(ordered):
         _cap = (cb.explicit_width if row else cb.explicit_height)
         if _cap is not None:
-            # border-box semantics: the explicit main size is the
-            # border-box size, so the content basis subtracts the item's
-            # own padding + border (CSS box-sizing §3).
-            _pb = (cb.padding.left + cb.padding.right + cb.border.left + cb.border.right
-                   if (getattr(cb, "box_sizing", "") == "border-box")
-                   else 0.0)
-            _cap = max(0.0, _cap - _pb)
-            _item_explicit[i] = _cap
+            # P2 (assessment report) — content-box basis capping mirrors
+            # the basis above: content-box items cap at the explicit size
+            # itself (no subtraction — padding/border grow the box
+            # outward); border-box items cap at border-box minus
+            # padding + border on the MAIN axis.
+            _bb = getattr(cb, "box_sizing", "") == "border-box"
+            if _bb:
+                _pb = (cb.padding.left + cb.padding.right if row
+                       else cb.padding.top + cb.padding.bottom)
+                _bd = (cb.border.left + cb.border.right if row
+                       else cb.border.top + cb.border.bottom)
+            else:
+                _pb = 0.0
+                _bd = 0.0
+            _item_explicit[i] = max(0.0, _cap - _pb - _bd)
         else:
             _csn = _styled_by_dom.get(id(cb.dom)) if cb.dom is not None else None
             if _csn is not None:
@@ -2738,7 +2881,20 @@ def _layout_flex(
         # align-content distributes lines on the cross axis
         cross_size = max(container_h, 0.0)
         if bx.explicit_height is not None:
-            cross_avail = bx.explicit_height
+            # P2 (assessment report) — the flex container's available
+            # cross space is its *content* height.  ``bx.explicit_height``
+            # is the border-box size when box-sizing:border-box (the
+            # layout_flex probe page sets ``*{box-sizing:border-box}``),
+            # so the legacy code stretched the line to the full
+            # border-box height and centred items 4-5px too low
+            # (layout_flex c*.y: 19 vs 15).  Subtract the container's
+            # own padding + border (same branch as the ``available``
+            # width resolution above).
+            cross_avail = (bx.explicit_height
+                           - bx.padding.top - bx.padding.bottom
+                           - bx.border.top - bx.border.bottom
+                           if bx.box_sizing == "border-box"
+                           else bx.explicit_height)
         else:
             cross_avail = cross_size
 
@@ -2795,6 +2951,13 @@ def _layout_flex(
         for li, line in enumerate(lines):
             line_y = content_y0 + line_ys[li]
             line_h = line_heights[li]
+            # P1 (assessment report) — cross-axis margin (row: the item's
+            # own top margin pushes it down from the line top; column:
+            # the item's left margin pushes it right from the content
+            # edge).  This is the missing piece the report's
+            # "Flex gap | 4,4,160,24 vs 4,0,160,20  交叉轴 margin 仍缺失"
+            # line refers to: the item's cross-axis margin must offset
+            # the placement, not just the main-axis advance.
             eff_line_y = line_y
             # P1 (agent report) — flex item margins: compute the *margin-box*
             # main-axis size of every item in this line.  ``sized[i]`` is
@@ -2895,11 +3058,17 @@ def _layout_flex(
                 w = sized[i]
                 _main_exp = (cb.explicit_width if row else cb.explicit_height)
                 if _main_exp is not None:
-                    if cb.box_sizing == "border-box":
-                        _bb_pad = (cb.padding.left + cb.padding.right
-                                   if row else cb.padding.top + cb.padding.bottom)
-                        _bb_brd = (cb.border.left + cb.border.right
-                                   if row else cb.border.top + cb.border.bottom)
+                    # P2 (assessment report) — content-box explicit main
+                    # size IS the content size (no subtraction: padding
+                    # + border grow the box outward); border-box
+                    # explicit size is the border-box size, so subtract
+                    # the main-axis padding + border.
+                    _bb = getattr(cb, "box_sizing", "") == "border-box"
+                    if _bb:
+                        _bb_pad = (cb.padding.left + cb.padding.right if row
+                                   else cb.padding.top + cb.padding.bottom)
+                        _bb_brd = (cb.border.left + cb.border.right if row
+                                   else cb.border.top + cb.border.bottom)
                         w = max(0.0, _main_exp - _bb_pad - _bb_brd)
                     else:
                         w = _main_exp
@@ -2922,37 +3091,60 @@ def _layout_flex(
                 # `item_x - w` for reverse was a content-box correction
                 # that double-subtracted the item width).
                 _content_x = item_x
+                # P1 (assessment report) — the item's own cross-axis
+                # margin pushes it inward from the line/container edge
+                # (row: margin.top pushes down; column: margin.left
+                # pushes right).  The legacy version applied the margin
+                # only on the main-axis advance, so an item with
+                # `margin:4px` in a flex row with `gap:10px` still
+                # landed at y=line_y (the report's flex_gap case
+                # expected y=4 but got y=0).
+                _cross_marg = cb.margin.top if row else cb.margin.left
+                _cross_start = (eff_line_y + _cross_marg) if row \
+                    else (content_x0 + _cross_marg)
+                # P1 (assessment report) — the item's *far* cross-axis
+                # margin (row: margin.bottom; column: margin.right).
+                # align-items/align-self center/end must position the
+                # item's *margin-box* inside the line/container (CSS
+                # flexbox §4.5: the cross-size being centred is the
+                # margin-box height, not the border-box height).  The
+                # legacy code centred on the border-box height, so an
+                # item with cross-axis margins landed off-centre by
+                # the far margin (layout_flex c*.y: 19 vs 15,
+                # flex_padding_border c*.y: 2 vs 4).
+                _cross_marg_far = cb.margin.bottom if row else cb.margin.right
+                _mb_cross = ch + _cross_marg + _cross_marg_far
                 # cross-axis y (row: align within the line; column: x-align)
                 if row:
                     if item_align in ("stretch", "") and cross_explicit[i] is None:
-                        layout_block(cb, _content_x, eff_line_y, w)
-                        cb.rect.h = line_h
+                        layout_block(cb, _content_x, _cross_start, w)
+                        cb.rect.h = max(0.0, line_h - _cross_marg - cb.margin.bottom)
                     elif item_align in ("start", "flex-start"):
-                        layout_block(cb, _content_x, eff_line_y, w)
+                        layout_block(cb, _content_x, _cross_start, w)
                     elif item_align in ("center", "baseline"):
                         layout_block(cb, _content_x,
-                                     eff_line_y + max(0.0, (line_h - ch) / 2.0), w)
+                                     _cross_start + max(0.0, (line_h - _mb_cross) / 2.0), w)
                     elif item_align in ("end", "flex-end"):
                         layout_block(cb, _content_x,
-                                     eff_line_y + max(0.0, line_h - ch), w)
+                                     _cross_start + max(0.0, line_h - _mb_cross), w)
                     else:
-                        layout_block(cb, _content_x, eff_line_y, w)
+                        layout_block(cb, _content_x, _cross_start, w)
                 else:
-                    # column: main axis = vertical; cross axis = horizontal.
+                    # column: main axis = vertical, cross axis = horizontal.
                     if item_align in ("stretch", "") and cross_explicit[i] is None:
-                        layout_block(cb, content_x0, item_x, w)
-                        cb.rect.w = available
+                        layout_block(cb, _cross_start, item_x, w)
+                        cb.rect.w = max(0.0, available - _cross_marg - cb.margin.right)
                     elif item_align in ("start", "flex-start"):
-                        layout_block(cb, content_x0, item_x, w)
+                        layout_block(cb, _cross_start, item_x, w)
                     elif item_align in ("center", "baseline"):
                         layout_block(cb,
-                                     content_x0 + max(0.0, (available - ch) / 2.0),
+                                     _cross_start + max(0.0, (available - _mb_cross) / 2.0),
                                      item_x, w)
                     elif item_align in ("end", "flex-end"):
-                        layout_block(cb, content_x0 + max(0.0, available - ch),
+                        layout_block(cb, _cross_start + max(0.0, available - _mb_cross),
                                      item_x, w)
                     else:
-                        layout_block(cb, content_x0, item_x, w)
+                        layout_block(cb, _cross_start, item_x, w)
                 # P1 (agent report) — advance to the next item's margin-box
                 # left edge: current item's margin-box width (content +
                 # padding + border + margin on both sides) + gap + step space.
@@ -3003,7 +3195,21 @@ def _layout_flex(
         # column direction: main axis = vertical, cross axis = horizontal.
         # Single line (column wrap is rare); cross-size = container width.
         cross_size = available
-        main_avail = bx.explicit_height if bx.explicit_height is not None else sum(sized)
+        # P2 (assessment report) — the column main space is the container's
+        # *content* height.  ``bx.explicit_height`` is the border-box size
+        # under box-sizing:border-box (the flex_column probe page sets
+        # ``body{margin:0}`` and the container is plain content-box, so it
+        # is already content — but border-box containers must subtract
+        # their own padding + border, mirroring the row cross_avail fix
+        # above).
+        if bx.explicit_height is not None:
+            main_avail = (bx.explicit_height
+                         - bx.padding.top - bx.padding.bottom
+                         - bx.border.top - bx.border.bottom
+                         if bx.box_sizing == "border-box"
+                         else bx.explicit_height)
+        else:
+            main_avail = sum(sized)
         # P0 (retest report) — margin-box main sizes + flex gap for the
         # column main axis.  ``_mb_col[i]`` is the i-th item's margin-box
         # height (content + padding + border + margin, top and bottom).
@@ -3157,6 +3363,35 @@ def _layout_grid(
             for v, u in fracs:
                 col_widths.append(v if u == "px" else free / cols)
         col_widths = [max(0.0, w) for w in col_widths]
+        # P2 (assessment report) — when the grid container is
+        # ``box-sizing: border-box`` (the layout_grid probe page sets
+        # ``*{box-sizing:border-box}``), ``available`` is the
+        # *content* width (border-box explicit width − container
+        # padding − border).  The CSS grid spec distributes track
+        # sizes against the content box, so 1fr 1fr 1fr over a 300px
+        # content width yields 100px tracks, not 300/3−2.  The legacy
+        # equal split under-reported 98 (it subtracted the cells' own
+        # borders from the track), so normalise back: the track is
+        # sized off the content width, and the cell's own border-box
+        # (content + padding + border) is reported by border_rect().
+        if bx.box_sizing == "border-box" and len(fracs) == cols:
+            _bb_pad = bx.padding.left + bx.padding.right
+            _bb_brd = bx.border.left + bx.border.right
+            _bb_content = max(0.0, bx.explicit_width - _bb_pad - _bb_brd) \
+                if bx.explicit_width is not None else available
+            _free2 = max(0.0, _bb_content - (cols - 1) * col_gap)
+            _fr2 = sum(v for v, u in fracs if u == "fr")
+            _px2 = sum(v for v, u in fracs if u == "px")
+            if _fr2 > 0 and _px2 > 0:
+                _frf = max(0.0, _free2 - _px2)
+                col_widths = [v if u == "px" else _frf * (v / _fr2)
+                              for v, u in fracs]
+            elif _fr2 > 0:
+                col_widths = [_free2 * (v / _fr2) for v, u in fracs]
+            else:
+                col_widths = [v if u == "px" else _free2 / cols
+                              for v, u in fracs]
+            col_widths = [max(0.0, w) for w in col_widths]
     else:
         # Legacy equal-split (no fraction list).
         col_w = (available - (cols - 1) * col_gap) / cols
@@ -3241,8 +3476,17 @@ def _layout_grid(
         layout_block(cb, cx, cy, cw)
         # P0 (agent report) — stretch cell content into its row track when
         # the container height distributes the space.
+        # P2 (assessment report) — under box-sizing:border-box the track
+        # size is the *border-box* height, so the cell's content height
+        # subtracts its own padding + border (the grid probe page sets
+        # ``*{box-sizing:border-box}``, so the legacy content-height
+        # subtraction over-reported the cell height by 2px — layout_grid
+        # g*.h: 62 vs 60).
         if bx.explicit_height is not None:
-            track_h = row_h_list[row] - cb.padding.top - cb.padding.bottom
+            _cb_bd = (cb.border.top + cb.border.bottom
+                      if getattr(cb, "box_sizing", "") == "border-box"
+                      else 0.0)
+            track_h = row_h_list[row] - cb.padding.top - cb.padding.bottom - _cb_bd
             if track_h > cb.rect.h:
                 cb.rect.h = track_h
     bx.rect = Rect(content_x0, content_y0, available,

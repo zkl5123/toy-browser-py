@@ -29,11 +29,23 @@ def test_p0_same_origin_no_policy_allowed():
 
 
 def test_p0_cross_origin_no_acao_blocked():
-    """Cross-origin resource without ACAO → blocked (CORS)."""
+    """P1 (assessment report) — cross-origin *script* without ACAO →
+    blocked (CORS).  Stylesheets / images load in no-cors mode and are
+    allowed without ACAO (the report's green-background cross-origin
+    CSS case); only script / connect kinds require a CORS read.
+    The test kind is therefore "script" (the cors-mode resource type);
+    the legacy "style" assertion no longer applies after the fix."""
     resp = net.HttpResponse(status=200, status_text="OK",
-                            headers={"Content-Type": "text/css"}, body=b"")
+                            headers={"Content-Type": "application/javascript"}, body=b"")
+    # cross-origin script without ACAO → blocked (CORS mode).
     assert resp.is_policy_allowed(
-        "https://example.com", "style", "https://cdn.example.org/style.css") is False
+        "https://example.com", "script", "https://cdn.example.org/app.js") is False
+    # cross-origin stylesheet without ACAO → allowed (no-cors mode).
+    style_resp = net.HttpResponse(status=200, status_text="OK",
+                                   headers={"Content-Type": "text/css"}, body=b"")
+    assert style_resp.is_policy_allowed(
+        "https://example.com", "style",
+        "https://cdn.example.org/style.css") is True
 
 
 def test_p0_cross_origin_with_acao_allowed():

@@ -1,0 +1,3 @@
+const {chromium}=require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const fs=require('fs'),path=require('path');
+(async()=>{const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});try{const p=await b.newPage({viewport:{width:400,height:200}});await p.setContent(fs.readFileSync(path.join(__dirname,'gui_click.html'),'utf8'));await p.locator('#b').click();fs.writeFileSync(path.join(__dirname,'edge_gui_workflow.json'),JSON.stringify({onclick_text:await p.locator('#out').textContent()},null,2));}finally{await b.close();}})().catch(e=>{console.error(e);process.exit(1)});

@@ -1,0 +1,30 @@
+{
+  "cross_css": {
+    "text": "SAFE",
+    "color": "rgb(0, 255, 0)"
+  },
+  "csp_self": {
+    "text": "SAFE",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "csp_inline": {
+    "text": "SAFE",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "external_script": {
+    "text": "EXECUTED",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "script_order": {
+    "text": "SAFE|EXTERNAL|INLINE",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "csp_nonce": {
+    "text": "EXECUTED",
+    "color": "rgba(0, 0, 0, 0)"
+  },
+  "repeat_external": {
+    "text": "SAFE|EXTERNAL|EXTERNAL",
+    "color": "rgba(0, 0, 0, 0)"
+  }
+}

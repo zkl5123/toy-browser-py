@@ -75,6 +75,18 @@ class PageInstance:
         self.active_form_field: int | None = None  # index of the active input
         self._form_states: dict[int, dict] = {}  # index → {value, checked}
         self._interaction_state: dict = {}
+        # P0 (assessment report) — the script-executed DOM tree and the
+        # shared JS Host: when set (HTTP / script-running loads), re-render
+        # paths must reuse them instead of re-parsing the source HTML
+        # (which would discard the script mutations).
+        self._dom_tree = None
+        self._script_host = None
+        self._last_html = ""
+        self._last_css = ""
+        # P0 (assessment report) — when True, load_html reuses the
+        # stored _dom_tree / _script_host instead of re-parsing the
+        # source HTML (set by the HTTP path after script execution).
+        self._reuse_doc = False
         # P33.P1 — mouse move history for hover transitions.
         self._last_mouse_xy: tuple[int, int] = (-1, -1)
 
@@ -163,6 +175,15 @@ class PageInstance:
         visible to the layout / hit-test / focus chain built below
         (the legacy path rendered the bitmap first and never ran the
         script — ``BEFORE``/``AFTER`` page states came out wrong).
+
+        P0 (assessment report) — when a previous load already executed
+        the document's scripts and stored ``self._dom_tree`` /
+        ``self._script_host`` for this *same* source HTML, the script-
+        mutated tree and Host are *reused* (no re-parse, no re-run):
+        re-parsing ``html`` would silently discard every DOM mutation
+        the script made (the reported "GUI HTTP 页面丢失脚本修改").
+        Set ``_force_repars_html = True`` on the page instance to
+        opt out (new-document semantics).
         """
         import browser
         import dom as _dom_mod
@@ -170,7 +191,7 @@ class PageInstance:
         self.width = w
         self.height = h
         if not full_page:
-            if run_scripts:
+            if run_scripts and not getattr(self, "_reuse_doc", False):
                 _tree = _dom_mod.parse(html)
                 _host = _js_mod.Host(_tree, lambda _s: None)
                 _host.execute_all()
@@ -189,14 +210,28 @@ class PageInstance:
                 interaction_state["hover"] = self.hover_id
             if self.focus_id is not None:
                 interaction_state["focus"] = self.focus_id
-        # P33.R2 — measure the full content height with one cheap
-        # layout pass (huge viewport height → unconstrained), then
-        # rasterize the full document.  The DOM tree is parsed once
-        # and reused for both the probe and the final pass.
-        tree = _dom_mod.parse(html)
-        self._dom_tree = tree  # P33.P1 — store for hit-test / focus
-        self._last_html = html  # P33.P1 — for _reapply_interaction
-        self._last_css = css
+        # P0 (assessment report) — reuse the script-mutated Document +
+        # Host when the source HTML is unchanged and a Host already
+        # exists (the HTTP path runs the scripts first, then calls
+        # load_html(run_scripts=False) to render; re-parsing here
+        # would undo the script's DOM mutations).
+        _reuse = (getattr(self, "_reuse_doc", False)
+                  and run_scripts is False
+                  and getattr(self, "_dom_tree", None) is not None
+                  and getattr(self, "_last_html", "") == html
+                  and getattr(self, "_script_host", None) is not None)
+        if _reuse:
+            tree = self._dom_tree
+            self._last_css = css
+        else:
+            # P33.R2 — measure the full content height with one cheap
+            # layout pass (huge viewport height → unconstrained), then
+            # rasterize the full document.  The DOM tree is parsed once
+            # and reused for both the probe and the final pass.
+            tree = _dom_mod.parse(html)
+            self._dom_tree = tree  # P33.P1 — store for hit-test / focus
+            self._last_html = html  # P33.P1 — for _reapply_interaction
+            self._last_css = css
         author_css, ua_css = browser._full_css(tree, css)
         media = _css_mod.parse_media_queries(author_css)
         supports = _css_mod.parse_supports_blocks(author_css)
@@ -213,6 +248,14 @@ class PageInstance:
                                 viewport_w=float(w), viewport_h=float(h))
         # P33.P1 — store the layout root for hit-testing / focus chain.
         self._layout_root = None
+        # P0 (assessment report) — when the caller *did* request a
+        # re-parse (run_scripts=True), the previous script-mutated tree
+        # is replaced and the reuse flag is cleared.  When run_scripts
+        # was False (the HTTP path re-rendering the stored tree), the
+        # flag stays so a subsequent restate keeps reusing the live
+        # tree.
+        if not _reuse:
+            self._reuse_doc = False
         # Probe: layout with a huge viewport height so block boxes are
         # not forced to shrink-wrap the viewport.  The content height
         # is the bounding box of the root's children (max y + h).
@@ -249,9 +292,15 @@ class PageInstance:
         counter = [0]
 
         def _walk(node):
-            counter[0] += 1
-            idx = counter[0]
+            # P1 (assessment report) — element-only indexing: the counter
+            # advances on element nodes only, matching
+            # :meth:`_node_index_to_dom` and :meth:`hit_test_at` (the
+            # legacy all-node counter shifted every focus-chain entry
+            # on text-node-rich trees, so Tab-activation hit the wrong
+            # element or no element at all).
             if node.is_element():
+                counter[0] += 1
+                idx = counter[0]
                 tab = node.attr("tabindex")
                 is_form = node.tag in ("input", "select", "textarea", "button", "a")
                 has_href = node.tag == "a" and node.attr("href")
@@ -273,17 +322,27 @@ class PageInstance:
         self._form_states = {}
 
     def _node_index_to_dom(self, tree, idx: int):
-        """P33.P1 — resolve a DOM node index (1-based, document order)
-        to the actual DOM Node object.  O(n) walk; the focus chain is
-        small enough that this is acceptable."""
+        """P33.P1 — resolve a DOM node index (1-based, element-only,
+        document order) to the actual DOM Node object.  O(n) walk; the
+        focus chain is small enough that this is acceptable.
+
+        P1 (assessment report) — the index counts *elements only*
+        (matching :meth:`hit_test_at`'s id_map which only records
+        ``node.is_element()`` nodes); the legacy version counted every
+        node including text, so a text-node-rich tree shifted all
+        element indices and a hit-test that returned the correct
+        element index resolved to the wrong node (or ``None``) in
+        :meth:`_click_dispatch`.  Element-only indexing is what the
+        layout boxes carry in their ``dom`` back-link."""
         counter = [0]
         found = [None]
 
         def _walk(node):
-            counter[0] += 1
-            if counter[0] == idx:
-                found[0] = node
-                return
+            if node.is_element():
+                counter[0] += 1
+                if counter[0] == idx:
+                    found[0] = node
+                    return
             for c in getattr(node, "children", []):
                 _walk(c)
                 if found[0] is not None:
@@ -355,7 +414,14 @@ class PageInstance:
 
     def _reapply_interaction(self) -> None:
         """P33.P1 — re-render the page with the current hover/focus
-        state applied via ``css.apply(interaction_state=...)``."""
+        state applied via ``css.apply(interaction_state=...)``.
+
+        P0 (assessment report) — the restate must NOT re-parse the
+        source HTML: it reuses the stored ``_dom_tree`` (which may
+        carry script / interaction mutations — e.g. a button's
+        ``onclick`` handler that changed ``textContent``) so that
+        re-rendering for :hover/:focus does not wipe out the existing
+        DOM state (the report's "重排不会清除既有 DOM 状态")."""
         import dom as _dom_mod
         import css as _css_mod
         import layout as _layout_mod
@@ -365,8 +431,14 @@ class PageInstance:
         css_text = getattr(self, "_last_css", "")
         if not html:
             return
-        tree = _dom_mod.parse(html)
-        self._dom_tree = tree
+        # P0 (assessment report) — reuse the live tree when available
+        # (the HTTP / local-script load paths store it); fall back to
+        # a fresh parse only when no tree has been stored yet.
+        tree = getattr(self, "_dom_tree", None)
+        if tree is None:
+            tree = _dom_mod.parse(html)
+            self._dom_tree = tree
+        self._save_form_state_to_dom()
         author_css, ua_css = _browser_mod._full_css(tree, css_text)
         media = _css_mod.parse_media_queries(author_css)
         supports = _css_mod.parse_supports_blocks(author_css)
@@ -474,6 +546,10 @@ class PageInstance:
             self._full_bitmap = None
             self.scroll_to(0)
             return
+        # P0 (assessment report) — a new document: any previously
+        # stored script-mutated DOM/Host is stale; force re-parse so
+        # load_html does not reuse it.
+        self._reuse_doc = False
         # inline HTML (starts with <)
         if url.startswith("<"):
             self.url = url
@@ -505,9 +581,20 @@ class PageInstance:
                 # stylesheets and re-parsed the document in load_html,
                 # so the document's CSP was never applied and external
                 # <script src> bodies were downloaded but never run.
+                # P0 (assessment report) — parse the DOM *once* and keep
+                # it; the subresource loader, script execution and the
+                # render all see the same tree, so script mutations are
+                # visible in the bitmap and in the hit-test / focus
+                # chain.  The legacy path called load_html() which
+                # re-parsed the source HTML and silently discarded the
+                # script mutations (HTTP 页面仍显示 SAFE while local
+                # HTML 已显示 AFTER).
+                import js as _js_mod
                 tree = _dom_mod.parse(html)
                 self._dom_tree = tree
                 self._last_html = html
+                self._last_css = ""
+                self._reuse_doc = True
                 loader = (net.load_subresources_parallel
                           if parallel else net.load_subresources)
                 _enforce_policy = True
@@ -520,22 +607,33 @@ class PageInstance:
                     (r.body or b"").decode("utf-8", "replace")
                     for r in sub.get("stylesheet", {}).values()
                     if r is not None and getattr(r, "ok", True))
-                # P0 (retest report) — run the document's scripts against
-                # the *shared* tree: inline blocks gated by the document's
-                # CSP (script-src / default-src) plus the fetched
-                # external <script src> bodies, mirroring
-                # browser.render_document_from_url.
-                import js as _js_mod
+                self._last_css = extra_css
+                # P0 (assessment report) — build the script cache
+                # (downloaded once per URL, execution per element) and
+                # run the document's scripts in document order against
+                # the *shared* tree: inline blocks gated by the
+                # document's CSP (script-src / default-src, including
+                # nonce matching), plus the fetched external <script
+                # src> bodies — each element occurrence executes its
+                # own copy of the body (a duplicated tag runs it
+                # twice, mirroring the HTML spec).
                 _host = _js_mod.Host(tree, lambda _s: None)
                 self._script_host = _host
                 _csp_directives = net.parse_csp_directives(_doc_csp) if _doc_csp else []
-                _ext_scripts = [
-                    (url_key,
-                     (r.body or b"").decode("utf-8", "replace"))
-                    for url_key, r in sub.get("script", {}).items()
-                    if r is not None and getattr(r, "ok", True)]
-                _host.execute_all(csp_directives=_csp_directives,
-                                  external_scripts=_ext_scripts or None)
+                _host.doc_origin = net._origin_str(url)
+                _script_cache: dict = {}
+                for url_key, r in sub.get("script", {}).items():
+                    if r is not None and getattr(r, "ok", True):
+                        _script_cache[url_key] = (
+                            (r.body or b"").decode("utf-8", "replace"))
+                    else:
+                        _script_cache[url_key] = None
+                _host.execute_scripts_in_order(_script_cache,
+                                               _csp_directives)
+                # P0 (assessment report) — render the *script-mutated*
+                # tree (run_scripts=False skips the legacy re-parse;
+                # _reuse_doc routes load_html to the stored
+                # _dom_tree / _script_host instead of a fresh parse).
                 self.load_html(html, extra_css, w, h, run_scripts=False)
                 self._maybe_record_history(record_history)
             except net.FetchError as e:
@@ -1113,7 +1211,15 @@ class TabBrowser:
 
     def _click_dispatch(self, event) -> None:
         """P33.P1 — mouse click on the viewport: hit-test, set hover +
-        focus, toggle form controls, follow links."""
+        focus, toggle form controls, follow links.
+
+        P0 (assessment report) — the hit element's ``onclick`` handler
+        (attribute or JS-level property) is now *executed* against the
+        shared Host before the re-render, so a click that mutates
+        ``textContent`` / styles is visible in the next frame (the
+        report's button test: Edge shows CLICKED after a real click;
+        the legacy GUI path re-rendered from the source HTML and the
+        DOM was still SAFE)."""
         page = self.tabs[self.current]
         frame = self.page_frames.get(self.current)
         if frame is None:
@@ -1128,6 +1234,7 @@ class TabBrowser:
         hit_idx = page.hit_test_at(x, y)
         # Update hover state.
         page.hover_id = hit_idx
+        _clicked_node = None
         if hit_idx is not None:
             page.set_focus(hit_idx, restate=False)
             node = page._node_index_to_dom(
@@ -1139,17 +1246,29 @@ class TabBrowser:
                     self._navigate_to(href)
                     return
                 elif tag in ("input", "button"):
+                    _clicked_node = node
                     inp_type = (node.attr("type") or "").lower()
-                    if inp_type in ("checkbox", "radio", "submit", "button"):
+                    if inp_type in ("checkbox", "radio"):
                         page._toggle_checkbox(hit_idx)
                         page._save_form_state_to_dom()
                     else:
-                        # text/number/etc. — focus for keyboard entry.
+                        # text / number / submit / button — focus for
+                        # keyboard entry.
                         page.active_form_field = hit_idx
                 elif tag == "textarea":
                     page.active_form_field = hit_idx
                 elif tag == "select":
                     page.active_form_field = hit_idx
+        # P0 (assessment report) — fire the hit element's click handler
+        # (on<event> attribute or JS-level property) on the shared
+        # Host so DOM mutations land in the live tree.
+        if _clicked_node is not None:
+            host = getattr(page, "_script_host", None)
+            eid = _clicked_node.attr("id") or ""
+            import js as _js_mod
+            _el = _js_mod.DomElement(_clicked_node, host) if host else None
+            if host is not None and _el is not None:
+                host.execute_event_bubbled(_el, "click")
         page._reapply_interaction()
         self._refresh_canvas(self.current)
 

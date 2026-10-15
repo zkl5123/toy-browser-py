@@ -1,0 +1,37 @@
+{
+  "cross_css": {
+    "pixel_50_50": "0xff00",
+    "cli_text": null,
+    "gui_text": "SAFE"
+  },
+  "csp_self": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "SAFE"
+  },
+  "csp_inline": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "EXECUTED"
+  },
+  "external_script": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "EXECUTED"
+  },
+  "script_order": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "SAFE|INLINE|EXTERNAL"
+  },
+  "csp_nonce": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "EXECUTED"
+  },
+  "repeat_external": {
+    "pixel_50_50": "0xffffff",
+    "cli_text": null,
+    "gui_text": "SAFE|EXTERNAL"
+  }
+}
