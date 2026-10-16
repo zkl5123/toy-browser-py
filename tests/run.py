@@ -77,6 +77,7 @@ from test_document_renderer import TESTS as _DOCUMENT_RENDERER_TESTS
 from test_form_control import TESTS as _FORM_CONTROL_TESTS
 from test_diag_panel import TESTS as _DIAG_PANEL_TESTS
 from test_style_cache import TESTS as _STYLE_CACHE_TESTS
+from test_layout_incremental import TESTS as _LAYOUT_INCREMENTAL_TESTS
 
 def main():
     tests = []
@@ -126,6 +127,7 @@ def main():
     tests.extend(_FORM_CONTROL_TESTS)
     tests.extend(_DIAG_PANEL_TESTS)
     tests.extend(_STYLE_CACHE_TESTS)
+    tests.extend(_LAYOUT_INCREMENTAL_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
