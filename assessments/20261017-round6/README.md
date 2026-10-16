@@ -220,8 +220,43 @@
   "document_destroy 时清"约定（节点释放后不依赖可复用的 Python id
   识别身份）。
 
+## 批次 12 完成的工作项（C06 布局树构建与增量布局，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C06 失效等级分类 | ✅ | `toy_browser/app/layout_incremental.py` `InvalidateLevel`（PROMOTE 单调）/ `InvalidateEvent` / `invalidate_level` / `classify_invalidate` | `tests/test_layout_incremental.py`（15 条） |
+| C06 最小可重排根求解 | ✅ | `layout_incremental.py` `MinimalRoot` / `promote_to_parent_level` / `find_minimal_root`（向上收集祖先 PROMOTE 等级，取最高者） | 同上 |
+| C06 增量布局计划 | ✅ | `layout_incremental.py` `IncrementalLayoutPlan` / `build_layout_plan`（事件 → 重排范围，含 Flex/Grid、文本增高下移、复杂表格全容器 fallback） | 同上 |
+
+### C06 布局树构建与增量布局（`layout_incremental.py`）
+- **失效等级分类**（C06 步骤 3）：`classify_invalidate(change)` 把改动
+  映射到失效等级：`text`（文本变化可能影响后续兄弟位置）→ `POSITION`；
+  `flex`/`grid`（子项变化可能影响整个容器）→ `MEASURE`；`class`/`id`/
+  `style`/`dom`/`font`（属性 / 结构变化）→ `STRUCTURE`；`hover`/`focus`
+  → `PAINT`；`media`/`resize` → `MEASURE`。等级单调（`PROMOTE`）：
+  `PAINT < POSITION < MEASURE < STRUCTURE`，低等级事件可被高等级吸收
+  （不能只重排被改节点——文本增高要往下传导，Flex 子项要重排整个
+  容器）。
+- **最小可重排根求解**（C06 步骤 4）：`find_minimal_root(doc, events,
+  ancestor_promotes)` 基于依赖关系**向上**确定最小可重排根：收集每个
+  事件节点的祖先 PROMOTE 等级（由调用方传入，含 Flex/Grid 容器、自动
+  尺寸容器、文档根），取所有事件的最高等级；若存在 ≥MEASURE 的祖先
+  提升，重排根上移到该祖先；否则按事件等级定根（仅 PROMOTE 到
+  事件自身所在节点）。`MinimalRoot.level` 决定重排深度。
+- **增量布局计划**（C06 步骤 5）：`build_layout_plan(doc, events)` 把
+  事件列表编译成 `IncrementalLayoutPlan`（`roots` + `level` +
+  `fallback`）。**先对块流和固定尺寸容器启用增量，复杂表格 / 自动
+  尺寸容器暂退全容器布局**：若任一事件落在表格内（`inside_table`）
+  或落在自动尺寸容器（`inside_auto_container`），计划 `fallback=True`
+  （全容器重排，正确性优先）；否则按 `level` 做块流 / 固定尺寸增量。
+  缓存键含包含块尺寸与字体版本（C06 步骤 4）：`cache_key = (parent_size,
+  font_version, level)`。
+
 ## 本批未完成 / 阻塞项
 
+- **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
+  最小重排根 + 增量计划）；把 `build_layout_plan` 接进 `layout_dirty_only`
+  / `mark_dirty` 的实际重排执行需活显示环境验收，留后续。
 - **G11 Tk 绑定**：真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
   可见性的画布滚动需活显示环境验收，留作后续批次。
 - **C04 表单提交端到端**（C04 步骤 4/5）：提交复用现有
@@ -238,7 +273,7 @@
   G09 step 2+4 Tk 侧路由、C01 公共 API 包装层 GUI 接入、
   G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
 - C03 文字布局（需先冻结 Edge 几何对照）、C04 表单提交端到端、
-  C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
+  C06 增量布局接入 layout.py、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
   与协议公式。
@@ -249,7 +284,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1173/1173 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18） |
+| `py -3 test.py` | **1188/1188 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15） |
 
 ## 批次 2 关键实现说明
 

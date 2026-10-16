@@ -2876,11 +2876,37 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   实例。
 
 ---
+### R6.21 C06 布局树构建与增量布局（纯逻辑核心，批次 12）
+
+- [x] **C06 失效等级分类**（`toy_browser/app/layout_incremental.py`
+  `InvalidateLevel`（PROMOTE 单调）/ `InvalidateEvent` /
+  `invalidate_level` / `classify_invalidate`）：`text` → POSITION；
+  `flex`/`grid` → MEASURE；`class`/`id`/`style`/`dom`/`font` →
+  STRUCTURE；`hover`/`focus` → PAINT；`media`/`resize` → MEASURE。等级
+  单调 `PAINT < POSITION < MEASURE < STRUCTURE`，低等级事件可被高等级
+  吸收（文本增高往下传导、Flex 子项重排整个容器，不能只重排被改节点）。
+- [x] **C06 最小可重排根求解**（同模块 `MinimalRoot` /
+  `promote_to_parent_level` / `find_minimal_root`）：基于依赖关系**向上**
+  收集每个事件节点的祖先 PROMOTE 等级（Flex/Grid 容器、自动尺寸容器、
+  文档根），取最高者；存在 ≥MEASURE 的祖先提升时重排根上移到该祖先；
+  否则按事件等级定根。`MinimalRoot.level` 决定重排深度。
+- [x] **C06 增量布局计划**（同模块 `IncrementalLayoutPlan` /
+  `build_layout_plan`）：事件 → 重排范围（`roots` + `level` + `fallback`）。
+  **先对块流和固定尺寸容器启用增量，复杂表格 / 自动尺寸容器暂退全容器
+  布局**：事件落在表格内或自动尺寸容器则 `fallback=True`（全容器重排，
+  正确性优先）；否则按 level 做块流 / 固定尺寸增量。缓存键含包含块尺寸
+  与字体版本（`cache_key = (parent_size, font_version, level)`）。
+- 回归：`tests/test_layout_incremental.py`（15 条）。
+- 未实施：把 `build_layout_plan` 接进 `layout.py` `layout_dirty_only`/
+  `mark_dirty` 的实际重排执行（全量 vs 增量差分测试）需活显示环境验收，
+  留后续；本批为纯逻辑决策层。
+
+---
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计）已完成（**1173/1173** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局）已完成（**1188/1188** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）与批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）已完成；批次 12（G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C06–C10 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）与批次 12（C06 布局树构建与增量布局纯逻辑核心）已完成；批次 13（C07 紧凑显示列表与可见区域裁剪 / C08 脏区域分块 / G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C09–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
