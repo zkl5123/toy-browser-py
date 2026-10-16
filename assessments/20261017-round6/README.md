@@ -79,9 +79,47 @@
 - 同址去重：cursor 指向项 URL == 最终 URL 时不新增，原地更新 source。
 - `can_back`/`can_forward`/`current` 供工具栏按钮启停 + 状态栏（G10
   的 `toolbar_state` 消费这里）。
-- **纯逻辑核心**：GUI/CLI/测试都接同一入口；Tk 侧把
-  `PageInstance.back_stack/fwd_stack` 迁移到 `HistoryCommitter`（保留
-  旧调用兼容）属批次 8 的 Tk 路由改造，留后续批次（需活显示验收）。
+ - **纯逻辑核心**：GUI/CLI/测试都接同一入口；Tk 侧把
+   `PageInstance.back_stack/fwd_stack` 迁移到 `HistoryCommitter`（保留
+   旧调用兼容）属批次 8 的 Tk 路由改造，留后续批次（需活显示验收）。
+
+## 批次 9 完成的工作项（G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G09 step 2 每标签状态所有权 | ✅ | `toy_browser/app/tab_lifecycle.py` `TabPresentation` / `TabPresentationSet`（切换只改前台呈现，不重建文档） | `tests/test_tab_lifecycle.py`（14 条） |
+| G09 step 4 后台降重绘 + 定时器策略 / 关闭取消任务 | ✅ | `tab_lifecycle.py` `TabTasks` / `TabTaskGate` / `TabLifecycle`（关闭标签取消在途任务 + 释放资源记账 + 失效 tab_id） | 同上 |
+| C01 step 4 公共 API 包装层 | ✅ | `toy_browser/app/document_renderer.py` `render_document_state` / `render_document_state_restate`（渲染管线接同一 `DocumentState` 生命周期入口，旧 `browser.render_document` 保持兼容） | `tests/test_document_renderer.py`（6 条） |
+
+### G09 step 2+4 标签生命周期（`tab_lifecycle.py`）
+- `TabPresentation`（每标签前台呈现）：`active` / `repaint`（全量/降重绘）
+  / `timer`（正常/节流/暂停）。**不持有** DocumentState / 历史 / 任务
+  ——那些以 tab_id 存 registry（G09 step 2）。`TabPresentationSet.activate`
+  实现"切换只改前台呈现，不重建文档"：激活标签全量重绘 + 正常定时器，
+  其余后台降重绘 + 定时器节流。
+- `TabTasks` / `TabTaskGate`（G09 step 4 任务门控）：`close(tab_id)` 取消
+  该标签所有在途任务 + 标记 CPU/GPU 资源已释放；后台标签 `background`
+  把定时器降到节流派发（不取消任务——后台仍加载，只是减少重绘 / 派发
+  频率）；`cancelled` 记录供诊断区审计。
+- `TabLifecycle`（step 1+2+4 组合协议）：`new_tab` 分配稳定 tab_id + 挂
+  呈现 + 任务门控（首个默认前台）；`activate` 前台切换（不触碰各标签的
+  文档/历史/在途任务）；`close_tab` 取消任务 + 释放资源 + 经
+  `TabIdentityRegistry.invalidate` 失效 tab_id（旧回调 / 旧资源不串页），
+  关闭前台标签后把前台让给剩余标签。
+
+### C01 step 4 公共 API 包装层（`document_renderer.py`）
+- `render_document_state(doc, html, ...)` 在 `DocumentState` 上跑
+  "解析 → 脚本初始化 → 样式 → 布局 → 光栅化"，每阶段按 C01 规则 bump
+  正确版本：解析+脚本初始化经 `new_document`（计数 +1，仅一次）；
+  样式+布局经 `mark_restate`（只 bump layout_revision，不重建 Host /
+  不重跑脚本）；光栅化经 `mark_render`（只 bump frame_id）。
+- `render_document_state_restate(doc, ...)` 复用已有 doc 的 DOM/Host
+  重排 + 渲染（hover / resize 场景），`script_init_count` 保持不变。
+- 旧公共 API（`browser.render_document` 等）保持签名 / 行为不变
+  （兼容旧调用）；包装层是 CLI / 测试接"同一流程"的新入口，对相同
+  输入与旧 API 得到同一 DOM 指纹 + 同一位图（C01 验收
+  `assert_same_dom` 已验证）。GUI 侧把 `PageInstance` 也接到这里属
+  活显示环境批次。
 
 ### C01 完整 DocumentState（`document_state_full.py`）
 - `DocumentState` 持有 C01 骨架的 `DocumentVersion`（四计数器唯一持有者）
@@ -118,24 +156,29 @@
 - **G11 Tk 绑定**：本批落焦点滚动公式 + 无鼠标任务清单 + 键盘状态机
   的纯逻辑核心；真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
   可见性的画布滚动需活显示环境验收，留作后续批次。
-- **C01 公共 API 包装层接入**：本批落纯逻辑 DocumentState + 版本回归；
-  把 GUI / CLI / 测试接到同一入口（保留公共 API 包装层兼容旧调用）
-  属批次 7 的 Tk 侧路由改造，留作后续批次。
+- **C01 公共 API 包装层 GUI 接入**：本批（批次 9）落地渲染管线包装层
+  `document_renderer.py`（CLI/测试接同一 `DocumentState` 生命周期入口，
+  旧 `browser.render_document` 保持兼容）；把 GUI 的 `PageInstance`
+  也接到同一入口属活显示环境批次，留后续。
+- **G09 step 2+4 Tk 侧路由**：本批（批次 9）落地标签生命周期纯逻辑
+  核心（`tab_lifecycle.py`：切换只改前台呈现不重建文档、关闭取消任务
+  + 释放资源 + 失效 tab_id、后台降重绘 + 定时器节流）；Tk widget 重绑
+  / 画布降重绘 / 定时器实测需活显示环境验收，留后续。
 - **C03 行内格式化与文字布局**：需先冻结 Edge 几何与截图
   （C03 step 1），本批未执行该冻结步骤。
 - **G07 文档进程方案**：可取消网络工作单元 + 线程初版；把 CPU
   工作（DOM / 布局）移入文档进程是后续（纯 Python 线程无多核收益）。
-- **G09 step 3 统一历史提交入口**：Tk 侧路由改造，需活显示环境验收。
 
 ## 剩余限制（下一批次）
 
-- G09 step 3 统一历史提交入口、G10 Tk 诊断区布局 / 控件绑定、
-  G11 Tk 键盘绑定 / 焦点画布滚动、G07 文档进程（CPU 工作移出 UI
-  线程的多核方案）、C01 公共 API 包装层接入。
+- G10 Tk 诊断区布局 / 控件绑定、G11 Tk 键盘绑定 / 焦点画布滚动、
+  G09 step 2+4 Tk 侧路由、C01 公共 API 包装层 GUI 接入、
+  G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
 - C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、C05 样式
   缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
-  键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
+  键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
+  与协议公式。
 - 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
   语义、错误分类），不在本批范围。
 
@@ -143,7 +186,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1096/1096 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32） |
+| `py -3 test.py` | **1128/1128 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20） |
 
 ## 批次 2 关键实现说明
 

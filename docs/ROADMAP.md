@@ -2791,11 +2791,42 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   `HistoryCommitter`（保留旧调用兼容）属 Tk 侧路由改造，需活显示
   环境验收。
 
+### R6.18 G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层（纯逻辑核心，批次 9）
+
+- [x] **每标签状态所有权 + 切换只改前台呈现**（`toy_browser/app/tab_lifecycle.py`
+  `TabPresentation` / `TabPresentationSet`）：切换标签只改 `active` /
+  `repaint`（全量/降重绘）/ `timer`（正常/节流）呈现字段，**不重建文档**
+  （DocumentState / 历史 / 加载任务以 tab_id 存 registry，G09 step 2）。
+  激活标签全量重绘 + 正常定时器，其余后台降重绘 + 定时器节流。
+- [x] **关闭标签取消任务 + 释放资源 + 后台定时器策略**（同模块
+  `TabTasks` / `TabTaskGate`，G09 step 4）：`close(tab_id)` 取消该标签
+  所有在途任务 + 标记 CPU/GPU 资源已释放；后台标签 `background` 把定时器
+  降到节流派发（不取消任务——后台仍加载，只减少重绘 / 派发频率）；
+  `cancelled` 记录供诊断区审计。
+- [x] **统一 切/关 标签协议**（`TabLifecycle`，step 1+2+4 组合）：
+  `new_tab` 分配稳定 tab_id + 挂呈现 + 任务门控（首个默认前台）；
+  `activate` 前台切换（不触碰各标签的文档/历史/在途任务）；`close_tab`
+  取消任务 + 释放资源 + 经 `TabIdentityRegistry.invalidate` 失效 tab_id
+  （旧回调 / 旧资源不串页），关闭前台标签后把前台让给剩余标签。
+- [x] **C01 step 4 公共 API 包装层**（`toy_browser/app/document_renderer.py`
+  `render_document_state` / `render_document_state_restate`）：渲染管线接
+  同一 `DocumentState` 生命周期入口——解析+脚本初始化经 `new_document`
+  （计数 +1，仅一次）；样式+布局经 `mark_restate`（只 bump
+  layout_revision，不重建 Host / 不重跑脚本）；光栅化经 `mark_render`
+  （只 bump frame_id）。旧 `browser.render_document` 保持签名 / 行为不变
+  （兼容旧调用）；包装层对相同输入与旧 API 得到同一 DOM 指纹 + 同一位图
+  （C01 验收 `assert_same_dom` 已验证）。
+- 回归：`tests/test_tab_lifecycle.py`（14 条）+ `tests/test_document_renderer.py`
+  （6 条）。
+- 未实施：Tk 侧 widget 重绑 / 画布降重绘 / 定时器实测（G09 step 2+4）
+  与把 GUI `PageInstance` 接入 `document_renderer` 包装层（C01 step 4）
+  属活显示环境批次。
+
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口）已完成（**1108/1108** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层）已完成（**1128/1128** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）与批次 8（G09 step 3 统一历史提交入口纯逻辑核心）已完成；批次 9（G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G07 文档进程 / C01 公共 API 包装层 / G09 step 3 Tk 路由 / C03–C10 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）与批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）已完成；批次 10（G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

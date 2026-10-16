@@ -72,6 +72,8 @@ from test_diagnostics import TESTS as _DIAGNOSTICS_TESTS
 from test_document_state_full import TESTS as _DOCUMENT_STATE_FULL_TESTS
 from test_accessibility import TESTS as _ACCESSIBILITY_TESTS
 from test_history_entry import TESTS as _HISTORY_ENTRY_TESTS
+from test_tab_lifecycle import TESTS as _TAB_LIFECYCLE_TESTS
+from test_document_renderer import TESTS as _DOCUMENT_RENDERER_TESTS
 
 def main():
     tests = []
@@ -116,6 +118,8 @@ def main():
     tests.extend(_DOCUMENT_STATE_FULL_TESTS)
     tests.extend(_ACCESSIBILITY_TESTS)
     tests.extend(_HISTORY_ENTRY_TESTS)
+    tests.extend(_TAB_LIFECYCLE_TESTS)
+    tests.extend(_DOCUMENT_RENDERER_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
