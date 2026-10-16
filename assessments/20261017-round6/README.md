@@ -47,6 +47,13 @@
 | G08 step 3 可取消 transport（不强杀线程） | ✅ | `transport.py` `cancel()` + `_cooperative_sleep` 可取消点 | 同上 |
 | G07 可取消网络工作单元接入 | ✅ | `document_controller.py` `navigate` 走工作线程 + `collect_network_results` | `tests/test_document_controller.py`（+3 条） |
 
+## 批次 6 完成的工作项（G10 工具栏 / 状态栏 / 诊断区，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G10 step 4/5 诊断区（记录 + 导出） | ✅ | `toy_browser/app/diagnostics.py` `DiagnosticsLog` / `DiagEvent` | `tests/test_diagnostics.py`（19 条） |
+| G10 step 1/2/3 工具栏 / 状态栏 / 标题映射 | ✅ | `diagnostics.py` `toolbar_state` / `status_text` / `tab_title` / `security_note` | 同上 |
+
 ## 批次 2 关键实现说明
 
 ### G03 编辑状态机（纯逻辑核心）
@@ -161,30 +168,60 @@
 - **本批为线程初版**：纯 Python 线程无多核收益（G07 step 4 明确），
   文档进程方案（DOM 长期留在文档进程、只传紧凑命令与帧）留作后续。
 
+## 批次 6 关键实现说明
+
+### G10 工具栏 / 状态栏 / 诊断区（纯逻辑核心，`diagnostics.py`）
+- `DiagnosticsLog`（G10 step 4/5）：诊断事件流。每条 `DiagEvent` 记录
+  `document_id`（C01 文档身份）/ `phase`（nav/parse/layout/paint/
+  script/subresource/cache/fallback…）/ `backend`（默认 cpu，文档明确
+  GPU 为可选第三方）/ `ts_ms`（渲染计时）/ `detail`（缓存命中与
+  fallback 原因）。`for_document` 按文档过滤（诊断区展开时才渲染，
+  普通使用不堆放内核信息，step 4）；`duration_ms` 出各 phase 的
+  首/末时刻 + 总耗时（渲染计时）；`export` 导出文本 / JSON（"导出
+  诊断信息"按钮的数据源，step 5）；`summary` 出缓存 / fallback 摘要。
+- 工具栏 / 状态栏 / 标题映射（G10 step 1–3 纯函数，Tk 控件共用）：
+  - `toolbar_state(nav, can_back, can_forward)`：后退/前进按历史栈
+    启停；刷新/停止随 G08 状态切换（busy → "停止"/stop，否则
+    "刷新"/reload），**不同加载状态按钮一致**。
+  - `status_text(nav, hover_url)`：悬停链接目标 > 真实加载阶段 >
+    失败摘要（区分完成/失败/取消，不统一写 "Loaded"）；失败用
+    `describe_error` 的中文摘要（DNS/超时/HTTP/…）。
+  - `tab_title(nav, doc_title, loading)`：标题用文档 title，加载前
+    临时显示 URL（step 2）。
+  - `security_note(url, https_verified)`：不以 HTTPS 图标代替页面
+    整体安全结论——http 明示"未加密"，https 未完全校验明示"证书未
+    完全校验"（step 3）。
+- **本批为纯逻辑核心**：Tk 侧（工具栏 / 状态栏 / 可展开诊断区的
+  布局、控件绑定与"导出诊断信息"按钮）在 GUI 层消费这些纯函数，
+  需活显示环境验收，留作后续批次。
+
 ## 本批未完成 / 阻塞项
 
 - **C03 行内格式化与文字布局**：需先将最小失败页面拆为普通文本 /
   b/i/span / 链接 / 连续空白 / 中文拉丁混排 / 长单词，并冻结 Edge
   几何与截图（C03 step 1），本批未执行该冻结步骤，故未实施
   InlineRun/LineBox。
-- **G07 文档进程方案**：本批落可取消网络工作单元 + 线程初版（网络
+- **G07 文档进程方案**：可取消网络工作单元 + 线程初版（网络
   I/O 移出 UI 调用点 + 取消语义）；把 CPU 工作（DOM / 布局）移入
   文档进程是后续（纯 Python 线程无多核收益）。
-- **G09 step 3 统一历史提交入口**：本批落稳定身份（step 1）与会话
+- **G09 step 3 统一历史提交入口**：稳定身份（step 1）与会话
   持久化（step 5）；把地址栏 / 链接 / 书签 / 文件打开的导航历史提交
   收敛到单一入口并明确重定向只形成一个历史项，属 Tk 侧路由改造，
   需活显示环境验收，留作后续批次。
+- **G10 Tk 布局 / 控件绑定**：本批落诊断记录 + 工具栏 / 状态栏 /
+  标题 / 安全摘要的纯函数映射；Tk 可展开诊断区布局与"导出诊断
+  信息"按钮的 GUI 绑定需活显示环境，留作后续批次。
 
 ## 剩余限制（下一批次）
 
-- G10 工具栏 / 状态栏 / 诊断区、G11 可访问性、G09 step 3 统一历史
-  提交入口、G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
+- G11 可访问性、G09 step 3 统一历史提交入口、G10 Tk 诊断区布局 /
+  控件绑定、G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
 - C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
   合一）、C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、
   C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续
   缓冲区。
-- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize 的 Tk 实测需有显示
-  环境执行；本批回归覆盖纯逻辑与协议公式。
+- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区的 Tk 实测
+  需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
 - 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
   语义、错误分类），不在本批范围。
 
@@ -192,7 +229,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1045/1045 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12） |
+| `py -3 test.py` | **1064/1064 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19） |
 
 ## 关键实现说明
 
