@@ -16,8 +16,8 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import dom
-import net
+from toy_browser.document import dom
+from toy_browser.network import net
 
 
 def test_p0_same_origin_no_policy_allowed():

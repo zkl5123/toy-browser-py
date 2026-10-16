@@ -11,14 +11,14 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)
@@ -1325,7 +1325,7 @@ def test_js_template_literal_number_formatting():
 TESTS.append(("test_js_template_literal_number_formatting", test_js_template_literal_number_formatting))
 def test_js_event_input_direct():
     """P13.4 — an `input` event runs the target's `oninput` handler."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs = []
     html = '<input id="inp" oninput="console.log(\'input:\' + this.value)">'
     b.render_document_with_mouse(
@@ -1341,7 +1341,7 @@ def test_js_event_input_direct():
 TESTS.append(("test_js_event_input_direct", test_js_event_input_direct))
 def test_js_event_input_delegated():
     """P13.4 — `oninput` on the parent catches input events on the child."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs = []
     html = ('<div id="wrap" oninput="console.log(\'delegated:\' + this.value)">'
             '<input id="inp"></div>')
@@ -1358,7 +1358,7 @@ def test_js_event_input_delegated():
 TESTS.append(("test_js_event_input_delegated", test_js_event_input_delegated))
 def test_js_event_focus():
     """P13.4 — a `focus` event runs the target's `onfocus` handler."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs = []
     html = '<input id="fld" onfocus="console.log(\'focused\')">'
     b.render_document_with_mouse(

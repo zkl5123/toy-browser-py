@@ -11,14 +11,14 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)
@@ -656,7 +656,7 @@ def test_z_index_paint_sort():
             '<div id="fg" style="position:absolute;top:0;left:0;'
             'width:100px;height:100px;z-index:5;background:#ff0000"></div>'
             '</body></html>')
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     root = dom.parse(html)
     styled = css.apply(root, "")
     lroot = layout.layout(styled, 200.0, 200.0)
@@ -934,7 +934,7 @@ def test_display_toggle_none():
     """
     html = ('<html><body><div id="x" style="width:100px;height:50px;background:red">'
             '</div></body></html>')
-    import js as js_mod
+    from toy_browser.scripting import js as js_mod
     tree = dom.parse(html)
     host = js_mod.Host(tree, lambda _s: None)
     host.execute("document.getElementById('x').style.display = 'none';")
@@ -953,7 +953,7 @@ def test_display_toggle_block():
     """P11.3 — switching display back to block re-includes the box."""
     html = ('<html><body><div id="x" style="width:100px;height:50px">'
             '</div></body></html>')
-    import js as js_mod
+    from toy_browser.scripting import js as js_mod
     tree = dom.parse(html)
     host = js_mod.Host(tree, lambda _s: None)
     host.execute(

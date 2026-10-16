@@ -16,7 +16,7 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import css
+from toy_browser.style import css
 
 
 def test_p1_supports_display_grid():

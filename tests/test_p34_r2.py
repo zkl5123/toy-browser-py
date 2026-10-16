@@ -15,9 +15,9 @@ _project_os.chdir(_PROJECT_ROOT)
 
 import time
 
-import dom
-import text
-import font
+from toy_browser.document import dom
+from toy_browser.typography import text
+from toy_browser.typography import font
 
 
 def test_get_glyph_mask_uses_resolved_face():
@@ -39,7 +39,7 @@ def test_get_glyph_mask_uses_resolved_face():
         "primary face must not produce a mask for a CJK glyph"
     # The resolved face (CJK fallback) must have a valid mask.
     face = text._resolve_face("你", real)
-    import font as _fontmod
+    from toy_browser.typography import font as _fontmod
     cjk = _fontmod.get_cjk_fallback()
     if cjk is None:
         return  # no CJK fallback — the curve path is acceptable
@@ -58,7 +58,7 @@ def test_draw_text_cjk_is_fast():
     real = text._real_metrics_for("monospace")
     if real is None:
         return
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     bmp = Bitmap(200, 100)
     text.draw_text(bmp, 0, 0, "你好", 12.0, Color(0, 0, 0), 100.0)
     t0 = time.perf_counter()
@@ -142,7 +142,7 @@ def test_wrap_is_linear():
 
 def test_adv_width_table_is_bounded():
     """P34.2 — _adv_width_tables must not grow unboundedly."""
-    import text as _t
+    from toy_browser.typography import text as _t
     n_tables_before = len(_t._adv_width_tables)
     # Force a new (family, px) table.
     _t._adv_width_for("x", 12.0, "monospace")
@@ -159,8 +159,8 @@ def test_blit_glyph_mask_negative_origin_clips():
     """P34.2 — the negative-x0 path must read the *source* mask row with
     the right column offset (the legacy implementation re-used the same
     destination loop bounds and indexed mrow[col] out of range)."""
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(4, 4)
     for r in range(4):
         for c in range(4):
@@ -179,8 +179,8 @@ def test_blit_glyph_mask_negative_origin_clips():
 
 def test_blit_glyph_mask_fully_clipped_left():
     """A mask entirely to the left of the bitmap must not touch it."""
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(2, 2)
     for r in range(2):
         for c in range(2):
@@ -193,8 +193,8 @@ def test_blit_glyph_mask_fully_clipped_left():
 def test_blit_glyph_mask_c255_fast_path():
     """P34.2 — full-coverage pixels must be written directly as the
     packed source color (the legacy formula lost 1 to >>8 truncation)."""
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(3, 3)
     for r in range(3):
         for c in range(3):
@@ -210,7 +210,7 @@ def test_blit_glyph_mask_c255_fast_path():
 # ---------------------------------------------------------------------------
 
 def test_child_index_guard_rebuilds_on_reuse():
-    import layout
+    from toy_browser.layout import layout
     import gc
     layout.clear_caches()
     n1 = dom.parse("<html><body><div>a</div><div>b</div></body></html>")

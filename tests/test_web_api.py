@@ -13,9 +13,9 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT))
 _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
-import dom
-import js
-import web_api
+from toy_browser.document import dom
+from toy_browser.scripting import js
+from toy_browser.scripting import web_api
 
 
 def _make_host(html="<html><body><div id='d'>hi</div></body></html>"):

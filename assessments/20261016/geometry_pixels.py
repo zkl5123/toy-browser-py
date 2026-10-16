@@ -2,7 +2,7 @@
 import sys,json
 from pathlib import Path
 from PIL import Image
-D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));import browser
+D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));from toy_browser.app import browser
 cases=json.loads((D/'layout_cases.json').read_text(encoding='utf8'));out={}
 for name in ['flex_reverse_center','flex_gap','grid_unequal','flex_padding_border']:
  browser.write_png(browser.render_document(cases[name],'',800,600),str(D/f'toy_geom_{name}.png'))

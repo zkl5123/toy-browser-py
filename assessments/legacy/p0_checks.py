@@ -1,7 +1,7 @@
 """P0 regression checks: em-dash glyph crash + network hang + demo.html rendering."""
 import os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-import browser, dom, css, layout, paint, paint_engine
+from toy_browser.app import browser; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint; from toy_browser.rendering import paint_engine
 
 D = os.path.dirname(os.path.abspath(__file__))
 P = os.path.join(D, '..', '..')
@@ -29,7 +29,7 @@ if os.path.exists(demo):
 
 # 3) network default timeout now finite (P0-3)
 import inspect
-import net
+from toy_browser.network import net
 src = inspect.getsource(net.HttpClient.__init__)
 results['network_default_timeout_finite'] = {'ok': ('DEFAULT_TIMEOUT' in src) or ('timeout is None' in src), 'snippet': [l.strip() for l in src.splitlines() if 'timeout' in l][:4]}
 

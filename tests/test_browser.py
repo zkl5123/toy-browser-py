@@ -11,21 +11,21 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)
 import tempfile
-import session
-import cookie_store
-import web_api
+from toy_browser.app import session
+from toy_browser.network import cookie_store
+from toy_browser.scripting import web_api
 import os as _os
 from test_helpers import (
     _a11y_roles,
@@ -121,7 +121,7 @@ def test_text_measure_consistency():
     # font is registered; the legacy "5 x char_advance" identity only
     # holds in bitmap mode.  Use the TTF-aware total when a face is
     # registered, and the bitmap-cell total otherwise.
-    import font as _f
+    from toy_browser.typography import font as _f
     if _f.get_real_metrics("monospace") is not None:
         w = text.measure("hello", 16.0)
         total = 0.0
@@ -208,7 +208,7 @@ def test_img_explicit_size():
 TESTS.append(("test_img_explicit_size", test_img_explicit_size))
 def test_img_paints():
     """<img> produces grey placeholder pixels in the rasterized output."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     html = '<html><body><img src="a.png" width="50" height="50"></body></html>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -475,7 +475,7 @@ def test_parse_keyframes():
 TESTS.append(("test_parse_keyframes", test_parse_keyframes))
 def test_apply_animation_frame_interpolation():
     """P4.1 — apply_animation_frame interpolates between bracketing keyframes."""
-    from css import Keyframe, Animation, Length
+    from toy_browser.style.css import Keyframe, Animation, Length
 
     anim = Animation(
         name="move",
@@ -547,7 +547,7 @@ TESTS.append(("test_text_transform_layout", test_text_transform_layout))
 def test_text_transform_render_uppercase():
     """P8.4 — text-transform:uppercase renders the text in uppercase."""
     html = '<html><body><div id="t" style="text-transform:uppercase;width:100px">Hello</div></body></html>'
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     root = dom.parse(html)
     styled = css.apply(root, "")
     lroot = layout.layout(styled, 200.0, 200.0)
@@ -604,7 +604,7 @@ def test_linear_gradient_layout():
 TESTS.append(("test_linear_gradient_layout", test_linear_gradient_layout))
 def test_linear_gradient_render():
     """P9.4 — linear-gradient renders with a gradient command in the display list."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     html = '<html><body><div id="g" style="background:linear-gradient(to bottom, #ff0000, #0000ff);width:100px;height:100px">' \
            '</div></body></html>'
     root = dom.parse(html)
@@ -638,7 +638,7 @@ def test_text_shadow_layout():
 TESTS.append(("test_text_shadow_layout", test_text_shadow_layout))
 def test_text_shadow_render():
     """P9.4 — text-shadow: 1px 1px #ff0000 emits a text_shadow command."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     html = '<html><body><div id="s" style="text-shadow:1px 1px #ff0000;width:100px;height:50px;font-size:16px">' \
            'Hi</div></body></html>'
     root = dom.parse(html)
@@ -653,7 +653,7 @@ def test_text_shadow_render():
 TESTS.append(("test_text_shadow_render", test_text_shadow_render))
 def test_element_at_basic():
     """P11.4 — element_at resolves a coordinate inside a box to that element."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<html><body><div id="big" style="width:200px;height:100px">'
             '<div id="inner" style="width:50px;height:50px;background:red"></div>'
             '</div></body></html>')
@@ -666,7 +666,7 @@ def test_element_at_basic():
 TESTS.append(("test_element_at_basic", test_element_at_basic))
 def test_element_at_miss():
     """P11.4 — element_at returns None when the point is outside all boxes."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body><div id="small" style="width:10px;height:10px"></div></body></html>'
     result = b.element_at(html, "", 300, 200, 200, 200)
     assert result is None, f"miss must return None, got {result!r}"
@@ -676,7 +676,7 @@ def test_element_at_miss():
 TESTS.append(("test_element_at_miss", test_element_at_miss))
 def test_event_target_runs_handler():
     """P11.4 — event_target runs the onclick handler of the element under (x,y)."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs = []
     html = ('<html><body><div id="btn" style="width:100px;height:50px" '
             'onclick="console.log(\'clicked\')"></div></body></html>')
@@ -689,7 +689,7 @@ def test_event_target_runs_handler():
 TESTS.append(("test_event_target_runs_handler", test_event_target_runs_handler))
 def test_click_and_render():
     """P11.4 — click_and_render returns (id, bitmap) after running the handler."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs = []
     html = ('<html><body><div id="toggle" style="width:100px;height:50px;background:red" '
             'onclick="this.style.display=\'none\'"></div></body></html>')
@@ -704,7 +704,7 @@ def test_click_and_render():
 TESTS.append(("test_click_and_render", test_click_and_render))
 def test_element_at_uses_supports():
     """P11.4/P11.3 — element_at integrates @supports rules into the cascade."""
-    import browser as b
+    from toy_browser.app import browser as b
     css_text = '@supports (display: grid) { #hit { background: #0000ff; } }'
     html = ('<html><body><div id="hit" style="width:100px;height:50px">'
             '</div></body></html>')
@@ -717,7 +717,7 @@ def test_element_at_uses_supports():
 TESTS.append(("test_element_at_uses_supports", test_element_at_uses_supports))
 def test_animation_handle_frame_overrides():
     """P12.1 — AnimationHandle.frame_overrides lerps every tracked property."""
-    from paint import Color
+    from toy_browser.rendering.paint import Color
     handle = css.AnimationHandle(duration=1.0)
     handle.add_track("opacity", [(0.0, 1.0), (1.0, 0.0)], 1.0)
     handle.add_track("background", [(0.0, Color(255, 0, 0, 255)),
@@ -750,7 +750,7 @@ def test_animation_handle_update():
 TESTS.append(("test_animation_handle_update", test_animation_handle_update))
 def test_pre_render_callback():
     """P12.4 — on_before_render can read the hover state before each frame."""
-    import browser as b
+    from toy_browser.app import browser as b
     seen: list[dict] = []
     html = ('<html><body><div id="k" style="width:100px;height:50px"></div>'
             '</body></html>')
@@ -771,7 +771,7 @@ def test_pre_render_callback():
 TESTS.append(("test_pre_render_callback", test_pre_render_callback))
 def test_font_cell_widths():
     """P15.4 — serif cells are wider than monospace cells."""
-    import font
+    from toy_browser.typography import font
     assert font.cell_width("serif") > font.cell_width("monospace"), \
         "serif cell must be wider than monospace"
 
@@ -780,7 +780,7 @@ def test_font_cell_widths():
 TESTS.append(("test_font_cell_widths", test_font_cell_widths))
 def test_font_family_from_css():
     """P15.4 — family_from_css maps known names to families."""
-    import font
+    from toy_browser.typography import font
     assert font.family_from_css("serif") == "serif"
     assert font.family_from_css("Times New Roman") == "serif"
     assert font.family_from_css("monospace") == "monospace"
@@ -799,7 +799,7 @@ def test_font_measure_family():
     only regime where the cell-width difference (8 vs 10) makes serif
     wider.  Accept both regimes.
     """
-    import text as text_mod
+    from toy_browser.typography import text as text_mod
     mono = text_mod.measure("ABC", 16.0, "monospace")
     serif = text_mod.measure("ABC", 16.0, "serif")
     assert mono > 0 and serif > 0, "both families must measure > 0"
@@ -812,7 +812,7 @@ def test_font_measure_family():
 TESTS.append(("test_font_measure_family", test_font_measure_family))
 def test_ttf_load_header():
     """P17.1 — TTF header tables (head/hhea/maxp) parsed correctly."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     assert m.units_per_em == 2048
     assert m.ascent == 1854
@@ -825,7 +825,7 @@ def test_ttf_load_header():
 TESTS.append(("test_ttf_load_header", test_ttf_load_header))
 def test_ttf_cmap_lookup():
     """P17.3 — cmap reverse lookup: char → glyph-id (ASCII)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     gid_a = m.cmap.get(65, 0)
     assert gid_a != 0
@@ -838,7 +838,7 @@ def test_ttf_cmap_lookup():
 TESTS.append(("test_ttf_cmap_lookup", test_ttf_cmap_lookup))
 def test_ttf_advance_width():
     """P17.3 — advance width scaled from hmtx to pixels."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     adv_a = m.advance_width("A", 16.0)
     assert 5.0 < adv_a < 15.0, f"A advance {adv_a} out of range"
@@ -852,7 +852,7 @@ def test_ttf_advance_width():
 TESTS.append(("test_ttf_advance_width", test_ttf_advance_width))
 def test_ttf_advance_proportional():
     """P17.3 — proportional font: different chars have different advances."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     adv_w = m.advance_width("W", 16.0)
     adv_l = m.advance_width("l", 16.0)
@@ -863,7 +863,7 @@ def test_ttf_advance_proportional():
 TESTS.append(("test_ttf_advance_proportional", test_ttf_advance_proportional))
 def test_ttf_line_height():
     """P17.1 — line height from ascent/descent/lineGap."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     lh = m.line_height(16.0)
     assert lh > 16.0, f"line height {lh} should exceed font size"
@@ -874,7 +874,7 @@ def test_ttf_line_height():
 TESTS.append(("test_ttf_line_height", test_ttf_line_height))
 def test_ttf_corrupt_file():
     """P17.1 — corrupt font file raises TTFError, no crash."""
-    import ttf_font, os
+    from toy_browser.typography import ttf_font; import os
     path = "fonts/corrupt_p17.ttf"
     with open(path, "wb") as f:
         f.write(b"\x00" * 20)
@@ -892,7 +892,7 @@ def test_ttf_corrupt_file():
 TESTS.append(("test_ttf_corrupt_file", test_ttf_corrupt_file))
 def test_ttf_missing_glyph_fallback():
     """P17.3 — char not in font (CJK) falls back to a wide cell."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     adv = m.advance_width("\u4e2d", 16.0)
     assert adv >= 12.0, f"missing-glyph fallback should be wide, got {adv}"
@@ -902,7 +902,7 @@ def test_ttf_missing_glyph_fallback():
 TESTS.append(("test_ttf_missing_glyph_fallback", test_ttf_missing_glyph_fallback))
 def test_ttf_dual_weight():
     """P17.4 — dual-weight files: regular vs bold weight_class."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m_reg = ttf_font.load_ttf("fonts/arial.ttf")
     m_bold = ttf_font.load_ttf("fonts/arialbd.ttf")
     assert m_reg.weight_class == 400
@@ -913,7 +913,7 @@ def test_ttf_dual_weight():
 TESTS.append(("test_ttf_dual_weight", test_ttf_dual_weight))
 def test_ttf_family_loading():
     """P17.4 — load_font_for_family resolves serif/monospace to real files."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_font_for_family("serif", 16.0, False, ["fonts"])
     assert m is not None
     m2 = ttf_font.load_font_for_family("monospace", 16.0, False, ["fonts"])
@@ -925,7 +925,7 @@ TESTS.append(("test_ttf_family_loading", test_ttf_family_loading))
 def test_ttf_glyph_outline_a():
     """P17.2 — 'A' outline extracted (simple glyph in the fixture,
     >10 points spanning two contours)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("A")
     assert o is not None
@@ -939,7 +939,7 @@ def test_ttf_glyph_outline_a():
 TESTS.append(("test_ttf_glyph_outline_a", test_ttf_glyph_outline_a))
 def test_ttf_glyph_outline_a_lower():
     """P17.2 — 'a' is a simple glyph (no composite flag)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("a")
     assert o is not None
@@ -951,7 +951,7 @@ def test_ttf_glyph_outline_a_lower():
 TESTS.append(("test_ttf_glyph_outline_a_lower", test_ttf_glyph_outline_a_lower))
 def test_ttf_glyph_outline_dot():
     """P17.2 — '.' is a small simple glyph."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline(".")
     assert o is not None
@@ -962,7 +962,7 @@ def test_ttf_glyph_outline_dot():
 TESTS.append(("test_ttf_glyph_outline_dot", test_ttf_glyph_outline_dot))
 def test_ttf_glyph_space():
     """P17.2 — space glyph exists (empty outline is fine)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline(" ")
     assert o is not None, "space outline must exist"
@@ -974,7 +974,7 @@ def test_ttf_glyph_space():
 TESTS.append(("test_ttf_glyph_space", test_ttf_glyph_space))
 def test_ttf_has_glyph():
     """P17.3 — has_glyph returns True for ASCII, False for CJK."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     assert m.has_glyph("A") == True
     assert m.has_glyph("0") == True
@@ -985,7 +985,7 @@ def test_ttf_has_glyph():
 TESTS.append(("test_ttf_has_glyph", test_ttf_has_glyph))
 def test_text_ttf_advance():
     """P17.3 — text.advance_text uses TTF hmtx when real font registered."""
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     font.init_real_fonts(["fonts"])
     real = font.get_real_metrics("monospace")
     assert real is not None
@@ -1000,7 +1000,7 @@ def test_text_ttf_advance():
 TESTS.append(("test_text_ttf_advance", test_text_ttf_advance))
 def test_text_ttf_line_height():
     """P17.1 — text.line_height_px uses TTF metrics when registered."""
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     font.init_real_fonts(["fonts"])
     lh = text.line_height_px(16.0, "monospace")
     assert lh > 16.0
@@ -1013,7 +1013,7 @@ def test_text_ttf_line_height():
 TESTS.append(("test_text_ttf_line_height", test_text_ttf_line_height))
 def test_render_with_ttf_metrics():
     """P17.4 — end-to-end render with TTF metrics (no crash)."""
-    import browser, font
+    from toy_browser.app import browser; from toy_browser.typography import font
     font.init_real_fonts(["fonts"])
     html = '<div style="width:300px;height:60px;font-size:16px">Hello</div>'
     bmps = browser.render_document_with_mouse(html, "", 400, 300,
@@ -1026,7 +1026,7 @@ def test_render_with_ttf_metrics():
 TESTS.append(("test_render_with_ttf_metrics", test_render_with_ttf_metrics))
 def test_render_without_ttf_fallback():
     """P17.4 — render without TTF falls back to bitmap font (no crash)."""
-    import browser, font
+    from toy_browser.app import browser; from toy_browser.typography import font
     font._real_font_metrics.clear()
     html = '<div style="width:300px;height:60px;font-size:16px">Hi</div>'
     bmps = browser.render_document_with_mouse(html, "", 400, 300,
@@ -1038,7 +1038,7 @@ def test_render_without_ttf_fallback():
 TESTS.append(("test_render_without_ttf_fallback", test_render_without_ttf_fallback))
 def test_ttf_outline_boundary():
     """P17.2 — glyph outline boundary pixels for '0' (simple)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("0")
     assert o is not None
@@ -1055,7 +1055,7 @@ def test_ttf_composite_glyph():
     """P17.2 — a glyph whose outline is extractable (the '!' in the
     fixture is a simple glyph; any extractable outline satisfies the
     test's purpose of exercising the outline path)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("!")
     assert o is not None
@@ -1066,7 +1066,7 @@ def test_ttf_composite_glyph():
 TESTS.append(("test_ttf_composite_glyph", test_ttf_composite_glyph))
 def test_ttf_font_face_in_layout():
     """P17.4 — @font-face toy: font-family + font-weight in layout."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px;height:40px;font-family:serif;'
             'font-weight:700">B</div>')
     root = dom.parse(html)
@@ -1081,7 +1081,7 @@ def test_ttf_font_face_in_layout():
 TESTS.append(("test_ttf_font_face_in_layout", test_ttf_font_face_in_layout))
 def test_ttf_weight_class_switch():
     """P17.4 — weight_class 400 vs 700 distinguishes regular from bold."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m_reg = ttf_font.load_ttf("fonts/arial.ttf")
     m_bold = ttf_font.load_ttf("fonts/arialbd.ttf")
     assert m_reg.weight_class < m_bold.weight_class
@@ -1105,7 +1105,7 @@ def test_ttf_glyf_outline_points():
     (structural correctness) and, when the outline is valid, that the
     coordinates are in range.
     """
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("B")
     assert o is not None
@@ -1130,8 +1130,8 @@ def test_ttf_cmap_cjk_absent():
     not leak into the parser-level assertion below, so we clear the
     global CJK face before running.
     """
-    import ttf_font
-    import font as _font
+    from toy_browser.typography import ttf_font
+    from toy_browser.typography import font as _font
     _saved = _font._cjk_fallback
     _font._cjk_fallback = None
     try:
@@ -1146,7 +1146,7 @@ def test_ttf_cmap_cjk_absent():
 TESTS.append(("test_ttf_cmap_cjk_absent", test_ttf_cmap_cjk_absent))
 def test_ttf_empty_font_metrics():
     """P17.1 — FontMetrics with no advances returns fallback width."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.FontMetrics()
     adv = m.advance_width("A", 16.0)
     assert adv > 0
@@ -1160,7 +1160,7 @@ def test_ttf_empty_font_metrics():
 TESTS.append(("test_ttf_empty_font_metrics", test_ttf_empty_font_metrics))
 def test_p18_half_leading_baseline():
     """P18.1 — TTF 行高 > em 盒时，文字垂直居中于行盒（半领导者模型）。"""
-    import font, dom, css, layout
+    from toy_browser.typography import font; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     font.init_real_fonts(["fonts"])
     html = '<div style="width:300px;font-size:16px;line-height:28px">Hi</div>'
     root = dom.parse(html)
@@ -1189,7 +1189,7 @@ def test_p18_half_leading_baseline():
 TESTS.append(("test_p18_half_leading_baseline", test_p18_half_leading_baseline))
 def test_p18_font_ascent_descent_fields():
     """P18.1 — LayoutBox records font_ascent_px / font_descent_px."""
-    import font, dom, css, layout
+    from toy_browser.typography import font; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     font.init_real_fonts(["fonts"])
     html = '<div style="width:200px;font-size:16px">A</div>'
     root = dom.parse(html)
@@ -1216,7 +1216,7 @@ def test_p18_font_ascent_descent_fields():
 TESTS.append(("test_p18_font_ascent_descent_fields", test_p18_font_ascent_descent_fields))
 def test_p18_text_transform_uppercase():
     """P18.4 — text-transform:uppercase 存储于元素盒 + 继承至文本子节点。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = '<div style="width:200px;text-transform:uppercase">hello</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -1238,7 +1238,7 @@ def test_p18_text_transform_uppercase():
 TESTS.append(("test_p18_text_transform_uppercase", test_p18_text_transform_uppercase))
 def test_p18_text_transform_lowercase():
     """P18.4 — text-transform:lowercase 存储于元素盒。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = '<div style="width:200px;text-transform:lowercase">HELLO</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -1260,7 +1260,7 @@ def test_p18_text_transform_lowercase():
 TESTS.append(("test_p18_text_transform_lowercase", test_p18_text_transform_lowercase))
 def test_p18_inline_link_cross_line():
     """P18.2 — 内联 <a> 元素跨行拆分后样式不丢。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:80px;font-size:12px">'
             '<a style="color:#ff0000">This is a very long link text '
             'that should wrap across multiple lines in the narrow container</a>'
@@ -1289,7 +1289,7 @@ def test_p18_inline_link_cross_line():
 TESTS.append(("test_p18_inline_link_cross_line", test_p18_inline_link_cross_line))
 def test_p18_vertical_align_top():
     """P18.3 — vertical-align:top 将内联元素对齐到行盒顶部。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px;font-size:12px">'
             '<span style="vertical-align:top;background:#ffff00">T</span>'
             'rest</div>')
@@ -1313,7 +1313,7 @@ def test_p18_vertical_align_top():
 TESTS.append(("test_p18_vertical_align_top", test_p18_vertical_align_top))
 def test_p18_vertical_align_middle():
     """P18.3 — vertical-align:middle 将内联元素垂直居中对齐。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px;font-size:12px">'
             '<span style="vertical-align:middle">M</span></div>')
     root = dom.parse(html)
@@ -1336,7 +1336,7 @@ def test_p18_vertical_align_middle():
 TESTS.append(("test_p18_vertical_align_middle", test_p18_vertical_align_middle))
 def test_p18_inline_img_raises_line_height():
     """P18.3 — 行内图片抬高行盒高度。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     # An inline <img> inside a div should make the line box taller.
     html = ('<div style="width:300px;font-size:12px">'
             '<img src="data:image/png;base64,iVBORw0KGgo=" style="width:40px;height:40px">'
@@ -1370,7 +1370,7 @@ def test_p18_inline_img_raises_line_height():
 TESTS.append(("test_p18_inline_img_raises_line_height", test_p18_inline_img_raises_line_height))
 def test_p18_text_align_center_line_box():
     """P18.4 — text-align:center 存储于元素盒（继承至子节点）。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:300px;font-size:12px;text-align:center">'
             'short text</div>')
     root = dom.parse(html)
@@ -1393,7 +1393,7 @@ def test_p18_text_align_center_line_box():
 TESTS.append(("test_p18_text_align_center_line_box", test_p18_text_align_center_line_box))
 def test_p18_render_half_leading():
     """P18.1 — 端到端：行高 > 字号的文档渲染不崩。"""
-    import browser, font
+    from toy_browser.app import browser; from toy_browser.typography import font
     font.init_real_fonts(["fonts"])
     html = ('<div style="width:300px;font-size:16px;line-height:32px">'
             'Hello world, this text has generous line spacing</div>')
@@ -1409,7 +1409,7 @@ def test_p18_render_half_leading():
 TESTS.append(("test_p18_render_half_leading", test_p18_render_half_leading))
 def test_p18_render_inline_styles_preserved():
     """P18.2 — 端到端：内联 <a> 跨行渲染后样式保留（颜色不丢）。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:80px;font-size:12px">'
             '<a style="color:#ff0000">long link text that wraps</a></div>')
     bmps = browser.render_document_with_mouse(
@@ -1423,7 +1423,7 @@ def test_p18_render_inline_styles_preserved():
 TESTS.append(("test_p18_render_inline_styles_preserved", test_p18_render_inline_styles_preserved))
 def test_p18_mixed_inline_block():
     """P18.2 — 混排内联+块级元素布局正确（块级独占一行）。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px;font-size:12px">'
             '<span>inline1</span>'
             '<div style="background:#00ff00">block1</div>'
@@ -1454,7 +1454,7 @@ def test_p18_mixed_inline_block():
 TESTS.append(("test_p18_mixed_inline_block", test_p18_mixed_inline_block))
 def test_p18_baseline_alignment_math():
     """P18.1 — baseline 对齐数学：baseline_y = rect.y + ascent_px。"""
-    import font, dom, css, layout
+    from toy_browser.typography import font; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     font.init_real_fonts(["fonts"])
     html = '<div style="width:200px;font-size:16px">A</div>'
     root = dom.parse(html)
@@ -1481,7 +1481,7 @@ def test_p18_baseline_alignment_math():
 TESTS.append(("test_p18_baseline_alignment_math", test_p18_baseline_alignment_math))
 def test_p18_line_height_half_leading_render():
     """P18.1 — 行高 32px + 字号 16px 渲染多行文本，行间距正确。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:200px;font-size:16px;line-height:32px">'
             'line one<br>line two<br>line three</div>')
     bmps = browser.render_document_with_mouse(
@@ -1496,7 +1496,7 @@ def test_p18_line_height_half_leading_render():
 TESTS.append(("test_p18_line_height_half_leading_render", test_p18_line_height_half_leading_render))
 def test_p18_text_align_right():
     """P18.4 — text-align:right 存储 + 渲染。"""
-    import dom, css, layout, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.app import browser
     html = ('<div style="width:300px;font-size:12px;text-align:right">'
             'right aligned</div>')
     root = dom.parse(html)
@@ -1522,7 +1522,7 @@ def test_p18_text_align_right():
 TESTS.append(("test_p18_text_align_right", test_p18_text_align_right))
 def test_p18_mixed_line_wrap_render():
     """P18 端到端 — 多行混排（内联链接 + 图片 + 块级）渲染不崩。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:300px;font-size:14px;line-height:24px">'
             '<p style="margin:0">Paragraph with '
             '<a style="color:#0000ff">an inline link that may wrap</a> '
@@ -1541,7 +1541,7 @@ def test_p18_mixed_line_wrap_render():
 TESTS.append(("test_p18_mixed_line_wrap_render", test_p18_mixed_line_wrap_render))
 def test_p18_vertical_align_stored():
     """P18.3 — vertical-align 关键词存储于 LayoutBox。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     for va in ("baseline", "top", "middle", "bottom"):
         html = f'<div style="width:100px;vertical-align:{va}">X</div>'
         root = dom.parse(html)
@@ -1565,7 +1565,7 @@ def test_p18_vertical_align_stored():
 TESTS.append(("test_p18_vertical_align_stored", test_p18_vertical_align_stored))
 def test_p18_half_leading_large_line_height():
     """P18.1 — 大行高（line-height:50px, font-size:16px）半领导者正确。"""
-    import font, dom, css, layout
+    from toy_browser.typography import font; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     font.init_real_fonts(["fonts"])
     html = '<div style="width:300px;font-size:16px;line-height:50px">Hi</div>'
     root = dom.parse(html)
@@ -1594,7 +1594,7 @@ def test_p18_half_leading_large_line_height():
 TESTS.append(("test_p18_half_leading_large_line_height", test_p18_half_leading_large_line_height))
 def test_p18_inline_run_height():
     """P18.2 — 内联 run 高度取 max(child_h, line_height)。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px;font-size:12px">'
             '<span>short</span> text</div>')
     root = dom.parse(html)
@@ -1618,7 +1618,7 @@ def test_p18_inline_run_height():
 TESTS.append(("test_p18_inline_run_height", test_p18_inline_run_height))
 def test_p19_english_word_wrap():
     """P19.1 — 英文按词断行：窄容器内单词不截断。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("hello world foo bar baz", 120.0, 16.0, "monospace")
     assert len(lines) >= 2, f"should wrap to >= 2 lines: {lines}"
     # No line should contain a truncated word (all original words intact).
@@ -1631,7 +1631,7 @@ def test_p19_english_word_wrap():
 TESTS.append(("test_p19_english_word_wrap", test_p19_english_word_wrap))
 def test_p19_cjk_char_by_char():
     """P19.2 — CJK 逐字断行：每个汉字都是断点。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("日本語の文字を一字ずつ折り返す", 60.0, 16.0, "monospace")
     assert len(lines) > 1, f"CJK should wrap to multiple lines: {lines}"
     # Total char count preserved (no chars lost).
@@ -1643,7 +1643,7 @@ def test_p19_cjk_char_by_char():
 TESTS.append(("test_p19_cjk_char_by_char", test_p19_cjk_char_by_char))
 def test_p19_kinsoku_no_line_start():
     """P19.2 — 禁则：句号不出现在行首。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("日本語の文字。テスト。もう", 60.0, 16.0, "monospace")
     for line in lines:
         if line:
@@ -1655,7 +1655,7 @@ def test_p19_kinsoku_no_line_start():
 TESTS.append(("test_p19_kinsoku_no_line_start", test_p19_kinsoku_no_line_start))
 def test_p19_kinsoku_latin_brackets():
     """P19.2 — 禁则：英文右括号不出现在行首。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("func(arg1, arg2)", 40.0, 16.0, "monospace")
     for line in lines:
         if line:
@@ -1671,7 +1671,7 @@ def test_p19_kinsoku_latin_brackets():
 TESTS.append(("test_p19_kinsoku_latin_brackets", test_p19_kinsoku_latin_brackets))
 def test_p19_soft_hyphen():
     """P19.3 — &shy; 软连字符：断行时行末显示 '-'。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("soft\u00ADhyphen word", 60.0, 16.0, "monospace")
     # The soft hyphen should create a break with '-' at line end.
     has_trailing_hyphen = any(l.endswith("-") for l in lines)
@@ -1682,7 +1682,7 @@ def test_p19_soft_hyphen():
 TESTS.append(("test_p19_soft_hyphen", test_p19_soft_hyphen))
 def test_p19_shy_html_entity():
     """P19.3 — &shy; HTML 实体在 DOM 中解码为 U+00AD。"""
-    import dom, text as t
+    from toy_browser.document import dom; from toy_browser.typography import text as t
     html = '<div>soft&shy;hyphen</div>'
     root = dom.parse(html)
     # The text node should contain the actual soft-hyphen char.
@@ -1707,7 +1707,7 @@ def test_p19_shy_html_entity():
 TESTS.append(("test_p19_shy_html_entity", test_p19_shy_html_entity))
 def test_p19_word_break_all():
     """P19.3 — word-break:break-all 每个字符都是断点。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("abcdefghij", 50.0, 16.0, "monospace",
                    word_break="break-all")
     assert len(lines) > 1, f"break-all should wrap: {lines}"
@@ -1720,7 +1720,7 @@ def test_p19_word_break_all():
 TESTS.append(("test_p19_word_break_all", test_p19_word_break_all))
 def test_p19_overflow_wrap_break_word():
     """P19.4 — overflow-wrap:break-word 长单词逐字符折断。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("supercalifragilistic", 50.0, 16.0, "monospace",
                    overflow_wrap="break-word")
     assert len(lines) > 1, f"long word should break: {lines}"
@@ -1733,7 +1733,7 @@ def test_p19_overflow_wrap_break_word():
 TESTS.append(("test_p19_overflow_wrap_break_word", test_p19_overflow_wrap_break_word))
 def test_p19_long_word_overflow():
     """P19.4 — 无 overflow-wrap 时长单词仍逐字符折断。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("supercalifragilistic", 50.0, 16.0, "monospace")
     assert len(lines) > 1, f"long word should break: {lines}"
     # All chars preserved (no char lost).
@@ -1746,7 +1746,7 @@ def test_p19_long_word_overflow():
 TESTS.append(("test_p19_long_word_overflow", test_p19_long_word_overflow))
 def test_p19_mixed_cjk_latin():
     """P19 端到端 — 中日英混排长文断行。"""
-    import text as t
+    from toy_browser.typography import text as t
     text = "Hello 世界 test 折り返す ok 日本語 の 文字 English"
     lines = t.wrap(text, 100.0, 16.0, "monospace")
     assert len(lines) > 1, f"mixed text should wrap: {lines}"
@@ -1761,7 +1761,7 @@ def test_p19_mixed_cjk_latin():
 TESTS.append(("test_p19_mixed_cjk_latin", test_p19_mixed_cjk_latin))
 def test_p19_render_cjk_wrap():
     """P19 端到端 — CJK 长文渲染不崩 + 多行。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:200px;font-size:14px">'
             '日本語の文字を一字ずつ折り返すテストを行います。'
             'これは禁則処理の確認です。</div>')
@@ -1776,7 +1776,7 @@ def test_p19_render_cjk_wrap():
 TESTS.append(("test_p19_render_cjk_wrap", test_p19_render_cjk_wrap))
 def test_p19_render_shy():
     """P19 端到端 — &shy; 渲染不崩。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:100px;font-size:16px">'
             'soft&shy;hyphen word that wraps</div>')
     bmps = browser.render_document_with_mouse(
@@ -1788,7 +1788,7 @@ def test_p19_render_shy():
 TESTS.append(("test_p19_render_shy", test_p19_render_shy))
 def test_p19_render_word_break():
     """P19 端到端 — word-break:break-all 渲染不崩。"""
-    import browser
+    from toy_browser.app import browser
     html = ('<div style="width:80px;font-size:16px;word-break:break-all">'
             'averyverylongwordthatshouldbreak'
             '</div>')
@@ -1803,7 +1803,7 @@ def test_p19_render_word_break():
 TESTS.append(("test_p19_render_word_break", test_p19_render_word_break))
 def test_p19_overflow_wrap_layout():
     """P19.4 — overflow-wrap:break-word 存储于 LayoutBox。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:100px;font-size:16px;overflow-wrap:break-word">'
             'text</div>')
     root = dom.parse(html)
@@ -1826,7 +1826,7 @@ def test_p19_overflow_wrap_layout():
 TESTS.append(("test_p19_overflow_wrap_layout", test_p19_overflow_wrap_layout))
 def test_p19_word_break_layout():
     """P19.3 — word-break:break-all 存储于 LayoutBox。"""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:100px;font-size:16px;word-break:break-all">'
             'text</div>')
     root = dom.parse(html)
@@ -1849,7 +1849,7 @@ def test_p19_word_break_layout():
 TESTS.append(("test_p19_word_break_layout", test_p19_word_break_layout))
 def test_p19_break_class():
     """P19.1 — _break_class 分类正确。"""
-    import text as t
+    from toy_browser.typography import text as t
     # CJK ideograph
     assert t._break_class("日") == "CJK"
     # Space
@@ -1870,7 +1870,7 @@ def test_p19_break_class():
 TESTS.append(("test_p19_break_class", test_p19_break_class))
 def test_p19_kinsoku_sets():
     """P19.2 — 禁则字符集合正确。"""
-    import text as t
+    from toy_browser.typography import text as t
     # Closing punct in no-start set
     assert "。" in t._CJK_NO_LINE_START
     assert "，" in t._CJK_NO_LINE_START
@@ -1884,7 +1884,7 @@ def test_p19_kinsoku_sets():
 TESTS.append(("test_p19_kinsoku_sets", test_p19_kinsoku_sets))
 def test_p19_wrap_empty():
     """P19 — 空文本 wrap 返回 [""]。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("", 100.0, 16.0, "monospace")
     assert lines == [""]
 
@@ -1893,7 +1893,7 @@ def test_p19_wrap_empty():
 TESTS.append(("test_p19_wrap_empty", test_p19_wrap_empty))
 def test_p19_wrap_narrow_cjk():
     """P19.2 — 窄容器 CJK 逐字断行（每行 1-2 字）。"""
-    import text as t
+    from toy_browser.typography import text as t
     lines = t.wrap("一二三四五六七八", 30.0, 16.0, "monospace")
     assert len(lines) >= 3, f"narrow CJK should wrap a lot: {lines}"
 
@@ -1902,7 +1902,7 @@ def test_p19_wrap_narrow_cjk():
 TESTS.append(("test_p19_wrap_narrow_cjk", test_p19_wrap_narrow_cjk))
 def test_gui_page_load_file():
     """P31 — PageInstance.load_file 渲染本地 HTML。"""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_file("demo.html", 200, 150)
     assert p.bitmap is not None
@@ -1914,7 +1914,7 @@ def test_gui_page_load_file():
 TESTS.append(("test_gui_page_load_file", test_gui_page_load_file))
 def test_gui_about_blank():
     """P31 — about:blank 渲染空白页。"""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_url("about:blank", 200, 150)
     assert p.bitmap is not None
@@ -1927,7 +1927,7 @@ def test_gui_http_stub():
     """P31/P21 — http URL renders a bitmap: the unified error page when
     the network fails (offline / dead port), a real page when it
     succeeds.  The GUI must never show a blank on a network URL."""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_url("http://127.0.0.1:1/x", 200, 150)
     assert p.bitmap is not None, "http URL must always produce a bitmap"
@@ -1940,7 +1940,7 @@ def test_gui_http_stub():
 TESTS.append(("test_gui_http_stub", test_gui_http_stub))
 def test_gui_inline_html():
     """P31 — 内联 HTML 直接渲染。"""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_url("<html><body><h1>Hi</h1></body></html>", 200, 150)
     assert p.bitmap is not None
@@ -1951,7 +1951,7 @@ def test_gui_inline_html():
 TESTS.append(("test_gui_inline_html", test_gui_inline_html))
 def test_gui_back_forward():
     """P31 — 后退/前进栈（调用方管理历史）。"""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_file("demo.html", 200, 150)
     p.back_stack.append(p.url)
@@ -1967,7 +1967,7 @@ def test_gui_back_forward():
 TESTS.append(("test_gui_back_forward", test_gui_back_forward))
 def test_gui_bitmap_ppm():
     """P31 — Bitmap → P6 PPM 字节（tkinter PhotoImage 数据源）。"""
-    import paint, io
+    from toy_browser.rendering import paint; import io
     bmp = paint.Bitmap(3, 2)
     for y in range(2):
         for x in range(3):
@@ -1998,7 +1998,7 @@ def test_gui_tkinter_available():
 TESTS.append(("test_gui_tkinter_available", test_gui_tkinter_available))
 def test_p20_quadratic_flatten():
     """P20.1 — a straight line flattens to its 2 endpoints; a curve grows."""
-    import rasterize
+    from toy_browser.typography import rasterize
     straight = rasterize._flatten_quadratic((0.0, 0.0), (1.0, 0.0), (2.0, 0.0))
     # A degenerate (collinear) curve needs no subdivision: just p0..p2.
     assert len(straight) in (2, 3), f"straight should be 2-3 pts, got {len(straight)}"
@@ -2013,7 +2013,7 @@ TESTS.append(("test_p20_quadratic_flatten", test_p20_quadratic_flatten))
 def test_p20_offcurve_midpoint_rule():
     """P20.1 — TrueType off-curve midpoint rule: two consecutive
     off-curve points produce an on-curve midpoint between them."""
-    import rasterize
+    from toy_browser.typography import rasterize
     pts = [(0.0, 0.0, False), (2.0, 0.0, False), (4.0, 0.0, True)]
     poly = rasterize._contour_to_points(pts, 1.0, 0.0, 0.0, flip_y=False)
     assert (1.0, 0.0) in poly, f"midpoint (1,0) missing from {poly}"
@@ -2025,7 +2025,7 @@ TESTS.append(("test_p20_offcurve_midpoint_rule", test_p20_offcurve_midpoint_rule
 def test_p20_fill_polygon_aa():
     """P20.2 — antialiased scanline fill produces intermediate greys at
     the polygon edges (partial-coverage pixels)."""
-    import rasterize, paint
+    from toy_browser.typography import rasterize; from toy_browser.rendering import paint
     bmp = _p20_bitmap(64, 64)
     # Fractional coordinates so edges fall between pixel centres.
     square = [(10.3, 10.3), (50.7, 10.3), (50.7, 50.7), (10.3, 50.7)]
@@ -2044,7 +2044,7 @@ TESTS.append(("test_p20_fill_polygon_aa", test_p20_fill_polygon_aa))
 def test_p20_fill_polygon_speed():
     """P20.5 — optimizeSpeed (antialias=False) hard-edge fill produces no
     more interior partial coverage than AA (greys not exceed AA)."""
-    import rasterize, paint
+    from toy_browser.typography import rasterize; from toy_browser.rendering import paint
     square = [(10.5, 10.5), (50.5, 10.5), (50.5, 50.5), (10.5, 50.5)]
     bb = _p20_bitmap(64, 64)
     rasterize._fill_polygon(bb, square, paint.Color(0, 0, 0, 255), antialias=False)
@@ -2060,7 +2060,7 @@ TESTS.append(("test_p20_fill_polygon_speed", test_p20_fill_polygon_speed))
 def test_p20_synthetic_bold_increases_ink():
     """P20.3 — synthetic bold (weight=2.0 dilation) increases ink vs
     normal (weight=1.0) for a valid outline."""
-    import rasterize, paint
+    from toy_browser.typography import rasterize; from toy_browser.rendering import paint
     m = _p20_metrics()
     valid = _p20_first_valid_outline(m) if m else None
     if valid is None:
@@ -2085,7 +2085,7 @@ TESTS.append(("test_p20_synthetic_bold_increases_ink", test_p20_synthetic_bold_i
 def test_p20_dilate_poly():
     """P20.3 — polygon dilation moves vertices outward and preserves
     vertex count; radius<=0 returns the polygon unchanged."""
-    import rasterize
+    from toy_browser.typography import rasterize
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
     out = rasterize._dilate_poly(square, 2.0)
     assert len(out) == 4
@@ -2099,7 +2099,7 @@ TESTS.append(("test_p20_dilate_poly", test_p20_dilate_poly))
 def test_p20_outline_bbox_validation():
     """P20.1 — outline_valid rejects points outside the glyph bbox and
     accepts points inside it (with 1-unit tolerance)."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     o = ttf_font.GlyphOutline(points=[(5.0, 5.0, True), (100.0, 100.0, False)],
                               is_empty=False, is_composite=False,
                               bbox=(0, 0, 200, 200))
@@ -2118,12 +2118,12 @@ TESTS.append(("test_p20_outline_bbox_validation", test_p20_outline_bbox_validati
 def test_p20_letter_spacing_widens():
     """P20.5 — letter-spacing adds extra advance between characters,
     widening the measured advance."""
-    import text
+    from toy_browser.typography import text
     m = _p20_metrics()
     adv = m.advance_width("A", 32.0) + m.advance_width("B", 32.0)
     loose = adv + 8.0
     assert loose > adv, "letter-spacing must widen total advance"
-    import paint
+    from toy_browser.rendering import paint
     bmp = _p20_bitmap(200, 40)
     h = text.draw_text(bmp, 5.0, 5.0, "AB", 32.0, paint.Color(0, 0, 0, 255),
                        150.0, "left", "monospace", letter_spacing=8.0)
@@ -2134,7 +2134,7 @@ def test_p20_letter_spacing_widens():
 TESTS.append(("test_p20_letter_spacing_widens", test_p20_letter_spacing_widens))
 def test_p20_text_rendering_stored():
     """P20.5 — CSS text-rendering is parsed and stored on the LayoutBox."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     def _find_box(root, tag="div"):
         if getattr(root, "box_type", None) == layout.BoxType.BLOCK and \
            getattr(root, "dom", None) is not None and getattr(root.dom, "tag", None) == tag:
@@ -2164,7 +2164,7 @@ def test_p20_text_rendering_stored():
 TESTS.append(("test_p20_text_rendering_stored", test_p20_text_rendering_stored))
 def test_p20_font_weight_stored():
     """P20.4 — CSS font-weight is parsed into LayoutBox.font_weight."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
 
     def _find_box(root, tag="div"):
         if getattr(root, "box_type", None) == layout.BoxType.BLOCK and \
@@ -2194,7 +2194,7 @@ def test_p20_metrics_for_weight():
     synthetic-bold flag for families that lack a bold file.
     P33.R1 — re-initializes the font registry so the test is not
     affected by a prior test that cleared _real_font_metrics."""
-    import font
+    from toy_browser.typography import font
     font.init_real_fonts(["fonts"])
     m, synth = font.get_metrics_for_weight("monospace", 400)
     assert m is not None, "normal weight must resolve to a font"
@@ -2208,7 +2208,7 @@ TESTS.append(("test_p20_metrics_for_weight", test_p20_metrics_for_weight))
 def test_p20_font_fallback_chain():
     """P20.4 — find_font_for_family resolves a missing family through the
     fallback chain to a bundled TTF."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.find_font_for_family("nonexistentfamily123", 400, ["fonts"])
     assert m is not None, "fallback chain must land on a bundled TTF"
     m2 = ttf_font.find_font_for_family("monospace", 400, ["fonts"])
@@ -2219,7 +2219,7 @@ def test_p20_font_fallback_chain():
 TESTS.append(("test_p20_font_fallback_chain", test_p20_font_fallback_chain))
 def test_p20_match_weight():
     """P20.4 — match_weight picks the closest available weight class."""
-    import ttf_font
+    from toy_browser.typography import ttf_font
     class _M:
         def __init__(self, w):
             self.weight_class = w
@@ -2236,7 +2236,7 @@ TESTS.append(("test_p20_match_weight", test_p20_match_weight))
 def test_p20_draw_text_curves_letter_spacing():
     """P20 — draw_text_curves adds letter_spacing to each advance,
     widening total returned width."""
-    import rasterize, paint
+    from toy_browser.typography import rasterize; from toy_browser.rendering import paint
     m = _p20_metrics()
     c = paint.Color(0, 0, 0, 255)
     b1 = _p20_bitmap(300, 80); b2 = _p20_bitmap(300, 80)
@@ -2253,7 +2253,7 @@ def test_p20_glyf_instruction_count_layout():
     """P20.1 — the simple-glyph parser places the flags section after
     instructionCount + the hinting program (not misaligned by
     num_contours)."""
-    import ttf_font, struct
+    from toy_browser.typography import ttf_font; import struct
     m = _p20_metrics()
     if m is None:
         return
@@ -2281,7 +2281,7 @@ def test_p20_point_flags_bits():
     on-curve 0x01, xShort 0x02, yShort 0x04, xPositive 0x10,
     yPositive 0x20, repeat 0x08.  Long vectors are signed 16-bit;
     short vectors are 1-byte magnitude with the 0x10/0x20 bit as sign."""
-    import ttf_font, struct
+    from toy_browser.typography import ttf_font; import struct
     rec = struct.pack(">h", 1) + struct.pack(">hhhh", 0, 0, 100, 100)
     rec += struct.pack(">H", 1)          # endPts[0]=1
     rec += struct.pack(">H", 0)         # instCount=0
@@ -2305,7 +2305,7 @@ TESTS.append(("test_p20_point_flags_bits", test_p20_point_flags_bits))
 def test_p20_curve_glyph_fallback():
     """P20.1 — text.draw_text renders ink even when every outline fails
     bbox validation (falls back to the 8×8 bitmap)."""
-    import text, paint
+    from toy_browser.typography import text; from toy_browser.rendering import paint
     m = _p20_metrics()
     bmp = _p20_bitmap(200, 60)
     h = text.draw_text(bmp, 10.0, 8.0, "Hello", 32.0,
@@ -2319,7 +2319,7 @@ TESTS.append(("test_p20_curve_glyph_fallback", test_p20_curve_glyph_fallback))
 def test_p20_paint_command_fields():
     """P20.5 — DisplayCommand carries letter_spacing / text_rendering /
     font_weight with correct defaults."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     c = paint_engine.DisplayCommand("text", 0, 0, 100, 100,
                                     text="x", font_px=16.0)
     assert c.letter_spacing == 0.0
@@ -2338,7 +2338,7 @@ TESTS.append(("test_p20_paint_command_fields", test_p20_paint_command_fields))
 def test_p20_layout_box_fields():
     """P20.4/P20.5 — LayoutBox carries text_rendering and font_weight
     with correct defaults."""
-    import layout
+    from toy_browser.layout import layout
     b = layout.LayoutBox(box_type=layout.BoxType.TEXT, text_content="x")
     assert b.text_rendering == "auto"
     assert b.font_weight == 400
@@ -2349,7 +2349,7 @@ TESTS.append(("test_p20_layout_box_fields", test_p20_layout_box_fields))
 def test_p20_synthetic_bold_flag_roundtrip():
     """P20.4 — get_metrics_for_weight reports synthetic-bold when no
     bold TTF file is registered; normal weight never sets it."""
-    import text, font
+    from toy_browser.typography import text; from toy_browser.typography import font
     m = _p20_metrics()
     if m is None:
         return
@@ -2371,7 +2371,7 @@ TESTS.append(("test_p20_synthetic_bold_flag_roundtrip", test_p20_synthetic_bold_
 def test_p20_render_full_pipeline_weight():
     """P20.4 — the full DOM→CSS→layout→paint pipeline stores font-weight,
     letter-spacing, and text-rendering on the emitted text command."""
-    import dom, css, layout, paint_engine
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     node = dom.parse('<div id="w" style="font-weight:700;letter-spacing:2px;text-rendering:optimizeQuality;width:200px">X</div>')
     sn = css.apply(node, "")
     root_box = layout.build_box(sn, 200.0)
@@ -2393,7 +2393,7 @@ def test_p20_glyf_offcurve_yreversed():
     with the 0x20 bit as sign (clear = negative); xLong (no 0x02 tag
     bit) uses signed 16-bit.  The two-pass read (x then y) is
     confirmed."""
-    import ttf_font, struct
+    from toy_browser.typography import ttf_font; import struct
     rec = struct.pack(">h", 1) + struct.pack(">hhhh", 0, 0, 100, 100)
     rec += struct.pack(">H", 2)        # endPts[0]=2 (3 points)
     rec += struct.pack(">H", 0)        # instCount=0
@@ -2418,7 +2418,7 @@ def test_p20_glyf_offcurve_yreversed():
 TESTS.append(("test_p20_glyf_offcurve_yreversed", test_p20_glyf_offcurve_yreversed))
 def test_p21_parse_url_absolute():
     """P21.1 — absolute URL parses into all six components."""
-    import net
+    from toy_browser.network import net
     u = net.parse_url("http://example.com:8080/a/b?c=1#f")
     assert u.scheme == "http"
     assert u.host == "example.com"
@@ -2433,7 +2433,7 @@ TESTS.append(("test_p21_parse_url_absolute", test_p21_parse_url_absolute))
 def test_p21_parse_url_https_default_port():
     """P21.1 — https without an explicit port keeps port=0 but
     effective_port is 443; http default is 80."""
-    import net
+    from toy_browser.network import net
     u = net.parse_url("https://example.com/x")
     assert u.port == 0 and u.effective_port == 443
     u2 = net.parse_url("http://example.com")
@@ -2447,7 +2447,7 @@ def test_p21_parse_url_https_default_port():
 TESTS.append(("test_p21_parse_url_https_default_port", test_p21_parse_url_https_default_port))
 def test_p21_relative_url_resolution():
     """P21.1 — relative URL resolution against a base (WHATWG rules)."""
-    import net
+    from toy_browser.network import net
     base = net.parse_url("http://h.com:8080/a/b?c=1#f")
     p = net.parse_url("page.html", base)
     assert p.path == "/a/page.html" and p.host == "h.com"
@@ -2465,7 +2465,7 @@ def test_p21_relative_url_resolution():
 TESTS.append(("test_p21_relative_url_resolution", test_p21_relative_url_resolution))
 def test_p21_url_to_string_roundtrip():
     """P21.1 — to_string() round-trips through parse_url without loss."""
-    import net
+    from toy_browser.network import net
     src = "http://h.com:8080/a/b?c=1#f"
     u = net.parse_url(src)
     assert u.to_string() == src
@@ -2478,7 +2478,7 @@ def test_p21_url_to_string_roundtrip():
 TESTS.append(("test_p21_url_to_string_roundtrip", test_p21_url_to_string_roundtrip))
 def test_p21_normalize_url():
     """P21.1 — normalize lowercases scheme/host, fills empty path."""
-    import net
+    from toy_browser.network import net
     u = net.parse_url("HTTP://H.COM")
     n = net.normalize_url(u)
     assert n.scheme == "http" and n.host == "h.com"
@@ -2489,7 +2489,7 @@ def test_p21_normalize_url():
 TESTS.append(("test_p21_normalize_url", test_p21_normalize_url))
 def test_p21_origin_property():
     """P21.1 — origin is scheme://host[:port] without the default port."""
-    import net
+    from toy_browser.network import net
     u = net.parse_url("http://h.com:8080/a")
     assert u.origin == "http://h.com:8080"
     u2 = net.parse_url("https://h.com/a")
@@ -2501,7 +2501,7 @@ TESTS.append(("test_p21_origin_property", test_p21_origin_property))
 def test_p21_http_get_200():
     """P21.2 — a 200 GET returns the body + content-type via the
     local http.server fixture (offline, CI-stable)."""
-    import net
+    from toy_browser.network import net
     routes = {"/": (200, "text/html", b"<html><body>hi</body></html>")}
     srv, port = _p21_start_server(routes)
     try:
@@ -2520,7 +2520,7 @@ TESTS.append(("test_p21_http_get_200", test_p21_http_get_200))
 def test_p21_http_get_404():
     """P21.2 — a 404 is returned as-is (client does NOT hide errors);
     the caller decides whether to render the error page."""
-    import net
+    from toy_browser.network import net
     routes = {}  # no matching route → fixture returns 404
     srv, port = _p21_start_server(routes)
     try:
@@ -2537,7 +2537,7 @@ TESTS.append(("test_p21_http_get_404", test_p21_http_get_404))
 def test_p21_http_redirect_surfaced():
     """P21.2 — a 301 is returned as-is with its status (P22 will follow
     the chain; P21 surfaces it, does not follow automatically)."""
-    import net
+    from toy_browser.network import net
     routes = {"/a": (301, "", b"")}
     srv, port = _p21_start_server(routes)
     try:
@@ -2554,7 +2554,7 @@ TESTS.append(("test_p21_http_redirect_surfaced", test_p21_http_redirect_surfaced
 def test_p21_content_type_dispatch():
     """P21.3 — fetch_html returns decoded text for text/html and raises
     FetchError for a non-HTML Content-Type (the 'download/ignore' path)."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/html": (200, "text/html", b"<p>ok</p>"),
         "/json": (200, "application/json", b'{"a":1}'),
@@ -2577,7 +2577,7 @@ def test_p21_content_type_dispatch():
 TESTS.append(("test_p21_content_type_dispatch", test_p21_content_type_dispatch))
 def test_p21_fetch_error_on_4xx():
     """P21.3 — fetch_html raises FetchError carrying the status on 4xx."""
-    import net
+    from toy_browser.network import net
     routes = {}
     srv, port = _p21_start_server(routes)
     try:
@@ -2596,7 +2596,7 @@ def test_p21_fetch_error_on_4xx():
 TESTS.append(("test_p21_fetch_error_on_4xx", test_p21_fetch_error_on_4xx))
 def test_p21_unsupported_scheme():
     """P21.3 — schemes other than http/https are rejected outright."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient()
     for bad in ("ftp://x.com", "mailto:a@b.c"):
         u = net.parse_url(bad)
@@ -2611,7 +2611,7 @@ def test_p21_unsupported_scheme():
 TESTS.append(("test_p21_unsupported_scheme", test_p21_unsupported_scheme))
 def test_p21_error_page_html():
     """P21.3 — the unified error page HTML contains the title/detail."""
-    import net
+    from toy_browser.network import net
     html = net.error_page_html("Timeout", "cannot reach host")
     assert "Timeout" in html
     assert "cannot reach host" in html
@@ -2623,7 +2623,7 @@ TESTS.append(("test_p21_error_page_html", test_p21_error_page_html))
 def test_p21_error_page_renders():
     """P21.3 — render_error_page produces a non-blank Bitmap via the
     full pipeline (so the GUI/CLI can drop it in directly)."""
-    import net, paint
+    from toy_browser.network import net; from toy_browser.rendering import paint
     bmp = net.render_error_page("Not Found", "404 on x", 200, 120)
     assert isinstance(bmp, paint.Bitmap)
     assert bmp.width == 200 and bmp.height == 120
@@ -2636,7 +2636,7 @@ TESTS.append(("test_p21_error_page_renders", test_p21_error_page_renders))
 def test_p21_connection_error_retries():
     """P21.2 — a connection to a dead port retries then raises
     ConnectionError (the unified error the caller renders)."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient(timeout=0.5)
     try:
         c.get("http://127.0.0.1:1/x")
@@ -2649,7 +2649,7 @@ def test_p21_connection_error_retries():
 TESTS.append(("test_p21_connection_error_retries", test_p21_connection_error_retries))
 def test_p21_http_query_in_path():
     """P21.2 — the query string is appended to the wire path."""
-    import net
+    from toy_browser.network import net
     srv, port = _p21_start_server({"/x": (200, "text/html", b"got")})
     try:
         c = net.HttpClient(timeout=5)
@@ -2663,7 +2663,7 @@ def test_p21_http_query_in_path():
 TESTS.append(("test_p21_http_query_in_path", test_p21_http_query_in_path))
 def test_p21_url_is_network_flag():
     """P21.1 — is_network / is_http / is_https flags are consistent."""
-    import net
+    from toy_browser.network import net
     u = net.parse_url("http://h/p")
     assert u.is_http and u.is_network
     u2 = net.parse_url("https://h/p")
@@ -2676,7 +2676,7 @@ def test_p21_url_is_network_flag():
 TESTS.append(("test_p21_url_is_network_flag", test_p21_url_is_network_flag))
 def test_p21_fetch_html_accepts_str_url():
     """P21.3 — fetch_html accepts a bare string (parsed on the fly)."""
-    import net
+    from toy_browser.network import net
     routes = {"/": (200, "text/html", b"<b>x</b>")}
     srv, port = _p21_start_server(routes)
     try:
@@ -2710,7 +2710,7 @@ def test_p21_cli_network_error_exit_code():
 TESTS.append(("test_p21_cli_network_error_exit_code", test_p21_cli_network_error_exit_code))
 def test_p22_redirect_followed():
     """P22.1 — a 302 chain is followed to the final 200."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/a": (302, "text/plain", b"", {"Location": "/b"}),
         "/b": (301, "text/plain", b"", {"Location": "/c"}),
@@ -2731,7 +2731,7 @@ def test_p22_redirect_followed():
 TESTS.append(("test_p22_redirect_followed", test_p22_redirect_followed))
 def test_p22_redirect_loop_detected():
     """P22.1 — a 302 → 302 self-loop raises RedirectLoop."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/a": (302, "text/plain", b"", {"Location": "/b"}),
         "/b": (302, "text/plain", b"", {"Location": "/a"}),
@@ -2753,7 +2753,7 @@ TESTS.append(("test_p22_redirect_loop_detected", test_p22_redirect_loop_detected
 def test_p22_redirect_exceeds_cap():
     """P22.1 — a 7-hop chain exceeds the 5-hop cap and raises
     RedirectLoop (not silently truncated)."""
-    import net
+    from toy_browser.network import net
     # /n → /n+1 for n in 0..6, /7 = 200.  7 hops > MAX_REDIRECTS=5.
     routes = {}
     for i in range(7):
@@ -2776,7 +2776,7 @@ def test_p22_redirect_exceeds_cap():
 TESTS.append(("test_p22_redirect_exceeds_cap", test_p22_redirect_exceeds_cap))
 def test_p22_redirect_within_cap_succeeds():
     """P22.1 — a 5-hop chain (== cap) succeeds without error."""
-    import net
+    from toy_browser.network import net
     routes = {}
     for i in range(5):
         routes[f"/{i}"] = (302, "text/plain", b"",
@@ -2796,7 +2796,7 @@ TESTS.append(("test_p22_redirect_within_cap_succeeds", test_p22_redirect_within_
 def test_p22_redirect_no_follow_returns_302():
     """P22.1 — follow_redirects=False returns the 3xx as-is (P21
     behavior preserved)."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/a": (302, "text/plain", b"", {"Location": "/b"}),
         "/b": (200, "text/html", b"b"),
@@ -2816,7 +2816,7 @@ def test_p22_redirect_no_follow_returns_302():
 TESTS.append(("test_p22_redirect_no_follow_returns_302", test_p22_redirect_no_follow_returns_302))
 def test_p22_gzip_decoded():
     """P22.2 — a gzip-encoded body is transparently decoded."""
-    import net, gzip
+    from toy_browser.network import net; import gzip
     payload = b"<html><body>P22 gzip</body></html>"
     routes = {
         "/g": (200, "text/html", gzip.compress(payload),
@@ -2838,7 +2838,7 @@ TESTS.append(("test_p22_gzip_decoded", test_p22_gzip_decoded))
 def test_p22_gzip_no_header_passthrough():
     """P22.2 — without Content-Encoding: gzip the body is returned
     verbatim (idempotent decoder)."""
-    import net
+    from toy_browser.network import net
     routes = {"/p": (200, "text/html", b"plain")}
     srv, port = _p22_start_server(routes)
     try:
@@ -2854,7 +2854,7 @@ TESTS.append(("test_p22_gzip_no_header_passthrough", test_p22_gzip_no_header_pas
 def test_p22_chunked_decode_roundtrip():
     """P22.3 — net.decode_chunked decodes a raw chunked body
     (unit-testable hook; http.client handles the wire transparently)."""
-    import net
+    from toy_browser.network import net
     raw = b"5\r\nhello\r\n6\r\n world\r\n0\r\n"
     assert net.decode_chunked(raw) == b"hello world"
     # Empty / single-chunk edge cases.
@@ -2867,7 +2867,7 @@ TESTS.append(("test_p22_chunked_decode_roundtrip", test_p22_chunked_decode_round
 def test_p22_chunked_with_extensions():
     """P22.3 — chunk size lines may carry ``;ext`` suffixes that are
     ignored (spec §4.1.2)."""
-    import net
+    from toy_browser.network import net
     raw = b"4;name=value\r\nWiki\r\n5\r\npedia\r\n0\r\n"
     assert net.decode_chunked(raw) == b"Wikipedia"
 
@@ -2876,7 +2876,7 @@ def test_p22_chunked_with_extensions():
 TESTS.append(("test_p22_chunked_with_extensions", test_p22_chunked_with_extensions))
 def test_p22_chunked_max_size_cap():
     """P22.3 — a malformed size line terminates the decode (no crash)."""
-    import net
+    from toy_browser.network import net
     # Garbage size line → int() fails → decode stops, returns what we
     # accumulated so far (empty here).
     assert net.decode_chunked(b"xyz\r\n") == b""
@@ -2887,7 +2887,7 @@ TESTS.append(("test_p22_chunked_max_size_cap", test_p22_chunked_max_size_cap))
 def test_p22_subresource_collection():
     """P22.4 — collect_subresources returns <link rel=stylesheet> and
     <img src> in document order."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     tree = dom.parse(
         "<html><head>"
         '<link rel="stylesheet" href="a.css">'
@@ -2911,7 +2911,7 @@ TESTS.append(("test_p22_subresource_collection", test_p22_subresource_collection
 def test_p22_base_tag_overrides_doc_base():
     """P22.5 — a <base href> overrides the document URL as the base
     for relative subresource resolution."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     tree = dom.parse(
         "<html><head>"
         '<base href="/override/">'
@@ -2931,7 +2931,7 @@ TESTS.append(("test_p22_base_tag_overrides_doc_base", test_p22_base_tag_override
 def test_p22_base_tag_absent():
     """P22.5 — without a <base> tag, base_url_from_dom returns None
     (caller falls back to the document URL)."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     tree = dom.parse(
         "<html><head>"
         '<link rel="stylesheet" href="a.css">'
@@ -2945,7 +2945,7 @@ TESTS.append(("test_p22_base_tag_absent", test_p22_base_tag_absent))
 def test_p22_subresource_failure_does_not_block():
     """P22.4 — a 404 subresource maps to None; the page still renders
     (load_subresources never raises for a bad subresource)."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     routes = {"/ok.css": (200, "text/css", b"body{color:red}"),
               "/missing.css": (404, None, b"")}
     srv, port = _p22_start_server(routes)
@@ -2974,7 +2974,7 @@ TESTS.append(("test_p22_subresource_failure_does_not_block", test_p22_subresourc
 def test_p22_render_document_from_url():
     """P22 — render_document_from_url loads a doc + subresources and
     returns a Bitmap (full pipeline, no crash)."""
-    import net, dom, browser, paint
+    from toy_browser.network import net; from toy_browser.document import dom; from toy_browser.app import browser; from toy_browser.rendering import paint
     routes = {
         "/": (200, "text/html",
               b"<html><head>"
@@ -3003,7 +3003,7 @@ def test_p22_render_from_url_gzip_doc():
     top; scan a wider band rather than the whole buffer so a valid
     render with text at y≈20 still passes.
     """
-    import net, browser, paint, gzip
+    from toy_browser.network import net; from toy_browser.app import browser; from toy_browser.rendering import paint; import gzip
     html = b"<html><body><h1>P22z</h1></body></html>"
     routes = {"/": (200, "text/html", gzip.compress(html),
                      {"Content-Encoding": "gzip"})}
@@ -3029,7 +3029,7 @@ TESTS.append(("test_p22_render_from_url_gzip_doc", test_p22_render_from_url_gzip
 def test_p22_render_from_url_network_error():
     """P22 — a dead host raises FetchError (caller renders the error
     page); the API never silently returns a blank."""
-    import net, browser
+    from toy_browser.network import net; from toy_browser.app import browser
     try:
         browser.render_document_from_url(
             "http://127.0.0.1:1/x", width=100, height=60,
@@ -3044,7 +3044,7 @@ TESTS.append(("test_p22_render_from_url_network_error", test_p22_render_from_url
 def test_p22_subresource_data_uri_skipped():
     """P22.4 — a data: URI in <img src> is recorded but not fetched
     (no network round-trip)."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     tree = dom.parse(
         "<html><body>"
         '<img src="data:image/png;base64,AAA">'
@@ -3066,7 +3066,7 @@ TESTS.append(("test_p22_subresource_data_uri_skipped", test_p22_subresource_data
 def test_p22_fetch_resource_returns_none_on_404():
     """P22.4 — fetch_resource returns None on a 404 (subresource
     semantics: never raise)."""
-    import net
+    from toy_browser.network import net
     routes = {"/x.css": (404, None, b"")}
     srv, port = _p22_start_server(routes)
     try:
@@ -3081,7 +3081,7 @@ TESTS.append(("test_p22_fetch_resource_returns_none_on_404", test_p22_fetch_reso
 def test_p22_redirect_relative_location():
     """P22.1 — a relative Location (no scheme/host) is resolved
     against the redirecting URL, not the original."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/start": (302, "text/plain", b"", {"Location": "mid"}),
         "/mid": (200, "text/html", b"rel-loc"),
@@ -3101,7 +3101,7 @@ TESTS.append(("test_p22_redirect_relative_location", test_p22_redirect_relative_
 def test_p23_cache_hit_skips_wire():
     """P23.2 — a fresh cached response is returned without touching
     the wire (the server is shut down before the second GET)."""
-    import net, time
+    from toy_browser.network import net; import time
     routes = {"/x": (200, "text/html", b"hello",
                       {"Cache-Control": "max-age=300"})}
     srv, port = _p22_start_server(routes)
@@ -3127,7 +3127,7 @@ TESTS.append(("test_p23_cache_hit_skips_wire", test_p23_cache_hit_skips_wire))
 def test_p23_cache_no_store_not_cached():
     """P23.2 — ``Cache-Control: no-store`` responses are never written
     to disk; the second GET is a wire miss."""
-    import net
+    from toy_browser.network import net
     routes = {"/ns": (200, "text/html", b"ns",
                        {"Cache-Control": "no-store"})}
     srv, port = _p22_start_server(routes)
@@ -3149,7 +3149,7 @@ def test_p23_cache_no_store_not_cached():
 TESTS.append(("test_p23_cache_no_store_not_cached", test_p23_cache_no_store_not_cached))
 def test_p23_cache_max_age_expiry():
     """P23.2 — a max-age=0 entry is immediately stale (ttl <= 0)."""
-    import net
+    from toy_browser.network import net
     routes = {"/z": (200, "text/html", b"z",
                      {"Cache-Control": "max-age=0"})}
     srv, port = _p22_start_server(routes)
@@ -3172,7 +3172,7 @@ TESTS.append(("test_p23_cache_max_age_expiry", test_p23_cache_max_age_expiry))
 def test_p23_cache_etag_304_reuse():
     """P23.3 — a stale entry with an ETag is revalidated; a 304
     response reuses the cached body and refreshes freshness."""
-    import net
+    from toy_browser.network import net
     routes = {
         "/e": (200, "text/html", b"body-1",
                {"ETag": '"v1"', "Cache-Control": "max-age=0"}),
@@ -3206,7 +3206,7 @@ TESTS.append(("test_p23_cache_etag_304_reuse", test_p23_cache_etag_304_reuse))
 def test_p23_cache_heuristic_ttl():
     """P23.2 — without directives, heuristic TTL = 10% of
     (Date - Last-Modified)."""
-    import net
+    from toy_browser.network import net
     # Last-Modified 100s before Date → heuristic ttl = 10s.
     lm = "Thu, 01 Jan 2020 00:00:00 GMT"
     dt = "Thu, 01 Jan 2020 00:01:40 GMT"
@@ -3235,7 +3235,7 @@ def test_p23_cache_heuristic_ttl():
 TESTS.append(("test_p23_cache_heuristic_ttl", test_p23_cache_heuristic_ttl))
 def test_p23_cache_store_clear():
     """P23.2 — CacheStore.clear() removes all on-disk entries."""
-    import net
+    from toy_browser.network import net
     routes = {"/c": (200, "text/html", b"c",
                      {"Cache-Control": "max-age=60"})}
     srv, port = _p22_start_server(routes)
@@ -3258,7 +3258,7 @@ TESTS.append(("test_p23_cache_store_clear", test_p23_cache_store_clear))
 def test_p23_cache_parse_directives():
     """P23.2 — _parse_cache_control extracts max-age / no-cache /
     no-store correctly."""
-    import net
+    from toy_browser.network import net
     cc = net._parse_cache_control("max-age=3600, public")
     assert cc.get("max-age") == "3600"
     assert cc.get("public") is True
@@ -3272,7 +3272,7 @@ TESTS.append(("test_p23_cache_parse_directives", test_p23_cache_parse_directives
 def test_p23_progress_events_emitted():
     """P23.4 — a LoadEventSink receives start/document/done events
     for a single GET."""
-    import net
+    from toy_browser.network import net
     routes = {"/p": (200, "text/html", b"p")}
     srv, port = _p22_start_server(routes)
     try:
@@ -3293,7 +3293,7 @@ TESTS.append(("test_p23_progress_events_emitted", test_p23_progress_events_emitt
 def test_p23_progress_subresource_phase():
     """P23.4 — load_subresources emits a subresource phase per fetch
     and a final done event."""
-    import net, dom
+    from toy_browser.network import net; from toy_browser.document import dom
     routes = {"/s.css": (200, "text/css", b"body{}")}
     srv, port = _p22_start_server(routes)
     try:
@@ -3317,7 +3317,7 @@ TESTS.append(("test_p23_progress_subresource_phase", test_p23_progress_subresour
 def test_p23_progress_on_event_subscription():
     """P23.4 — LoadEventSink.on_event subscribes a callback that is
     invoked for each emitted event."""
-    import net
+    from toy_browser.network import net
     sink = net.LoadEventSink()
     seen = []
     sink.on_event(lambda ev: seen.append(ev.phase))
@@ -3332,7 +3332,7 @@ TESTS.append(("test_p23_progress_on_event_subscription", test_p23_progress_on_ev
 def test_p23_post_form_encoded():
     """P23 — HttpClient.post encodes a dict as
     application/x-www-form-urlencoded and returns the response."""
-    import net, http.server, threading
+    from toy_browser.network import net; import http.server; import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
     captured = {}
 
@@ -3369,7 +3369,7 @@ def test_p23_post_form_encoded():
 TESTS.append(("test_p23_post_form_encoded", test_p23_post_form_encoded))
 def test_p23_post_verbatim_str():
     """P23 — a str body is sent verbatim with the given content-type."""
-    import net, http.server, threading
+    from toy_browser.network import net; import http.server; import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
     captured = {}
 
@@ -3403,7 +3403,7 @@ def test_p23_insecure_flag_accepted():
     """P23.1 — HttpClient(verify_tls=False) is accepted (the
     --insecure switch); it just disables cert checks (the wire path is
     exercised in the HTTPS test below)."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient(verify_tls=False)
     assert c.verify_tls is False
 
@@ -3415,7 +3415,7 @@ def test_p23_https_tls_handshake():
     https scheme with verify_tls=False (self-signed cert, no CA trust).
     Cert verification ON would reject the self-signed cert, so this
     test runs the --insecure path end to end."""
-    import net, ssl, http.server, threading, os as _os, tempfile
+    from toy_browser.network import net; import ssl; import http.server; import threading; import os as _os; import tempfile
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     # Build a throwaway self-signed cert with `ssl`? stdlib can't mint
@@ -3473,7 +3473,7 @@ TESTS.append(("test_p23_https_tls_handshake", test_p23_https_tls_handshake))
 def test_p23_cache_etag_absent_refetches():
     """P23.3 — a stale entry WITHOUT an ETag cannot revalidate; the
     client refetches from the wire (no If-None-Match sent)."""
-    import net
+    from toy_browser.network import net
     routes = {"/m": (200, "text/html", b"v1",
                       {"Cache-Control": "max-age=0"})}
     srv, port = _p22_start_server(routes)
@@ -3497,7 +3497,7 @@ TESTS.append(("test_p23_cache_etag_absent_refetches", test_p23_cache_etag_absent
 def test_p23_cache_disabled_store():
     """P23.2 — a CacheStore(enabled=False) is a no-op (put/get do
     nothing, no files written)."""
-    import net
+    from toy_browser.network import net
     store = net.CacheStore(tempfile.mkdtemp(prefix="p23off"), enabled=False)
     r = net.HttpResponse(status=200, status_text="OK",
                          headers={}, body=b"x", final_url="http://h/x")
@@ -3511,7 +3511,7 @@ def test_p23_cache_disabled_store():
 TESTS.append(("test_p23_cache_disabled_store", test_p23_cache_disabled_store))
 def test_p24_entities_named():
     """P24.1 — named entities decode (amp/lt/nbsp/hellip/alpha…)."""
-    from html_pkg.entities import decode_entities
+    from toy_browser.document.html_pkg.entities import decode_entities
     assert decode_entities("&amp;") == "&"
     assert decode_entities("&lt;tag&gt;") == "<tag>"
     assert decode_entities("&nbsp;") == "\u00A0"
@@ -3524,7 +3524,7 @@ def test_p24_entities_named():
 TESTS.append(("test_p24_entities_named", test_p24_entities_named))
 def test_p24_entities_numeric_dec():
     """P24.1 — decimal numeric references (&#65; → A, &#8364; → €)."""
-    from html_pkg.entities import decode_entities
+    from toy_browser.document.html_pkg.entities import decode_entities
     assert decode_entities("&#65;&#66;&#67;") == "ABC"
     assert decode_entities("&#8364;") == "\u20AC"
     assert decode_entities("&#8704;") == "\u2200"
@@ -3535,7 +3535,7 @@ def test_p24_entities_numeric_dec():
 TESTS.append(("test_p24_entities_numeric_dec", test_p24_entities_numeric_dec))
 def test_p24_entities_numeric_hex():
     """P24.1 — hex numeric references (&#x1F600; → 😀, spec case)."""
-    from html_pkg.entities import decode_entities
+    from toy_browser.document.html_pkg.entities import decode_entities
     assert decode_entities("&#x1F600;") == "\U0001F600"
     assert decode_entities("&#x41;") == "A"
     assert decode_entities("&#X42;") == "B"
@@ -3545,7 +3545,7 @@ def test_p24_entities_numeric_hex():
 TESTS.append(("test_p24_entities_numeric_hex", test_p24_entities_numeric_hex))
 def test_p24_entities_zero_and_surrogate():
     """P24.1 — codepoint 0 and surrogates decode to U+FFFD (spec)."""
-    from html_pkg.entities import decode_entities
+    from toy_browser.document.html_pkg.entities import decode_entities
     assert decode_entities("&#0;") == "\uFFFD"
     assert decode_entities("&#x41;") == "A"
     assert decode_entities("&#xD800;") == "\uFFFD"
@@ -3555,7 +3555,7 @@ def test_p24_entities_zero_and_surrogate():
 TESTS.append(("test_p24_entities_zero_and_surrogate", test_p24_entities_zero_and_surrogate))
 def test_p24_entities_unknown_name_literal():
     """P24.1 — an unknown named entity stays literal (&bogus; → &bogus;)."""
-    from html_pkg.entities import decode_entities
+    from toy_browser.document.html_pkg.entities import decode_entities
     assert decode_entities("&bogus;") == "&bogus;"
     # A mix: known + unknown.
     assert decode_entities("&amp;&bogus;") == "&&bogus;"
@@ -3565,7 +3565,7 @@ def test_p24_entities_unknown_name_literal():
 TESTS.append(("test_p24_entities_unknown_name_literal", test_p24_entities_unknown_name_literal))
 def test_p24_rawtext_script_literal():
     """P24.1 — <script> content is NOT parsed as HTML (raw text mode)."""
-    import dom
+    from toy_browser.document import dom
     html = ('<html><body><script>'
             'var x = 1 < 2; document.write("<not a tag>");'
             '</script><p>after</p></body></html>')
@@ -3590,7 +3590,7 @@ def test_p24_rawtext_script_literal():
 TESTS.append(("test_p24_rawtext_script_literal", test_p24_rawtext_script_literal))
 def test_p24_rawtext_style_literal():
     """P24.1 — <style> content is raw text (selectors with < survive)."""
-    import dom
+    from toy_browser.document import dom
     html = "<style>.a > .b { color: red; }</style><div>x</div>"
     root = dom.parse(html)
     def find_tag(n, tag):
@@ -3612,7 +3612,7 @@ TESTS.append(("test_p24_rawtext_style_literal", test_p24_rawtext_style_literal))
 def test_p24_void_input_no_stack():
     """P24.2 — void elements never push onto the open-element stack
     (input followed by a sibling stays a sibling, not a child)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><input id=i><span id=s>hi</span></body>")
     body = None
     for c in root.children:
@@ -3630,7 +3630,7 @@ def test_p24_void_input_no_stack():
 TESTS.append(("test_p24_void_input_no_stack", test_p24_void_input_no_stack))
 def test_p24_void_self_closing_br():
     """P24.2 — XHTML-style self-closing <br/> is a void element."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body>a<br/>b</body>")
     body = None
     for c in root.children:
@@ -3647,7 +3647,7 @@ def test_p24_void_self_closing_br():
 TESTS.append(("test_p24_void_self_closing_br", test_p24_void_self_closing_br))
 def test_p24_implicit_p_sibling():
     """P24.2 — a second <p> closes the first (implicit sibling close)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><p>one<p>two</body>")
     body = None
     for c in root.children:
@@ -3663,7 +3663,7 @@ def test_p24_implicit_p_sibling():
 TESTS.append(("test_p24_implicit_p_sibling", test_p24_implicit_p_sibling))
 def test_p24_block_closes_p():
     """P24.2 — a block-level start tag (div) closes an open <p>."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><p>para<div>block</div></body>")
     body = None
     for c in root.children:
@@ -3678,7 +3678,7 @@ TESTS.append(("test_p24_block_closes_p", test_p24_block_closes_p))
 def test_p24_adoption_b_i():
     """P24.4 — <b><i>x</b></i>: the stray </b> re-nests <i> under
     <b> (simplified adoption agency)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><b><i>x</b></i></body>")
     body = None
     for c in root.children:
@@ -3697,7 +3697,7 @@ TESTS.append(("test_p24_adoption_b_i", test_p24_adoption_b_i))
 def test_p24_stray_close_ignored():
     """P24.2 — a close tag with no matching open element is ignored
     (the document still renders; no crash, no stray node)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><div id=d>x</div></div></body>")
     body = None
     for c in root.children:
@@ -3713,7 +3713,7 @@ TESTS.append(("test_p24_stray_close_ignored", test_p24_stray_close_ignored))
 def test_p24_comment_doctype_dropped():
     """P24.3 — <!DOCTYPE> and <!-- comments --> do not appear in the
     DOM (the toy drops them; renderer stays clean)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<!DOCTYPE html><html><!-- top comment --><body><!-- x --><p>ok</p></body></html>")
     def walk_tags(n, acc):
         if n.is_element():
@@ -3731,7 +3731,7 @@ def test_p24_comment_doctype_dropped():
 TESTS.append(("test_p24_comment_doctype_dropped", test_p24_comment_doctype_dropped))
 def test_p24_case_insensitive_tag():
     """P24.3 — <DIV> == <div> (tag names case-insensitive)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><DIV id=d>hi</DIV></body>")
     def find_tag(n, tag):
         if n.is_element() and n.tag == tag:
@@ -3752,7 +3752,7 @@ TESTS.append(("test_p24_case_insensitive_tag", test_p24_case_insensitive_tag))
 def test_p24_foster_tr_in_div():
     """P24.3 — a <tr> inside a <div> (no <table>) is fostered to the
     nearest non-table ancestor (the div), not dropped."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><div id=d><tr><td>x</td></tr></div></body>")
     def find_tag(n, tag):
         if n.is_element() and n.tag == tag:
@@ -3775,7 +3775,7 @@ def test_p24_foster_tr_in_div():
 TESTS.append(("test_p24_foster_tr_in_div", test_p24_foster_tr_in_div))
 def test_p24_unclosed_lt_text():
     """P24.2 — a stray '<' with no following '>' is literal text."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse("<body><p>a < b</p></body>")
     p = None
     for c in root.children:
@@ -3791,7 +3791,7 @@ def test_p24_unclosed_lt_text():
 TESTS.append(("test_p24_unclosed_lt_text", test_p24_unclosed_lt_text))
 def test_p24_utf16_bom():
     """P24.5 — a UTF-16 LE BOM byte stream decodes correctly."""
-    import dom
+    from toy_browser.document import dom
     data = "<html><body>hi</body></html>".encode("utf-16-le")
     data = b"\xff\xfe" + data
     root = dom.parse(data)
@@ -3802,7 +3802,7 @@ def test_p24_utf16_bom():
 TESTS.append(("test_p24_utf16_bom", test_p24_utf16_bom))
 def test_p24_utf8_bom():
     """P24.5 — a UTF-8 BOM byte stream decodes correctly."""
-    import dom
+    from toy_browser.document import dom
     data = b"\xef\xbb\xbf" + "<html><body>hi</body></html>".encode("utf-8")
     root = dom.parse(data)
     assert "hi" in root.text_content()
@@ -3813,9 +3813,9 @@ TESTS.append(("test_p24_utf8_bom", test_p24_utf8_bom))
 def test_p24_dom_shim_reexport():
     """P24.5 — the legacy `dom` shim re-exports html_pkg's Node (the
     SAME class object, so isinstance checks stay valid)."""
-    import dom
-    import html_pkg
-    from html_pkg.node import Node
+    from toy_browser.document import dom
+    from toy_browser.document import html_pkg
+    from toy_browser.document.html_pkg.node import Node
     assert dom.Node is Node
     assert dom.parse is not None
     r = dom.parse("<html><body>x</body></html>")
@@ -3827,7 +3827,7 @@ def test_p24_dom_shim_reexport():
 TESTS.append(("test_p24_dom_shim_reexport", test_p24_dom_shim_reexport))
 def test_p24_dom_parse_bytes():
     """P24.5 — dom.parse accepts a byte stream (UTF-8)."""
-    import dom
+    from toy_browser.document import dom
     root = dom.parse(b"<html><body>hi</body></html>")
     assert "hi" in root.text_content()
 
@@ -3838,7 +3838,7 @@ def test_p24_full_pipeline_render():
     """P24 — the whole render pipeline (dom→css→layout→paint→
     rasterize) still works end-to-end on a fault-tolerant document
     (unclosed <p>, void <br>, entities)."""
-    import dom, css, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.app import browser
     html = ("<html><body>"
             "<h3 id=h>T&amp;l</h3>"
             "<p>line1<br>line2<p>second para"
@@ -3855,7 +3855,7 @@ def test_p24_full_pipeline_render():
 TESTS.append(("test_p24_full_pipeline_render", test_p24_full_pipeline_render))
 def test_p25_specificity_4tuple():
     """P25.1 — Selector.specificity is a 4-tuple (inline, id, cls, type)."""
-    import css
+    from toy_browser.style import css
     sel = css.Selector.parse("#a .b c:hover")
     # id=1, cls=1 (.b) + pseudo (:hover) = 2, type=1 (c), inline=0
     assert sel.specificity == (0, 1, 2, 1), f"got {sel.specificity}"
@@ -3865,7 +3865,7 @@ def test_p25_specificity_4tuple():
 TESTS.append(("test_p25_specificity_4tuple", test_p25_specificity_4tuple))
 def test_p25_specificity_id_beats_class():
     """P25.1 — #id beats .class regardless of count."""
-    import css
+    from toy_browser.style import css
     sel_id = css.Selector.parse("#a")
     sel_cls = css.Selector.parse(".a.b.c.d.e")
     assert sel_id.specificity > sel_cls.specificity, (
@@ -3876,7 +3876,7 @@ def test_p25_specificity_id_beats_class():
 TESTS.append(("test_p25_specificity_id_beats_class", test_p25_specificity_id_beats_class))
 def test_p25_specificity_class_beats_type():
     """P25.1 — .class beats element type."""
-    import css
+    from toy_browser.style import css
     sel_cls = css.Selector.parse(".a")
     sel_type = css.Selector.parse("div span p")
     assert sel_cls.specificity > sel_type.specificity, (
@@ -3887,7 +3887,7 @@ def test_p25_specificity_class_beats_type():
 TESTS.append(("test_p25_specificity_class_beats_type", test_p25_specificity_class_beats_type))
 def test_p25_important_beats_normal():
     """P25.2 — !important declaration overrides a normal high-specificity rule."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = '<div id=d style="color: blue">x</div>'
     root = dom.parse(html)
     # Author rule with !important must beat the normal inline style.
@@ -3912,7 +3912,7 @@ def test_p25_important_beats_normal():
 TESTS.append(("test_p25_important_beats_normal", test_p25_important_beats_normal))
 def test_p25_important_author_wins_over_normal_inline():
     """P25.2 — author !important beats a normal (non-important) inline style."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = '<div id=d style="color: blue">x</div>'
     root = dom.parse(html)
     css_text = "#d { color: red !important; }"
@@ -3934,7 +3934,7 @@ def test_p25_important_author_wins_over_normal_inline():
 TESTS.append(("test_p25_important_author_wins_over_normal_inline", test_p25_important_author_wins_over_normal_inline))
 def test_p25_inherit_keyword():
     """P25.3 — `color: inherit` takes the parent's computed color."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = ('<div style="color: red"><span style="color: inherit">x</span></div>')
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -3956,8 +3956,8 @@ def test_p25_inherit_keyword():
 TESTS.append(("test_p25_inherit_keyword", test_p25_inherit_keyword))
 def test_p25_initial_keyword():
     """P25.3 — `margin: initial` resets to the initial value (0px)."""
-    import dom, css
-    from css import EdgeList, Length, resolve_length
+    from toy_browser.document import dom; from toy_browser.style import css
+    from toy_browser.style.css import EdgeList, Length, resolve_length
     html = '<div style="margin: 50px"><div id=inner style="margin: initial">x</div></div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -3982,7 +3982,7 @@ def test_p25_initial_keyword():
 TESTS.append(("test_p25_initial_keyword", test_p25_initial_keyword))
 def test_p25_unset_keyword():
     """P25.3 — `text-align: unset` behaves as inherit (text-align is inherited)."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = ('<div style="text-align: right"><div style="text-align: unset">x</div></div>')
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -4005,7 +4005,7 @@ def test_p25_unset_keyword():
 TESTS.append(("test_p25_unset_keyword", test_p25_unset_keyword))
 def test_p25_shorthand_margin_expands():
     """P25.4 — margin shorthand expands to margin-top/right/bottom/left."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = '<div id=d style="margin: 10px 20px">x</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -4030,7 +4030,7 @@ def test_p25_shorthand_margin_expands():
 TESTS.append(("test_p25_shorthand_margin_expands", test_p25_shorthand_margin_expands))
 def test_p25_shorthand_padding_expands():
     """P25.4 — padding shorthand expands to longhands."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = '<div id=d style="padding: 5px 10px">x</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -4055,7 +4055,7 @@ TESTS.append(("test_p25_shorthand_padding_expands", test_p25_shorthand_padding_e
 def test_p25_em_computed_chain():
     """P25.5 — em units resolve against the parent's computed font-size,
     not the UA default."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     # Parent sets font-size: 40px; child uses 2em → 80px (not 32px = 2×16).
     html = ('<div style="font-size: 40px">'
             '<div id=inner style="font-size: 2em">text</div>'
@@ -4084,7 +4084,7 @@ def test_p25_em_computed_chain():
 TESTS.append(("test_p25_em_computed_chain", test_p25_em_computed_chain))
 def test_p25_inherit_font_size():
     """P25.3 — font-size inherits when not explicitly set on child."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = '<div style="font-size: 32px"><span>x</span></div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -4107,8 +4107,8 @@ def test_p25_inherit_font_size():
 TESTS.append(("test_p25_inherit_font_size", test_p25_inherit_font_size))
 def test_p25_source_cascade_author_over_ua():
     """P25.2 — author rules override UA rules in the cascade layer."""
-    import css
-    from css import Rule, Selector, parse_selector_list
+    from toy_browser.style import css
+    from toy_browser.style.css import Rule, Selector, parse_selector_list
     # Build a fake UA rule and an author rule; verify the cascade key.
     ua_sel = parse_selector_list("body")
     auth_sel = parse_selector_list(".a")
@@ -4132,7 +4132,7 @@ def test_p25_full_pipeline_important():
     engine (bitmap vs TTF) so we check that ink is painted *somewhere*
     in the document region (the div starts at y≈20px, not y=0).
     """
-    import browser
+    from toy_browser.app import browser
     html = ('<html><body style="font-size: 20px">'
             '<div style="color: blue !important"><span style="color: inherit">hi</span></div>'
             '</body></html>')
@@ -4155,7 +4155,7 @@ def test_p26_margin_collapse_siblings():
     """P26.1 — adjacent block siblings' margins collapse to the max
     (not the sum): .a{margin-bottom:10px} .b{margin-top:20px} →
     20px gap, not 30px."""
-    import dom, css, layout, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.app import browser
     html = ('<div id=wrap style="width:200px">'
             '<div id=a style="height:20px;margin-bottom:10px;background:blue"></div>'
             '<div id=b style="height:20px;margin-top:20px;background:red"></div>'
@@ -4179,7 +4179,7 @@ def test_p26_margin_collapse_parent_child():
     """P26.1 — a child's top margin collapses through the parent's top
     margin (no border/padding in between): parent margin-top:5, child
     margin-top:15 → effective 15, not 5+15."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=outer>'
             '<div id=parent style="margin:5px">'
             '<div id=child style="height:10px;margin-top:15px;background:red"></div>'
@@ -4208,7 +4208,7 @@ def test_p26_margin_collapse_empty_block():
     """P26.1 — an empty block collapses its own top + bottom margins to a
     single max(): margin:30px on an empty div → contributes 30, not
     60, to the gap with its next sibling."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div>'
             '<div id=empty style="margin:30px"></div>'
             '<div id=next style="height:10px;background:red"></div>'
@@ -4230,7 +4230,7 @@ TESTS.append(("test_p26_margin_collapse_empty_block", test_p26_margin_collapse_e
 def test_p26_bfc_cleares_floats():
     """P26.2 — a BFC (overflow:hidden) height contains its floats:
     the parent box's height extends to the bottom of the floated child."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=box style="overflow:hidden;width:200px">'
             '<div style="float:left;width:100px;height:40px;background:blue"></div>'
             '</div>')
@@ -4249,7 +4249,7 @@ def test_p26_pct_height_chain():
     """P26.3 — percentage heights resolve against the parent's *resolved*
     content height (not the font size): body 600px, child height:25%
     → 150px."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<body style="height:600px">'
             '<div id=h style="height:25%">x</div>'
             '</body>')
@@ -4267,7 +4267,7 @@ TESTS.append(("test_p26_pct_height_chain", test_p26_pct_height_chain))
 def test_p26_height_auto_grows():
     """P26.3 — height:auto grows with content: a block with two 20px
     children is 40px tall."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=auto>'
             '<div style="height:20px"></div>'
             '<div style="height:20px"></div>'
@@ -4285,7 +4285,7 @@ TESTS.append(("test_p26_height_auto_grows", test_p26_height_auto_grows))
 def test_p26_min_height_clamps():
     """P26.4 — min-height: 50px forces a taller box than its content
     (10px) requires."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=m style="min-height:50px">'
             '<div style="height:10px"></div></div>')
     root = dom.parse(html)
@@ -4301,7 +4301,7 @@ def test_p26_min_height_clamps():
 TESTS.append(("test_p26_min_height_clamps", test_p26_min_height_clamps))
 def test_p26_max_height_clamps():
     """P26.4 — max-height: 20px caps a 40px-tall content box."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=m style="max-height:20px">'
             '<div style="height:20px"></div>'
             '<div style="height:20px"></div></div>')
@@ -4319,7 +4319,7 @@ TESTS.append(("test_p26_max_height_clamps", test_p26_max_height_clamps))
 def test_p26_min_width_clamps():
     """P26.4 — min-width: 150px widens a 30px-content box to 150px when
     the auto width would be less than 150px."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:100px">'
             '<div id=m style="min-width:150px"><div style="width:30px">x</div></div></div>')
     root = dom.parse(html)
@@ -4336,7 +4336,7 @@ def test_p26_min_width_clamps():
 TESTS.append(("test_p26_min_width_clamps", test_p26_min_width_clamps))
 def test_p26_max_width_clamps():
     """P26.4 — max-width: 50px caps an auto-width (300px) box to 50px."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = '<div id=m style="max-width:50px">long text content here that would be wide</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -4352,7 +4352,7 @@ TESTS.append(("test_p26_max_width_clamps", test_p26_max_width_clamps))
 def test_p26_width_auto_fills():
     """P26.5 — width:auto block fills its containing block: a child of a
     200px parent with no explicit width is ~200px wide (minus margins)."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px">'
             '<div id=c>x</div>'
             '</div>')
@@ -4369,7 +4369,7 @@ TESTS.append(("test_p26_width_auto_fills", test_p26_width_auto_fills))
 def test_p26_width_auto_with_margins():
     """P26.5 — width:auto respects horizontal margins: available width
     = containing - margin-l - margin-r."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:200px">'
             '<div id=c style="margin:0 20px 0 10px">x</div>'
             '</div>')
@@ -4388,7 +4388,7 @@ TESTS.append(("test_p26_width_auto_with_margins", test_p26_width_auto_with_margi
 def test_p26_float_inside_bfc_no_overlap():
     """P26.2 — inside a BFC the float is placed at the content edge and
     subsequent inline content wraps below/beside it (no border overlap)."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=box style="overflow:hidden;width:200px">'
             '<div id=f style="float:left;width:50px;height:30px;background:blue"></div>'
             '<div id=t style="clear:both;height:10px"></div>'
@@ -4413,7 +4413,7 @@ TESTS.append(("test_p26_float_inside_bfc_no_overlap", test_p26_float_inside_bfc_
 def test_p26_full_pipeline_render():
     """P26 — the whole pipeline (dom→css→layout→paint→rasterize) still
     renders end-to-end with P26 layout features without crashing."""
-    import browser
+    from toy_browser.app import browser
     html = ('<html><body style="height:400px">'
             '<div style="margin:10px;min-width:50px;max-width:300px">'
             '<div style="height:25%;overflow:hidden">'
@@ -4431,7 +4431,7 @@ TESTS.append(("test_p26_full_pipeline_render", test_p26_full_pipeline_render))
 def test_p27_flex_shrink_proportional():
     """P27.2 — flex-shrink distributes overflow deficit proportionally.
     3 items basis 100 each in 200px container: deficit 100 split evenly."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:200px">'
             '<div id=a style="flex-basis:100px;width:auto"></div>'
             '<div id=b style="flex-basis:100px;width:auto"></div>'
@@ -4455,7 +4455,7 @@ def test_p27_flex_shrink_proportional():
 TESTS.append(("test_p27_flex_shrink_proportional", test_p27_flex_shrink_proportional))
 def test_p27_flex_shrink_weighted():
     """P27.2 — flex-shrink:0 prevents an item from shrinking."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:200px">'
             '<div id=a style="flex-basis:150px;flex-shrink:0;width:auto"></div>'
             '<div id=b style="flex-basis:150px;flex-shrink:1;width:auto"></div>'
@@ -4474,7 +4474,7 @@ def test_p27_flex_shrink_weighted():
 TESTS.append(("test_p27_flex_shrink_weighted", test_p27_flex_shrink_weighted))
 def test_p27_flex_basis_explicit():
     """P27.2 — flex-basis:50px overrides width for the basis calculation."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px">'
             '<div id=a style="flex-basis:50px;flex-grow:1;width:auto"></div>'
             '<div id=b style="flex-grow:1"></div>'
@@ -4493,7 +4493,7 @@ def test_p27_flex_basis_explicit():
 TESTS.append(("test_p27_flex_basis_explicit", test_p27_flex_basis_explicit))
 def test_p27_flex_wrap_two_lines():
     """P27.3 — flex-wrap:wrap puts items on 2 lines when they don't fit."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-wrap:wrap;width:100px;height:100px">'
             '<div id=a style="width:60px;height:20px"></div>'
             '<div id=b style="width:60px;height:20px"></div>'
@@ -4511,7 +4511,7 @@ def test_p27_flex_wrap_two_lines():
 TESTS.append(("test_p27_flex_wrap_two_lines", test_p27_flex_wrap_two_lines))
 def test_p27_flex_wrap_single_line_fits():
     """P27.3 — flex-wrap:wrap with items that fit stays on one line."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-wrap:wrap;width:200px">'
             '<div id=a style="width:50px;height:20px"></div>'
             '<div id=b style="width:50px;height:20px"></div>'
@@ -4529,7 +4529,7 @@ def test_p27_flex_wrap_single_line_fits():
 TESTS.append(("test_p27_flex_wrap_single_line_fits", test_p27_flex_wrap_single_line_fits))
 def test_p27_align_items_start():
     """P27.4 — align-items:start aligns all items to the top of the line."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:start">'
             '<div id=a style="width:30px;height:20px"></div>'
             '<div id=b style="width:30px;height:60px"></div>'
@@ -4547,7 +4547,7 @@ def test_p27_align_items_start():
 TESTS.append(("test_p27_align_items_start", test_p27_align_items_start))
 def test_p27_align_items_end():
     """P27.4 — align-items:end aligns all items to the bottom of the line."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:end">'
             '<div id=a style="width:30px;height:20px"></div>'
             '<div id=b style="width:30px;height:60px"></div>'
@@ -4566,7 +4566,7 @@ def test_p27_align_items_end():
 TESTS.append(("test_p27_align_items_end", test_p27_align_items_end))
 def test_p27_align_self_overrides():
     """P27.4 — align-self:center overrides container's align-items:start."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:200px;height:100px;align-items:start">'
             '<div id=a style="width:30px;height:20px"></div>'
             '<div id=b style="width:30px;height:40px;align-self:center"></div>'
@@ -4584,7 +4584,7 @@ def test_p27_align_self_overrides():
 TESTS.append(("test_p27_align_self_overrides", test_p27_align_self_overrides))
 def test_p27_justify_content_space_evenly():
     """P27.4 — justify-content:space-evenly distributes equal space around all items."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px;justify-content:space-evenly">'
             '<div id=a style="width:50px;height:20px"></div>'
             '<div id=b style="width:50px;height:20px"></div>'
@@ -4605,7 +4605,7 @@ def test_p27_justify_content_space_evenly():
 TESTS.append(("test_p27_justify_content_space_evenly", test_p27_justify_content_space_evenly))
 def test_p27_justify_content_space_around():
     """P27.4 — justify-content:space-around: half gap at edges, full between."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px;justify-content:space-around">'
             '<div id=a style="width:50px;height:20px"></div>'
             '<div id=b style="width:50px;height:20px"></div>'
@@ -4630,7 +4630,7 @@ def test_p27_flex_direction_column_reverse():
     stacking order: the first DOM item ends up at the bottom of the
     main axis (for reverse-direction flexboxes the flex start edge is
     the bottom, so the start-packed stack reads bottom-to-top)."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-direction:column-reverse;width:100px;height:200px">'
             '<div id=a style="height:30px"></div>'
             '<div id=b style="height:50px"></div>'
@@ -4652,7 +4652,7 @@ def test_p27_flex_direction_column_reverse():
 TESTS.append(("test_p27_flex_direction_column_reverse", test_p27_flex_direction_column_reverse))
 def test_p27_flex_order_reorders():
     """P27.5 — order property changes visual order without changing DOM."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px">'
             '<div id=a style="order:2;width:50px"></div>'
             '<div id=b style="order:1;width:50px"></div>'
@@ -4673,7 +4673,7 @@ def test_p27_flex_order_reorders():
 TESTS.append(("test_p27_flex_order_reorders", test_p27_flex_order_reorders))
 def test_p27_min_width_auto_floor():
     """P27.5 — min-width prevents a flex item from shrinking below its content."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:100px">'
             '<div id=a style="width:200px;flex-shrink:1;min-width:80px"></div>'
             '</div>')
@@ -4689,7 +4689,7 @@ def test_p27_min_width_auto_floor():
 TESTS.append(("test_p27_min_width_auto_floor", test_p27_min_width_auto_floor))
 def test_p27_flex_basis_zero():
     """P27.2 — flex-basis:0 makes items grow from zero basis."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px">'
             '<div id=a style="flex-basis:0px;flex-grow:1">x</div>'
             '<div id=b style="flex-basis:0px;flex-grow:1"></div>'
@@ -4708,7 +4708,7 @@ def test_p27_flex_basis_zero():
 TESTS.append(("test_p27_flex_basis_zero", test_p27_flex_basis_zero))
 def test_p27_flex_shrink_zero_keeps_size():
     """P27.2 — flex-shrink:0 items keep their basis even when overflowing."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:150px">'
             '<div id=a style="flex-basis:100px;flex-shrink:0"></div>'
             '<div id=b style="flex-basis:100px;flex-shrink:0"></div>'
@@ -4727,7 +4727,7 @@ def test_p27_flex_shrink_zero_keeps_size():
 TESTS.append(("test_p27_flex_shrink_zero_keeps_size", test_p27_flex_shrink_zero_keeps_size))
 def test_p27_align_content_center_multi_line():
     """P27.4 — align-content:center centres multiple wrapped lines."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-wrap:wrap;width:100px;height:200px;align-content:center">'
             '<div id=a style="width:60px;height:30px"></div>'
             '<div id=b style="width:60px;height:30px"></div>'
@@ -4747,7 +4747,7 @@ def test_p27_align_content_center_multi_line():
 TESTS.append(("test_p27_align_content_center_multi_line", test_p27_align_content_center_multi_line))
 def test_p27_flex_row_reverse():
     """P27.5 — flex-direction:row-reverse lays items right-to-left."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-direction:row-reverse;width:300px">'
             '<div id=a style="width:50px;height:20px"></div>'
             '<div id=b style="width:50px;height:20px"></div>'
@@ -4765,7 +4765,7 @@ def test_p27_flex_row_reverse():
 TESTS.append(("test_p27_flex_row_reverse", test_p27_flex_row_reverse))
 def test_p27_flex_grow_shrink_basis_shorthand():
     """P27.2 — flex shorthand '1 1 auto' sets grow/shrink/basis."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;width:300px">'
             '<div id=a style="flex-basis:100px;flex-grow:2;flex-shrink:1"></div>'
             '<div id=b style="flex-basis:100px;flex-grow:1;flex-shrink:1"></div>'
@@ -4786,7 +4786,7 @@ def test_p27_wrap_reverse_direction():
     """P27.3 — flex-wrap:wrap-reverse stacks lines from the far cross
     edge: with an explicit container height, line 0 sits lower than
     later lines (a is below b when a wraps before b)."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div id=f style="display:flex;flex-wrap:wrap-reverse;width:100px;height:200px">'
             '<div id=a style="width:60px;height:20px"></div>'
             '<div id=b style="width:60px;height:20px"></div>'
@@ -4808,7 +4808,7 @@ def test_p27_wrap_reverse_direction():
 TESTS.append(("test_p27_wrap_reverse_direction", test_p27_wrap_reverse_direction))
 def test_p27_flex_full_pipeline_render():
     """P27 — the whole pipeline still renders with P27 flex features."""
-    import browser
+    from toy_browser.app import browser
     html = ('<html><body style="height:300px">'
             '<div style="display:flex;flex-wrap:wrap;width:300px;height:200px;justify-content:center;align-items:center">'
             '<div style="width:80px;height:40px;flex-basis:80px;flex-grow:1;background:blue"></div>'
@@ -4827,7 +4827,7 @@ TESTS.append(("test_p27_flex_full_pipeline_render", test_p27_flex_full_pipeline_
 def test_p28_input_checkbox_render():
     """P28.1 — <input type="checkbox"> renders as a 16×16 box; checked
     state adds a fill rect inside the box."""
-    import dom, css, layout, paint_engine, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine; from toy_browser.app import browser
     html = ('<div style="width:300px;height:200px">'
             '<input type="checkbox" id="cb" checked name="opt">'
             '<input type="checkbox" id="cb2" name="opt2">'
@@ -4858,7 +4858,7 @@ TESTS.append(("test_p28_input_checkbox_render", test_p28_input_checkbox_render))
 def test_p28_input_radio_render():
     """P28.1 — <input type="radio"> renders as a 16×16 box; only the
     checked radio shows the fill dot."""
-    import dom, css, layout, paint_engine
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     html = ('<div style="width:300px;height:200px">'
             '<input type="radio" id="r1" name="grp" checked value="a">'
             '<input type="radio" id="r2" name="grp" value="b">'
@@ -4883,7 +4883,7 @@ TESTS.append(("test_p28_input_radio_render", test_p28_input_radio_render))
 def test_p28_select_option_render():
     """P28.1 — <select> renders as a 120×24 combobox showing the
     selected option's label + a down-arrow strip."""
-    import dom, css, layout, paint_engine, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine; from toy_browser.app import browser
     html = ('<select id="s1" name="color">'
             '<option value="red">Red</option>'
             '<option value="green" selected>Green</option>'
@@ -4912,7 +4912,7 @@ TESTS.append(("test_p28_select_option_render", test_p28_select_option_render))
 def test_p28_file_input_render():
     """P28.1 — <input type="file"> shows the file name (or 'No file
     selected') inside a 220×24 box."""
-    import dom, css, layout, paint_engine
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     html = ('<div style="width:300px;height:200px">'
             '<input type="file" id="f1" name="upload" value="report.pdf">'
             '<input type="file" id="f2" name="upload2">'
@@ -4940,7 +4940,7 @@ TESTS.append(("test_p28_file_input_render", test_p28_file_input_render))
 def test_p28_textarea_default_size():
     """P28.1 — <textarea> defaults to 160×64 (20 cols × 4 rows) per
     HTML §4.10.6; cols/rows attributes override."""
-    import dom, css, layout
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout
     html = ('<div style="width:300px;height:200px">'
             '<textarea id="t1" name="msg"></textarea>'
             '<textarea id="t2" cols="10" rows="2"></textarea>'
@@ -4962,7 +4962,7 @@ TESTS.append(("test_p28_textarea_default_size", test_p28_textarea_default_size))
 def test_p28_form_get_query_string():
     """P28.2 — GET form submission builds a URL with a query string:
     text + checkbox(checked) + select + textarea values."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f" method="get" action="/search">'
             '<input type="text" name="q" value="hello world">'
             '<input type="checkbox" name="flag" value="yes" checked>'
@@ -4991,7 +4991,7 @@ TESTS.append(("test_p28_form_get_query_string", test_p28_form_get_query_string))
 def test_p28_form_post_body():
     """P28.2 — POST form submission builds a urlencoded body + the
     correct action URL; unchecked checkboxes are excluded."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f" method="post" action="/submit">'
             '<input type="text" name="a" value="1">'
             '<input type="checkbox" name="c1" value="x" checked>'
@@ -5011,7 +5011,7 @@ TESTS.append(("test_p28_form_post_body", test_p28_form_post_body))
 def test_p28_form_select_multiple():
     """P28.2 — <select multiple> contributes one k=v pair per selected
     option."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<select name="tags" multiple>'
             '<option value="a" selected>A</option>'
             '<option value="b" selected>B</option>'
@@ -5031,7 +5031,7 @@ TESTS.append(("test_p28_form_select_multiple", test_p28_form_select_multiple))
 def test_p28_form_radio_group():
     """P28.2 — radio group: only the checked radio contributes; default
     value is "on" when the value attribute is absent."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f">'
             '<input type="radio" name="mode" value="fast" checked>'
             '<input type="radio" name="mode" value="slow">'
@@ -5051,7 +5051,7 @@ TESTS.append(("test_p28_form_radio_group", test_p28_form_radio_group))
 def test_p28_form_action_url_resolution():
     """P28.2 — form action URL resolution: absolute, root-relative,
     and base-relative forms."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     # Root-relative action with a base href.
     html = ('<html><head><base href="http://site.example/dir/page.html"></head>'
             '<form id="f" action="/api/search"></form></html>')
@@ -5071,7 +5071,7 @@ TESTS.append(("test_p28_form_action_url_resolution", test_p28_form_action_url_re
 def test_p28_required_validation():
     """P28.3 — required text input that is empty → one violation;
     filled → zero."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f">'
             '<input type="text" name="email" required>'
             '<input type="text" name="filled" value="ok" required>'
@@ -5089,7 +5089,7 @@ TESTS.append(("test_p28_required_validation", test_p28_required_validation))
 def test_p28_required_checkbox():
     """P28.3 — a required checkbox with no checked attribute is a
     violation; checked passes."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f">'
             '<input type="checkbox" name="terms" required>'
             '<input type="checkbox" name="ok" required checked>'
@@ -5105,7 +5105,7 @@ TESTS.append(("test_p28_required_checkbox", test_p28_required_checkbox))
 def test_p28_submit_blocked_by_validation():
     """P28.2/3 — form_submit returns ok=False + violations when a
     required field is empty (no network I/O in the dry-run case)."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f" action="/x">'
             '<input type="text" name="req" required>'
             '</form>')
@@ -5129,7 +5129,7 @@ TESTS.append(("test_p28_submit_blocked_by_validation", test_p28_submit_blocked_b
 def test_p28_tab_order_natural():
     """P28.3 — tab order follows DOM order for tabindex=0 / absent
     focusable elements."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<div>'
             '<a id="l1" href="/a"></a>'
             '<button id="b1"></button>'
@@ -5146,7 +5146,7 @@ TESTS.append(("test_p28_tab_order_natural", test_p28_tab_order_natural))
 def test_p28_tab_order_explicit():
     """P28.3 — positive tabindex elements come before natural-order
     ones; hidden inputs are skipped."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<div>'
             '<input id="hid" type="hidden">'
             '<button id="b2" tabindex="2"></button>'
@@ -5165,7 +5165,7 @@ TESTS.append(("test_p28_tab_order_explicit", test_p28_tab_order_explicit))
 def test_p28_focus_marks_box():
     """P28.3 — focus_element sets the DOM focus attribute; the next
     build_box sees control_focus=True; a blue focus ring is emitted."""
-    import dom, css, layout, paint_engine, browser
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine; from toy_browser.app import browser
     html = '<input id="i1" type="text" style="width:100px">'
     root = dom.parse(html)
     assert browser.focus_element(root, "i1") is True
@@ -5185,7 +5185,7 @@ TESTS.append(("test_p28_focus_marks_box", test_p28_focus_marks_box))
 def test_p28_checkbox_toggle_render_diff():
     """P28.1 — toggling the checked attribute between two renders
     changes the display list (checked adds a fill command)."""
-    import dom, css, layout, paint_engine
+    from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     html_a = '<input type="checkbox" id="cb" checked>'
     html_b = '<input type="checkbox" id="cb">'
     ra = paint_engine.emit_commands(layout.layout(css.apply(dom.parse(html_a), ""), 300, 200))
@@ -5202,7 +5202,7 @@ TESTS.append(("test_p28_checkbox_toggle_render_diff", test_p28_checkbox_toggle_r
 def test_p28_full_pipeline_form_render():
     """P28 — end-to-end: a page with all control types renders without
     crashing and paints non-white pixels."""
-    import browser
+    from toy_browser.app import browser
     html = ('<html><body style="height:400px">'
             '<form action="/s" method="get">'
             '<input type="text" name="q" value="abc" style="width:120px">'
@@ -5224,7 +5224,7 @@ TESTS.append(("test_p28_full_pipeline_form_render", test_p28_full_pipeline_form_
 def test_p28_js_element_value_prop():
     """P28.1 — the JS engine's element .value property reflects the DOM
     value attribute for inputs and selects."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<input id="i1" value="start">'
             '<select id="s1"><option value="a">A</option>'
             '<option value="b" selected>B</option></select>'
@@ -5237,7 +5237,7 @@ def test_p28_js_element_value_prop():
         on_before_render=lambda state, idx: None,
     ) if False else None
     # The host collects logs — run the script directly.
-    import js as js_mod
+    from toy_browser.scripting import js as js_mod
     root = dom.parse(html)
     host = js_mod.Host(root, lambda m: out.append(m))
     host.execute_all()
@@ -5250,7 +5250,7 @@ TESTS.append(("test_p28_js_element_value_prop", test_p28_js_element_value_prop))
 def test_p28_form_hidden_field():
     """P28.2 — <input type="hidden"> contributes its value to the
     serialization; <button> with a name contributes as button."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f" action="/x">'
             '<input type="hidden" name="tok" value="secret">'
             '<button type="submit" name="act" value="go">Submit</button>'
@@ -5267,7 +5267,7 @@ TESTS.append(("test_p28_form_hidden_field", test_p28_form_hidden_field))
 def test_p28_required_select():
     """P28.3 — a required <select> with no selected option is a
     violation."""
-    import browser, dom
+    from toy_browser.app import browser; from toy_browser.document import dom
     html = ('<form id="f">'
             '<select name="pick" required>'
             '<option value="a">A</option>'
@@ -5664,11 +5664,11 @@ TESTS.append(("test_p30_insert_before_mutation", test_p30_insert_before_mutation
 def test_p30_mutation_renders():
     """P30.2 — a DOM mutation (style + textContent) triggers a re-layout
     and re-render with the new geometry/paint."""
-    import css, layout, paint_engine
+    from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     html = ('<html><body><div id="box" '
             'style="width:100px;height:40px;background:#ff0000"></div></body></html>')
     tree = dom.parse(html)
-    import js
+    from toy_browser.scripting import js
     host = js.Host(tree, lambda _s: None)
     host.execute_all()
     host.execute(
@@ -5826,7 +5826,7 @@ TESTS.append(("test_p30_custom_event_mutation_visible", test_p30_custom_event_mu
 def test_p30_full_pipeline_regression():
     """P30.5 — JS-driven DOM mutation + querySelectorAll run through the
     complete render pipeline without crashing and producing pixels."""
-    import paint
+    from toy_browser.rendering import paint
     html = (
         '<html><body>'
         '<div id="box" style="width:100px;height:40px;background:#0000ff">init</div>'
@@ -5847,7 +5847,7 @@ TESTS.append(("test_p30_full_pipeline_regression", test_p30_full_pipeline_regres
 def test_p30_qsel_js_mutation_roundtrip():
     """P30.5 — a JS script that both queries and mutates leaves the DOM in a
     consistent, re-renderable state (M3 milestone check)."""
-    import js
+    from toy_browser.scripting import js
     html = (
         '<html><body>'
         '<div id="root" class="a"><p class="x">one</p><p class="x">two</p></div>'
@@ -6062,7 +6062,7 @@ def test_p32_cookie_jar_ingest_count():
 
 TESTS.append(("test_p32_cookie_jar_ingest_count", test_p32_cookie_jar_ingest_count))
 def test_p32_categorize_dns():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(
         net.FetchError("getaddrinfo: name or service not known")) == "dns"
 
@@ -6070,7 +6070,7 @@ def test_p32_categorize_dns():
 
 TESTS.append(("test_p32_categorize_dns", test_p32_categorize_dns))
 def test_p32_categorize_timeout():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(TimeoutError("timed out")) == "timeout"
     assert net.categorize_fetch_error(
         net.FetchError("request timed out")) == "timeout"
@@ -6079,7 +6079,7 @@ def test_p32_categorize_timeout():
 
 TESTS.append(("test_p32_categorize_timeout", test_p32_categorize_timeout))
 def test_p32_categorize_connect():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(
         ConnectionRefusedError("refused")) == "connect"
     assert net.categorize_fetch_error(
@@ -6089,7 +6089,7 @@ def test_p32_categorize_connect():
 
 TESTS.append(("test_p32_categorize_connect", test_p32_categorize_connect))
 def test_p32_categorize_bad_url():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(
         net.UnsupportedScheme("ftp://x")) == "bad_url"
     assert net.categorize_fetch_error(
@@ -6099,14 +6099,14 @@ def test_p32_categorize_bad_url():
 
 TESTS.append(("test_p32_categorize_bad_url", test_p32_categorize_bad_url))
 def test_p32_categorize_redirect():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(net.RedirectLoop("loop")) == "redirect"
 
 
 
 TESTS.append(("test_p32_categorize_redirect", test_p32_categorize_redirect))
 def test_p32_categorize_http_status():
-    import net
+    from toy_browser.network import net
     assert net.categorize_fetch_error(
         net.FetchError("HTTP 404 Not Found", status=404)) == "http"
     assert net.categorize_fetch_error(
@@ -6116,7 +6116,7 @@ def test_p32_categorize_http_status():
 
 TESTS.append(("test_p32_categorize_http_status", test_p32_categorize_http_status))
 def test_p32_error_page_copy_distinct():
-    import net
+    from toy_browser.network import net
     for cat, needle in [
         ("dns", "Server not found"),
         ("connect", "Connection refused"),
@@ -6131,7 +6131,7 @@ def test_p32_error_page_copy_distinct():
 
 TESTS.append(("test_p32_error_page_copy_distinct", test_p32_error_page_copy_distinct))
 def test_p32_http_error_page_shows_status():
-    import net
+    from toy_browser.network import net
     html = net.error_page_html("HTTP 404 Not Found", "detail", category="http")
     assert "Request failed" in html and "HTTP 404 Not Found" in html
 
@@ -6139,7 +6139,7 @@ def test_p32_http_error_page_shows_status():
 
 TESTS.append(("test_p32_http_error_page_shows_status", test_p32_http_error_page_shows_status))
 def test_p32_error_page_generic_passthrough():
-    import net
+    from toy_browser.network import net
     html = net.error_page_html("My Title", "My Detail")
     assert "My Title" in html and "My Detail" in html
 
@@ -6208,7 +6208,7 @@ def test_p32_devtools_report_includes_all():
 TESTS.append(("test_p32_devtools_report_includes_all", test_p32_devtools_report_includes_all))
 def test_p32_view_source_local_file():
     """P32.6 — view-source: for a local file re-reads the raw source."""
-    import gui
+    from toy_browser.app import gui
     d = _p32_tmp()
     fp = _os.path.join(d, "src.html")
     with open(fp, "w", encoding="utf-8") as f:
@@ -6225,7 +6225,7 @@ def test_p32_view_source_local_file():
 TESTS.append(("test_p32_view_source_local_file", test_p32_view_source_local_file))
 def test_p32_view_source_network_not_retained():
     """P32.6 — for a network URL the source is not retained (toy)."""
-    import gui
+    from toy_browser.app import gui
     page = gui.PageInstance()
     page.url = "http://example.com/"
     html = page._view_source_page(800, 600)
@@ -6236,7 +6236,7 @@ def test_p32_view_source_network_not_retained():
 TESTS.append(("test_p32_view_source_network_not_retained", test_p32_view_source_network_not_retained))
 def test_p32_main_devtools_flag():
     """P32.4 — main.py --devtools prints a report and still writes the image."""
-    import main
+    from toy_browser.app import main
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

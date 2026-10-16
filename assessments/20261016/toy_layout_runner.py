@@ -2,7 +2,7 @@
 import json, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-import dom as dom_mod, css as css_mod, layout as layout_mod, browser
+from toy_browser.document import dom as dom_mod; from toy_browser.style import css as css_mod; from toy_browser.layout import layout as layout_mod; from toy_browser.app import browser
 
 CASES = json.load(open(os.path.join(os.path.dirname(__file__), 'layout_cases.json'), encoding='utf-8'))
 PROBE = {

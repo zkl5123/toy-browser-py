@@ -1,7 +1,7 @@
 """toy-browser render probes + pixel diff vs Edge screenshots."""
 import json, os, sys, struct, zlib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-import browser
+from toy_browser.app import browser
 
 CASES = json.load(open(os.path.join(os.path.dirname(__file__), 'render_cases.json'), encoding='utf-8'))
 D = os.path.dirname(os.path.abspath(__file__))

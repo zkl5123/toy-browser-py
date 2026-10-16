@@ -1,0 +1,17 @@
+{
+  "python_syntax_files": 164,
+  "markdown_local_links": 72,
+  "broken_local_links": [],
+  "gui_tk_smoke": "PASS",
+  "cli_png_smoke": "PASS",
+  "standalone_css_memo_tests": "4/4",
+  "js_baseline_equal": true,
+  "js_cases": 51,
+  "layout_baseline_equal": true,
+  "layout_cases": 17,
+  "font_lookup_outside_project": "PASS",
+  "regression_total": 939,
+  "sandbox_passed": 927,
+  "restricted_retry_passed": 12,
+  "round_document_files_moved": 11
+}

@@ -27,22 +27,22 @@ import zlib
 import time
 import urllib.parse
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-import net
-import paint_engine
-import rasterize
-import ttf_font
-import html_pkg
-import session
-import cookie_store
-import web_api
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.network import net
+from toy_browser.rendering import paint_engine
+from toy_browser.typography import rasterize
+from toy_browser.typography import ttf_font
+from toy_browser.document import html_pkg
+from toy_browser.app import session
+from toy_browser.network import cookie_store
+from toy_browser.scripting import web_api
+from toy_browser.rendering.paint import Bitmap, Color
 
 def _reds(bmp: Bitmap) -> int:
     """Count red-dominant pixels: R channel high, G and B low."""
@@ -152,13 +152,13 @@ def find2_children(n, eid):
 
 
 def _p20_bitmap(w=200, h=80):
-    import paint
+    from toy_browser.rendering import paint
     return paint.Bitmap(w, h)
 
 
 
 def _p20_metrics():
-    import font
+    from toy_browser.typography import font
     # P33.R1 — a prior P17/P18 test may have cleared _real_font_metrics;
     # re-init from the "fonts/" dir so the helper is self-sufficient.
     m = font.get_real_metrics("monospace")
@@ -175,7 +175,7 @@ def _p20_ink(bmp):
 
 
 def _p20_first_valid_outline(m):
-    import ttf_font
+    from toy_browser.typography import ttf_font
     for ch in "AEGHLMNORSTUVWX01357":
         o = m.glyph_outline(ch)
         if o is not None and ttf_font.outline_valid(o):
@@ -294,7 +294,7 @@ def _find_box(bx, tag=None, id_=None):
 
 def _p29_js_logs(code: str) -> list:
     """P29 — run a JS snippet in a minimal DOM and return log lines."""
-    import dom, js
+    from toy_browser.document import dom; from toy_browser.scripting import js
     logs: list = []
     host = js.Host(dom.parse("<html><body></body></html>"), logs.append)
     host.execute(code)
@@ -304,7 +304,7 @@ def _p29_js_logs(code: str) -> list:
 
 def _p30_host(html: str):
     """P30 — build a Host bound to *html* with a log sink."""
-    import js
+    from toy_browser.scripting import js
     logs: list = []
     host = js.Host(dom.parse(html), logs.append)
     host.execute_all()

@@ -17,12 +17,12 @@ _project_os.chdir(_PROJECT_ROOT)
 import gc
 import time
 
-import css
-import dom
-import layout
-import paint
+from toy_browser.style import css
+from toy_browser.document import dom
+from toy_browser.layout import layout
+from toy_browser.rendering import paint
 import test_p34_css_memo as _memo
-import ttf_font
+from toy_browser.typography import ttf_font
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ def test_clear_caches_resets():
 # ---------------------------------------------------------------------------
 
 def test_fill_rect_opaque_matches_legacy():
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     a, b = Bitmap(10, 10), Bitmap(10, 10)
     col = Color(10, 200, 30, 255)
     a.fill_rect(2, 3, 5, 4, col)
@@ -202,7 +202,7 @@ def test_fill_rect_opaque_matches_legacy():
 
 
 def test_fill_rect_semi_transparent_still_blends():
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     b = Bitmap(4, 4)
     b.fill_rect(0, 0, 4, 4, Color(255, 0, 0, 128))
     # White (255,255,255) blended 50/50 with red → (255, 128, 128).
@@ -211,7 +211,7 @@ def test_fill_rect_semi_transparent_still_blends():
 
 
 def test_fill_rect_clips_to_bounds():
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     b = Bitmap(5, 5)
     b.fill_rect(-3, -3, 8, 8, Color(0, 0, 255, 255))
     assert b.pixels[0] == 0x0000FF
@@ -225,8 +225,8 @@ def test_fill_rect_clips_to_bounds():
 # ---------------------------------------------------------------------------
 
 def test_blit_glyph_mask_opaque_color():
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(4, 4)
     for r in range(4):
         for c in range(4):
@@ -244,8 +244,8 @@ def test_blit_glyph_mask_opaque_color():
 
 
 def test_blit_glyph_mask_coverage_half():
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(2, 2)
     for r in range(2):
         m.rows[r][0] = 128
@@ -266,8 +266,8 @@ def test_blit_glyph_mask_coverage_half():
 
 
 def test_blit_glyph_mask_int_color_fast_path():
-    import rasterize
-    from paint import Bitmap
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap
     m = rasterize.GlyphMask(3, 3)
     for r in range(3):
         for c in range(3):
@@ -279,14 +279,14 @@ def test_blit_glyph_mask_int_color_fast_path():
     assert b.pixels[0 * 6 + 1] == 0x00FF00
     # Same call with a Color object must produce identical output.
     b2 = Bitmap(6, 6)
-    from paint import Color
+    from toy_browser.rendering.paint import Color
     rasterize.blit_glyph_mask(b2, m, 1, 3, Color(0, 255, 0, 255))
     assert b.pixels == b2.pixels
 
 
 def test_blit_glyph_mask_semi_transparent_color():
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(2, 2)
     for r in range(2):
         for c in range(2):
@@ -307,8 +307,8 @@ def test_blit_glyph_mask_negative_origin_clips():
     """P34.1 — the negative-x0 path must read the *source* mask row with
     the right column offset (the legacy implementation re-used the same
     destination loop bounds and indexed mrow[col] out of range)."""
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(4, 4)
     for r in range(4):
         for c in range(4):
@@ -327,8 +327,8 @@ def test_blit_glyph_mask_negative_origin_clips():
 
 def test_blit_glyph_mask_negative_origin_very_negative():
     """Fully-clipped mask (origin_x + w <= 0) must not touch the bitmap."""
-    import rasterize
-    from paint import Bitmap, Color
+    from toy_browser.typography import rasterize
+    from toy_browser.rendering.paint import Bitmap, Color
     m = rasterize.GlyphMask(2, 2)
     for r in range(2):
         for c in range(2):
@@ -344,9 +344,9 @@ def test_blit_glyph_mask_negative_origin_very_negative():
 # ---------------------------------------------------------------------------
 
 def test_draw_text_ascii_uses_primary_face():
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     font.init_real_fonts(["fonts"])
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     b = Bitmap(100, 50)
     text.draw_text(b, 0, 0, "ABC", 12.0, Color(0, 0, 0), 200.0)
     # At least some pixels must be non-white.
@@ -355,9 +355,9 @@ def test_draw_text_ascii_uses_primary_face():
 
 
 def test_draw_text_cjk_falls_back():
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     font.init_real_fonts(["fonts"])
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     b = Bitmap(120, 50)
     text.draw_text(b, 0, 0, "你好", 12.0, Color(0, 0, 0), 200.0)
     nonwhite = sum(1 for p in b.pixels if p != 0xFFFFFF)
@@ -365,10 +365,10 @@ def test_draw_text_cjk_falls_back():
 
 
 def test_draw_text_no_real_font_still_renders():
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     saved = dict(font._real_font_metrics)
     font._real_font_metrics.clear()
-    from paint import Bitmap, Color
+    from toy_browser.rendering.paint import Bitmap, Color
     b = Bitmap(100, 50)
     try:
         text.draw_text(b, 0, 0, "hi", 12.0, Color(0, 0, 0), 200.0)
@@ -384,7 +384,7 @@ def test_draw_text_no_real_font_still_renders():
 # ---------------------------------------------------------------------------
 
 def _make_el(eid: str):
-    import js
+    from toy_browser.scripting import js
     el = js.DomElement.__new__(js.DomElement)
     el.node = None
     el.id = eid
@@ -392,9 +392,9 @@ def _make_el(eid: str):
 
 
 def test_js_layout_box_cache_runs_layout_once():
-    import js
-    import css as _css_mod
-    import layout as _layout_mod
+    from toy_browser.scripting import js
+    from toy_browser.style import css as _css_mod
+    from toy_browser.layout import layout as _layout_mod
     calls = {"apply": 0, "layout": 0}
     orig_apply = _css_mod.apply
     orig_layout = _layout_mod.layout
@@ -438,7 +438,7 @@ def test_js_layout_box_cache_runs_layout_once():
 
 def test_node_supports_weakref():
     import weakref
-    from html_pkg.node import Node
+    from toy_browser.document.html_pkg.node import Node
     n = Node(Node.ELEMENT, "div")
     w = weakref.ref(n)
     assert w() is n
@@ -449,7 +449,7 @@ def test_node_supports_weakref():
 # ---------------------------------------------------------------------------
 
 def test_full_pipeline_regression_guard():
-    import browser, dom, css, layout, paint_engine
+    from toy_browser.app import browser; from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine
     html = """<html><head><style>
       body{margin:8px}
       .box{width:120px;height:40px;background:#336699;color:white;margin:4px}

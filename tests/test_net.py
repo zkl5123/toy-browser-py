@@ -11,14 +11,14 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)

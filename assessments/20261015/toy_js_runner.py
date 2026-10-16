@@ -2,7 +2,7 @@
 import json, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-import dom, js
+from toy_browser.document import dom; from toy_browser.scripting import js
 
 CASES = json.load(open(os.path.join(os.path.dirname(__file__), 'js_cases.json'), encoding='utf-8'))
 DOM_HTML = '<!DOCTYPE html><html><body><div id="t1">orig</div><button id="btn">B</button></body></html>'

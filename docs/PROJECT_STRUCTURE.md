@@ -1,53 +1,66 @@
-# 项目目录与清理记录
+# 项目目录与文件引用
 
-2026 年 10 月 14 日整理。浏览器核心模块继续位于根目录，保持现有导入接口及 CLI、GUI 命令；测试、工具、文档和评估证据按用途归入目录。
+2026 年 10 月 16 日更新。核心实现按职责迁入 `toy_browser/`，文档、回归测试与实测评估分别保存。本文路径均相对于项目根目录。
 
-## 目录用途
+## 目录职责
 
-| 位置 | 内容 |
+| 目录 | 内容 |
 |---|---|
-| 根目录 `main.py`、`gui.py` | CLI 和 tkinter GUI 入口 |
-| 根目录 `test.py` | 完整测试编排入口，加载 `tests/` 并定位项目夹具 |
-| 根目录其他 Python 模块 | DOM、CSS、布局、绘制、JS、HTTP、会话、字体等核心实现 |
-| `html_pkg/` | HTML 分词、建树、节点、实体模块 |
-| `tests/` | 27 个测试模块及共享辅助函数，保留未被总编排器收录的独立测试 |
-| `tools/benchmarks/` | 4 个分阶段性能脚本；部分被测试引用，因此全部保留 |
-| `fonts/`、`demo.html` | 运行资源、测试夹具与示例 |
-| `docs/` | 架构、路线图、变更记录、历史评估报告及规划文档 |
-| `assessments/20261014/` | 本次真实浏览器评估报告、输入、脚本、JSON 和截图证据 |
-| `assessments/legacy/` | 原 `_agenttest/` 的历史评估资料，包括参考浏览器依赖清单 |
+| `toy_browser/app/` | `browser.py` 渲染 API、`main.py` CLI、`gui.py` tkinter 界面、`session.py` 历史与书签 |
+| `toy_browser/document/` | `dom.py` DOM 公共接口及 `html_pkg/` 分词、实体、节点和建树 |
+| `toy_browser/style/` | `css.py` 样式解析/层叠、`transition.py` 过渡动画 |
+| `toy_browser/layout/` | `layout.py` 布局树与几何计算 |
+| `toy_browser/rendering/` | `paint.py` 位图与颜色、`paint_engine.py` 显示列表及绘制 |
+| `toy_browser/typography/` | `font.py` 点阵字库、`text.py` 文本测量、`ttf_font.py` 字体解析、`rasterize.py` 字形光栅化 |
+| `toy_browser/network/` | `net.py` HTTP/缓存/安全策略、`cookie_store.py` Cookie |
+| `toy_browser/scripting/` | `js.py` JS 解释器和宿主、`web_api.py` Web API |
+| `toy_browser/common/` | `mem_guard.py` 内存控制 |
+| `tests/` | 回归用例、共享辅助函数、`fixtures/` 输入、`run.py` 测试编排 |
+| `tools/` | 性能分析工具；`benchmarks/` 为被回归测试复用的分阶段性能脚本 |
+| `docs/` | 架构、路线图、变更记录、贡献指南及通用规划 |
+| `assessments/` | 所有实测评估报告、对照脚本、输入、JSON、截图、验证输出，按轮次归档 |
+| `fonts/`、`demo.html` | 字体资源与示例页面；保留位置以兼容资源路径 |
 
-## 已清理内容
+根目录仅保留 `main.py`、`gui.py`、`test.py` 三个 Python 启动器，以及 README、LICENSE、资源和仓库配置。
 
-- 根目录的生成文件 `a11y.json`、空文件 `links.json`、`links.txt`。
-- 沙箱限制下的失败测试日志 `assessment_tests.log`。
-- Python 字节码缓存和评估 HTTP 缓存 `_cache_test/`。
-- 本次评估目录的冗余运行日志；正式完整自测输出转存为 `tests-output.txt`。
-- 三张相同内容的性能导出图 `perf_100.png`、`perf_1000.png`、`perf_5000.png`；性能原始计时仍在 JSON 中。
-- 无调用引用的一次性草稿 `_agenttest/table_fix_snippet.py`。
+## 运行与导入
 
-历史报告、评估截图和 JSON 具有追溯用途，保留在对应目录。字体资源与回归测试具有运行用途，未按临时文件删除。生成输出、缓存和本机会话文件已补充到 `.gitignore`，避免再次混入源码。
-
-## 运行与复现
-
-在项目根目录运行，命令保持兼容：
+在项目根目录运行，原启动命令保持可用：
 
 ```bash
 python main.py demo.html out.png --png
 python gui.py demo.html
 python test.py
-```
-
-独立测试与基准的新路径：
-
-```bash
+python tests/run.py
 python tests/test_p34_css_memo.py
 python tools/benchmarks/p34r6_perf.py
-python assessments/20261014/toy_layout_runner.py
+python assessments/20261016-round5/toy_layout_runner.py
 ```
 
-测试和性能脚本会定位项目根目录，保证字体和 demo 等相对路径夹具可用。评估脚本也已更新导入根路径；浏览器对照运行器的外部依赖仍见该目录实测报告。历史脚本按历史行为保留，不将它们冒充本次兼容性结果。
+源码和外部调用应使用完整包路径，例如：
 
-目录整理后的完整回归为 **925/925 通过**，输出见 `assessments/20261014/structure-validation.txt`。
-额外验证了全部 73 个 Python 文件的语法、独立 CSS 缓存测试的 4 项检查，以及移动后的布局评估和统计脚本。
-目录整理没有修复先前评估发现的浏览器语义问题。
+```python
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+bitmap = browser.render_document('<p>Hello</p>')
+```
+
+原来直接导入根目录核心文件的方式（例如 `import browser`）需改用上述包导入。根目录 GUI 启动器不再承载 `PageInstance` 等实现；其调用位置为 `toy_browser.app.gui`。本项目的测试、基准和历史评估脚本已同步迁移，避免同一模块被重复加载造成类型或缓存状态不一致。
+
+## 文档与评估文件
+
+- [贡献指南](CONTRIBUTING.md) 由根目录移入 `docs/`。
+- [独立实测报告](../assessments/legacy/docs/实测评估报告2026.md) 由文档目录移入早期评估的 `legacy/docs/`。
+- [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md) 按第五轮归档，源码位置同步更新。
+- 根目录 `_verify_all.py` 与 `demo_out.png` 分别移入 `assessments/structure-20261016/verify_all.py` 和同目录图片。
+- 历次评估按日期保留脚本、输入与结果的相邻关系，避免破坏复现路径。报告中的源码路径和脚本导入已更新；已有 JSON、截图和输出证据保留，不把旧结果当作本次运行数据。
+- 文档目录树、源码位置、相对 Markdown 链接和导入示例随目录迁移更新。历史行号仅用于追溯原报告，不代表移动后精确行号。
+
+各轮文档统一放在 `assessments/<轮次>/docs/`，并由该轮 `README.md` 索引。第四轮改进计划归入第四轮；GUI 建议、GPU 迁移方案及逐项实施方案归入第五轮。完整入口见 [轮次索引](../assessments/README.md)。
+
+## 本次验证
+
+验证输出集中在 `assessments/structure-20261016/`。939 项回归已完成验证（沙箱内 927 项通过，12 项临时目录权限受限用例在常规权限下重跑通过）；独立 CSS 用例 4 项通过。启动器、字体定位及文档链接的结果见 [验证记录](../assessments/structure-20261016/docs/验证记录.md)。本次工作仅整理目录和引用，不改变引擎功能。

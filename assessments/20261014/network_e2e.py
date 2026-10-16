@@ -1,7 +1,7 @@
 import sys,json,threading,subprocess
 from pathlib import Path
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
-D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));import browser
+D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));from toy_browser.app import browser
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_GET(self):

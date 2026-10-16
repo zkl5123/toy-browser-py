@@ -17,10 +17,10 @@ _project_os.chdir(_PROJECT_ROOT)
 import gc
 import time
 
-import dom
-import css
-import layout
-import paint_engine
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.rendering import paint_engine
 
 
 def _make_doc(n: int) -> str:

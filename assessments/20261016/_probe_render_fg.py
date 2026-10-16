@@ -2,7 +2,7 @@ import sys, json
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-import browser, paint
+from toy_browser.app import browser; from toy_browser.rendering import paint
 
 # R4 stage 5 — measure the 4 render_* cases' foreground (non-white)
 # coverage in the toy rasterizer and compare against the Edge

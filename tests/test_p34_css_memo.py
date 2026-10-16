@@ -13,7 +13,7 @@ _project_os.chdir(_PROJECT_ROOT)
 
 import timeit
 
-import css
+from toy_browser.style import css
 
 
 def test_memo_hits_same_list_on_equal_text():
@@ -33,13 +33,13 @@ def test_memo_does_not_leak_mutations_to_callers():
     # The shared memo entry must stay untouched: a second apply() with
     # the same author CSS must not accumulate extra rules.
     html_doc = '<html><body><div id="x">hi</div></body></html>'
-    import dom
+    from toy_browser.document import dom
     root = dom.parse(html_doc)
     media = css.parse_media_queries("@media (min-width: 500px) { .m { color: red; } }")
     styled1 = css.apply(root, "", media_rules=media, viewport_w=800.0, viewport_h=600.0)
     # Re-run with the same author CSS and media rules: the rules list
     # passed to the cascade must not double-append.
-    import dom as dom_mod
+    from toy_browser.document import dom as dom_mod
     root2 = dom_mod.parse(html_doc)
     styled2 = css.apply(root2, "", media_rules=media, viewport_w=800.0, viewport_h=600.0)
     assert styled1 is not None and styled2 is not None

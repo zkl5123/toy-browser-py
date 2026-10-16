@@ -1,0 +1,3 @@
+const {chromium}=require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const fs=require('fs'),path=require('path');
+(async()=>{const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});try{const p=await b.newPage({viewport:{width:800,height:600},deviceScaleFactor:1});const cases=JSON.parse(fs.readFileSync(path.join(__dirname,'layout_cases.json'),'utf8'));for(const n of ['flex_reverse_center','flex_gap','grid_unequal','flex_padding_border']){await p.setContent(cases[n]);await p.screenshot({path:path.join(__dirname,'edge_geom_'+n+'.png')});}}finally{await b.close();}})().catch(e=>{console.error(e);process.exit(1)});

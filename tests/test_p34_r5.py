@@ -9,7 +9,7 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT))
 _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
-import dom, css, layout, paint_engine, text
+from toy_browser.document import dom; from toy_browser.style import css; from toy_browser.layout import layout; from toy_browser.rendering import paint_engine; from toy_browser.typography import text
 
 _failures = []
 def check(name, cond, detail=""):
@@ -102,7 +102,7 @@ def t5_adv_char_cache():
     # branch (the cache is only populated on that path; the benchmark
     # host has no TTF registered, so the fallback Latin path is used
     # and the cache stays empty).
-    import font
+    from toy_browser.typography import font
     font.init_real_fonts(["fonts"])
     text.clear_advance_cache()
     w1 = text.advance_text("内容 47321", 14.0, "sans-serif")

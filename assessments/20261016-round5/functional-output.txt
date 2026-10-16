@@ -1,0 +1,10 @@
+{
+  "original_47_raw_matches": 46,
+  "original_47_trimmed_matches": 47,
+  "all_raw_matches": 50,
+  "all_trimmed_matches": 51,
+  "total": 51,
+  "drain_errors": {},
+  "http_cli_matches": 10,
+  "http_gui_matches": 10
+}

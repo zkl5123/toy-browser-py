@@ -24,8 +24,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 os.chdir(_PROJECT_ROOT)
 
-import browser
-import paint
+from toy_browser.app import browser
+from toy_browser.rendering import paint
 
 
 def _legacy_png_bytes(bmp: "paint.Bitmap") -> bytes:

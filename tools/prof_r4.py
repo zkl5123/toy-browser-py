@@ -23,11 +23,11 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "tools" / "benchmarks"))
 
-import dom as dom_mod
-import css as css_mod
-import layout as layout_mod
-import paint_engine
-import browser
+from toy_browser.document import dom as dom_mod
+from toy_browser.style import css as css_mod
+from toy_browser.layout import layout as layout_mod
+from toy_browser.rendering import paint_engine
+from toy_browser.app import browser
 
 import os
 os.chdir(_ROOT)

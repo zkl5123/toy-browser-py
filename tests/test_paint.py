@@ -11,14 +11,14 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)
@@ -170,7 +170,7 @@ def test_ppm_png_equivalence():
 TESTS.append(("test_ppm_png_equivalence", test_ppm_png_equivalence))
 def test_transition_color_interpolation():
     """P3.4 — transition engine interpolates colors over frames."""
-    import transition as trans
+    from toy_browser.style import transition as trans
 
     start = Color(255, 0, 0, 255)   # red
     end = Color(0, 0, 255, 255)     # blue
@@ -221,7 +221,7 @@ def test_transition_render_frames():
 TESTS.append(("test_transition_render_frames", test_transition_render_frames))
 def test_transition_lerp_color():
     """P3.4 — lerp_color helper interpolates correctly."""
-    import transition as trans
+    from toy_browser.style import transition as trans
 
     c = trans.lerp_color(Color(0, 0, 0, 255), Color(100, 100, 100, 255), 0.5)
     assert c.r == 50 and c.g == 50 and c.b == 50, f"midpoint must be 50, got ({c.r},{c.g},{c.b})"
@@ -274,7 +274,7 @@ def test_hover_pseudo_layout():
     lroot2 = layout.layout(styled2, 200.0, 200.0)
     h2 = find2_children(lroot2, "h")
     assert h2 is not None
-    from paint import Color
+    from toy_browser.rendering.paint import Color
     assert h2.background is not None, f"hover state must set bg, got {h2.background}"
 
 
@@ -306,7 +306,7 @@ def test_hover_render_api():
     The hover rule must use a property NOT set inline (e.g. color), since
     inline styles always win in the cascade.
     """
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body>' \
            '<div id="btn" style="width:100px;height:50px;background:#cccccc">Btn</div>' \
            '</body></html>'
@@ -435,7 +435,7 @@ def test_outline_layout():
 TESTS.append(("test_outline_layout", test_outline_layout))
 def test_outline_render():
     """P10.3 — outline: 3px solid #00ff00 renders outline rect commands."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     html = '<html><body><div id="o" style="outline:3px solid #00ff00;width:100px;height:50px">' \
            '</div></body></html>'
     root = dom.parse(html)
@@ -471,8 +471,8 @@ def test_outline_width_only():
 TESTS.append(("test_outline_width_only", test_outline_width_only))
 def test_transition_multi_property():
     """P11.1 — TransitionEngine.add_multi creates specs for multiple properties."""
-    import transition as t
-    from paint import Color
+    from toy_browser.style import transition as t
+    from toy_browser.rendering.paint import Color
     engine = t.TransitionEngine()
     specs = [
         t.TransitionSpec("background", Color(255, 0, 0, 255), Color(0, 0, 255, 255), 10),
@@ -492,7 +492,7 @@ def test_transition_multi_property():
 TESTS.append(("test_transition_multi_property", test_transition_multi_property))
 def test_transition_transform_lerp():
     """P11.1 — TransitionSpec.value_at lerps transform translate tuples."""
-    import transition as t
+    from toy_browser.style import transition as t
     spec = t.TransitionSpec("transform", ("translate", 0.0, 0.0), ("translate", 100.0, 50.0), 10)
     v = spec.value_at(0.5)
     assert isinstance(v, tuple), f"transform value_at must return tuple, got {v!r}"
@@ -505,8 +505,8 @@ def test_transition_transform_lerp():
 TESTS.append(("test_transition_transform_lerp", test_transition_transform_lerp))
 def test_transition_parse_multi():
     """P11.1 — parse_transition_css_multi splits comma-separated clauses."""
-    import transition as t
-    from paint import Color
+    from toy_browser.style import transition as t
+    from toy_browser.rendering.paint import Color
     specs = t.parse_transition_css_multi(
         "background 1s, opacity 2s, transform 1s",
         {"background": Color(255,0,0), "opacity": 1.0, "transform": ("translate",0.0,0.0)},
@@ -523,8 +523,8 @@ def test_transition_parse_multi():
 TESTS.append(("test_transition_parse_multi", test_transition_parse_multi))
 def test_transition_color_lerp():
     """P11.1 — TransitionSpec lerps Color values correctly."""
-    import transition as t
-    from paint import Color
+    from toy_browser.style import transition as t
+    from toy_browser.rendering.paint import Color
     spec = t.TransitionSpec("background", Color(0, 0, 0), Color(255, 255, 255), 10)
     v = spec.value_at(0.5)
     assert isinstance(v, Color), f"color lerp must return Color, got {type(v)}"
@@ -536,7 +536,7 @@ def test_transition_color_lerp():
 TESTS.append(("test_transition_color_lerp", test_transition_color_lerp))
 def test_transition_scalar_lerp():
     """P11.1 — TransitionSpec lerps scalar (opacity) values."""
-    import transition as t
+    from toy_browser.style import transition as t
     spec = t.TransitionSpec("opacity", 1.0, 0.0, 10)
     assert abs(spec.value_at(0.25) - 0.75) < 0.01, \
         f"opacity at t=0.25 must be 0.75, got {spec.value_at(0.25)}"
@@ -551,7 +551,7 @@ def test_transition_advance_stops():
 
     A 3-frame spec: advance returns True while frame < 3, then False.
     """
-    import transition as t
+    from toy_browser.style import transition as t
     engine = t.TransitionEngine()
     engine.add(t.TransitionSpec("opacity", 1.0, 0.0, 3))
     assert engine.advance() is True   # frame=1 < 3 → still running
@@ -615,7 +615,7 @@ def test_animate_keyframes_multi_render():
     Uses a background colour change (red → blue) which produces visible
     pixel differences in the rendered bitmap.
     """
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<html><body><div id="box" style="width:100px;height:50px"></div>'
             '</body></html>')
     css_text = ('@keyframes fade {'
@@ -638,7 +638,7 @@ def test_animate_keyframes_multi_render():
 TESTS.append(("test_animate_keyframes_multi_render", test_animate_keyframes_multi_render))
 def test_hover_at_coordinate():
     """P12.4 — render_document_with_hover_at applies :hover via hit-test."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<html><body><div id="a" style="width:100px;height:50px">'
             '</div></body></html>')
     css_text = '#a:hover { background: #ff0000; }'
@@ -654,7 +654,7 @@ def test_hover_at_coordinate():
 TESTS.append(("test_hover_at_coordinate", test_hover_at_coordinate))
 def test_mouse_events_sequence():
     """P12.4 — render_document_with_mouse drives a hover on/off sequence."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<html><body><div id="t" style="width:100px;height:50px"></div>'
             '</body></html>')
     css_text = '#t:hover { background: #00ff00; }'
@@ -674,7 +674,7 @@ def test_mouse_events_sequence():
 TESTS.append(("test_mouse_events_sequence", test_mouse_events_sequence))
 def test_mouse_events_runs_onclick():
     """P12.4 — a 'click' event in the sequence runs the onclick handler."""
-    import browser as b
+    from toy_browser.app import browser as b
     logs: list[str] = []
     html = ('<html><body><div id="btn" style="width:100px;height:50px" '
             'onclick="console.log(\'pressed\')"></div></body></html>')
@@ -720,7 +720,7 @@ def test_keyframes_multi_property_2():
 TESTS.append(("test_keyframes_multi_property_2", test_keyframes_multi_property_2))
 def test_mouse_mouseleave_event():
     """P12.4 — a 'mouseleave' event clears the hover state."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<html><body><div id="m" style="width:100px;height:50px"></div>'
             '</body></html>')
     css_text = '#m:hover { background: #00ff00; }'

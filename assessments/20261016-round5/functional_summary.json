@@ -1,0 +1,220 @@
+{
+  "original_47_raw_matches": 46,
+  "original_47_trimmed_matches": 47,
+  "all_raw_matches": 50,
+  "all_trimmed_matches": 51,
+  "total": 51,
+  "added_functional": {
+    "functional_queue_microtask": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "end",
+          "micro"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "sync",
+          "end",
+          "micro"
+        ],
+        "drain_error": null
+      }
+    },
+    "functional_mutation_observer": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "mutated",
+          "checkpoint"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "mutated",
+          "checkpoint"
+        ],
+        "drain_error": null
+      }
+    },
+    "functional_resize_observer": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": [
+          "resized"
+        ]
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [
+          "resized"
+        ],
+        "drain_error": null
+      }
+    },
+    "functional_response_methods": {
+      "match": true,
+      "edge": {
+        "status": "OK",
+        "logs": []
+      },
+      "toy": {
+        "status": "OK",
+        "logs": [],
+        "drain_error": null
+      }
+    }
+  },
+  "drain_errors": {},
+  "http_cases": {
+    "cross_css": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE",
+        "color": "rgb(0, 255, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xff00",
+        "cli_text": "SAFE",
+        "gui_text": "SAFE",
+        "gui_pixel_50_50": "0xff00"
+      }
+    },
+    "csp_self": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "SAFE",
+        "gui_text": "SAFE",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "csp_inline": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "SAFE",
+        "gui_text": "SAFE",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "external_script": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "EXECUTED",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "EXECUTED",
+        "gui_text": "EXECUTED",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "script_order": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE|EXTERNAL|INLINE",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "SAFE|EXTERNAL|INLINE",
+        "gui_text": "SAFE|EXTERNAL|INLINE",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "csp_nonce": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "EXECUTED",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "EXECUTED",
+        "gui_text": "EXECUTED",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "repeat_external": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE|EXTERNAL|EXTERNAL",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "SAFE|EXTERNAL|EXTERNAL",
+        "gui_text": "SAFE|EXTERNAL|EXTERNAL",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "fetch_real": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "200:function",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "200:function",
+        "gui_text": "200:function",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "xhr_real": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "200:NETWORK_OK",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "200:NETWORK_OK",
+        "gui_text": "200:NETWORK_OK",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    },
+    "data_script": {
+      "cli_match": true,
+      "gui_match": true,
+      "edge": {
+        "text": "SAFE",
+        "color": "rgba(0, 0, 0, 0)"
+      },
+      "toy": {
+        "pixel_50_50": "0xffffff",
+        "cli_text": "SAFE",
+        "gui_text": "SAFE",
+        "gui_pixel_50_50": "0xffffff"
+      }
+    }
+  },
+  "http_cli_matches": 10,
+  "http_gui_matches": 10
+}

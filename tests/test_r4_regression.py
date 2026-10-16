@@ -43,12 +43,12 @@ sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 import os as _os
 _os.chdir(_PROJECT_ROOT)
 
-import dom as _dom
-import css as _css
-import layout as _layout
-import browser as _browser
-import js as _js
-import net as _net
+from toy_browser.document import dom as _dom
+from toy_browser.style import css as _css
+from toy_browser.layout import layout as _layout
+from toy_browser.app import browser as _browser
+from toy_browser.scripting import js as _js
+from toy_browser.network import net as _net
 
 _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "r4_regression.json"
 

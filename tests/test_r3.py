@@ -15,9 +15,9 @@ _project_os.chdir(_PROJECT_ROOT)
 # postfix/prefix increment/decrement.  All tests are pure DOM + JS
 # (no network, no Tk), self-contained.
 
-import dom as _dom
-import js as _js
-from js import parse_program, Interpreter, Env, _Return, TDZError, _Binding
+from toy_browser.document import dom as _dom
+from toy_browser.scripting import js as _js
+from toy_browser.scripting.js import parse_program, Interpreter, Env, _Return, TDZError, _Binding
 
 
 def _unb(v):

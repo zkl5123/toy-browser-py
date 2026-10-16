@@ -2,7 +2,7 @@ import sys, json
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-import browser, layout
+from toy_browser.app import browser; from toy_browser.layout import layout
 
 lc = json.load(open(Path(__file__).resolve().parent / 'layout_cases.json', encoding='utf-8'))
 
@@ -26,7 +26,7 @@ def red_bounds(bmp):
 def geom(name, ids):
     """Border-box geometry of the probe ids (what getBoundingClientRect
     reports in the browser)."""
-    import dom, css
+    from toy_browser.document import dom; from toy_browser.style import css
     html = lc[name]
     tree = dom.parse(html)
     author_css, ua_css = browser._full_css(tree, '')

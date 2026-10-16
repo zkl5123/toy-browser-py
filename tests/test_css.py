@@ -11,14 +11,14 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
 
-import browser
-import dom
-import css
-import layout
-import js
-import text
-import paint
-from paint import Bitmap, Color
+from toy_browser.app import browser
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.scripting import js
+from toy_browser.typography import text
+from toy_browser.rendering import paint
+from toy_browser.rendering.paint import Bitmap, Color
 import sys
 
 # Shared helpers (defined in test.py, needed by multiple modules)
@@ -191,7 +191,7 @@ def test_selector_multi_class():
 TESTS.append(("test_selector_multi_class", test_selector_multi_class))
 def test_media_min_width_match():
     """P9.1 — @media (min-width: 400px) rule applies when viewport >= 400."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body><div id="x" style="width:100px">hi</div></body></html>'
     css_text = '@media (min-width: 400px) { #x { background: #ff0000; } }'
     bmp = b.render_document(html, css_text, 500, 300)
@@ -203,7 +203,7 @@ def test_media_min_width_match():
 TESTS.append(("test_media_min_width_match", test_media_min_width_match))
 def test_media_min_width_no_match():
     """P9.1 — @media (min-width: 400px) rule does NOT apply when viewport < 400."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body><div id="x" style="width:100px">hi</div></body></html>'
     css_text = '@media (min-width: 400px) { #x { background: #ff0000; } }'
     bmp = b.render_document(html, css_text, 300, 300)
@@ -215,7 +215,7 @@ def test_media_min_width_no_match():
 TESTS.append(("test_media_min_width_no_match", test_media_min_width_no_match))
 def test_media_max_width_match():
     """P9.1 — @media (max-width: 300px) rule applies when viewport <= 300."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body><div id="x" style="width:100px">hi</div></body></html>'
     css_text = '@media (max-width: 300px) { #x { background: #0000ff; } }'
     bmp = b.render_document(html, css_text, 300, 300)
@@ -287,7 +287,7 @@ def test_supports_matches_always_true():
 TESTS.append(("test_supports_matches_always_true", test_supports_matches_always_true))
 def test_supports_cascade_applies():
     """P11.3 — @supports rules are applied to the cascade (toy: always)."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<html><body><div id="x" style="width:100px;height:50px">hi</div></body></html>'
     css_text = '@supports (display: grid) { #x { background: #ff0000; } }'
     bmp = b.render_document(html, css_text, 200, 100)
@@ -454,7 +454,7 @@ def test_css_filter_blur_layout():
 TESTS.append(("test_css_filter_blur_layout", test_css_filter_blur_layout))
 def test_css_filter_brightness_render():
     """P13.3 — brightness(50%) darkens the painted box pixels."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<div id="f" style="width:40px;height:40px;'
             'background:#ff0000;filter:brightness(50%)"></div>')
     bmp = b.render_document(html, "")
@@ -471,7 +471,7 @@ def test_css_filter_brightness_render():
 TESTS.append(("test_css_filter_brightness_render", test_css_filter_brightness_render))
 def test_css_filter_no_filter_identity():
     """P13.3 — no filter leaves pixels unchanged."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div id="f" style="width:40px;height:40px;background:#ff0000"></div>'
     bmp = b.render_document(html, "")
     u32 = bmp.pixels[20 * bmp.width + 20]
@@ -514,7 +514,7 @@ def test_css_scroll_container_scroll_left():
 TESTS.append(("test_css_scroll_container_scroll_left", test_css_scroll_container_scroll_left))
 def test_css_scroll_container_render():
     """P14.1 — a scroll container with overflowing child renders without crash."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = ('<div id="sc" style="width:80px;height:40px;overflow:auto;scroll-top:20px">'
             '<div id="inner" style="width:70px;height:200px;background:#3366ff"></div>'
             '</div>')
@@ -548,7 +548,7 @@ def test_css_text_indent_layout():
 TESTS.append(("test_css_text_indent_layout", test_css_text_indent_layout))
 def test_css_text_indent_render():
     """P14.3 — text-indent renders without crash."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div id="ti" style="width:200px;text-indent:20px">Hello World</div>'
     bmp = b.render_document(html, "")
     assert bmp.width > 0, "text-indent must render"
@@ -614,7 +614,7 @@ def test_css_text_indent_negative():
 TESTS.append(("test_css_text_indent_negative", test_css_text_indent_negative))
 def test_css_text_indent_render_negative():
     """P14.3 — negative text-indent renders without crash."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div id="ti" style="width:200px;text-indent:-5px">Hi</div>'
     bmp = b.render_document(html, "")
     assert bmp.width > 0, "negative text-indent must render"
@@ -635,7 +635,7 @@ def test_css_text_indent_layout_block_child():
 TESTS.append(("test_css_text_indent_layout_block_child", test_css_text_indent_layout_block_child))
 def test_css_text_indent_render_text_present():
     """P14.3 — text-indent document renders non-white pixels (text painted)."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div style="width:300px;height:100px;text-indent:20px;color:#000000">Hello</div>'
     bmp = b.render_document(html, "")
     nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
@@ -735,7 +735,7 @@ def test_css_font_family_unknown_fallback():
 TESTS.append(("test_css_font_family_unknown_fallback", test_css_font_family_unknown_fallback))
 def test_css_font_family_render():
     """P15.4 — a serif document renders non-white text pixels."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div style="width:300px;height:100px;font-family:serif;color:#000000">Serif text</div>'
     bmp = b.render_document(html, "")
     nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
@@ -746,7 +746,7 @@ def test_css_font_family_render():
 TESTS.append(("test_css_font_family_render", test_css_font_family_render))
 def test_css_font_family_serif_wider_render():
     """P15.4 — serif text produces a wider pixel span than monospace."""
-    import browser as b
+    from toy_browser.app import browser as b
 
     def _rightmost(bmp):
         cols = [x for x in range(bmp.width)
@@ -933,7 +933,7 @@ def test_css_scroll_snap_with_overflow_scroll():
 TESTS.append(("test_css_scroll_snap_with_overflow_scroll", test_css_scroll_snap_with_overflow_scroll))
 def test_css_scroll_snap_render():
     """P16.4 — a scroll-snap document renders without crash."""
-    import browser as b
+    from toy_browser.app import browser as b
     html = '<div style="width:300px;height:200px;overflow:scroll;scroll-snap-type:x mandatory;color:#000000">Snap</div>'
     bmp = b.render_document(html, "")
     nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)

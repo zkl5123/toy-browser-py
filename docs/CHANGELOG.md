@@ -26,13 +26,13 @@ roadmap milestones).
 
 ### Changed
 
-- **`browser.py` PNG 编码路径**（`write_png` / 新增
+- **`toy_browser/app/browser.py` PNG 编码路径**（`write_png` / 新增
   `write_png_bytes`）：行打包改为预分配 buffer + 逐行写入
   （`_png_pack_row` / `_png_raw_rows`），替代旧的增长式
   `bytearray().extend` 内循环。输出字节与旧实现**逐位一致**
   （真实渲染 / 800×600 随机像素 / 400×16000 / 1×1 / 0 高五种
   位图全部验证）；PNG 段从 ~3.8s 降到 ~0.8s（约 4.7×）。
-- **`docs/IMPROVEMENT_PLAN_R4.md`**：阶段 7 条目补全结果 + 进度行
+- **`assessments/20261016/docs/IMPROVEMENT_PLAN_R4.md`**：阶段 7 条目补全结果 + 进度行
   更新；全部 7 阶段标记完成。
 
 ### 剖析结果（本机型，min of 3 samples；纯 CPU，无 PIL）
@@ -65,7 +65,7 @@ P34 R2 CJK 字体 ×2，与整改前基线一致）。*
 
 ### Added
 
-- **`css.py` — @supports 真实属性检查（GPT P1-1）**：
+- **`toy_browser/style/css.py` — @supports 真实属性检查（GPT P1-1）**：
   `_CSS_CAPABILITY_TABLE`（引擎实际解析并消费的 CSS 属性集合）+
   `_SUPPORTED_PROPERTY_VALUES`（属性→值的矩阵，例如
   `position: sticky` 为 False 因为布局阶段未实现粘性定位，
@@ -73,7 +73,7 @@ P34 R2 CJK 字体 ×2，与整改前基线一致）。*
   `supports_matches(condition)` 现在按属性名 + 值级别判断，
   支持 `not` / `and` / `or` 逻辑组合，`selector()`/`font-tech()`
   始终视为支持（玩具语义），未知属性返回 False。
-- **`net.py` — CORS/CSP 策略接入请求流（GPT P0-4）**：
+- **`toy_browser/network/net.py` — CORS/CSP 策略接入请求流（GPT P0-4）**：
   `HttpResponse.is_policy_allowed(requesting_origin, resource_kind,
   resource_url)` 统一执行 CORS（跨源读取需 ACAO 匹配）+ CSP
   （`style-src`/`img-src`/`script-src`/`connect-src` 指令检查）。
@@ -85,14 +85,14 @@ P34 R2 CJK 字体 ×2，与整改前基线一致）。*
   头到子资源加载。
 - **`test.py` 拆分为模块化测试文件（GPT P1-2）**：
   原 11,156 行的 `test.py` 拆分为 7 个模块测试文件
-  （`test_dom.py` / `test_css.py` / `test_js.py` / `test_layout.py` /
-  `test_paint.py` / `test_net.py` / `test_browser.py`）+ 共享
-  辅助函数文件 `test_helpers.py`（23 个辅助函数）。
+  （`tests/test_dom.py` / `tests/test_css.py` / `tests/test_js.py` / `tests/test_layout.py` /
+  `tests/test_paint.py` / `tests/test_net.py` / `tests/test_browser.py`）+ 共享
+  辅助函数文件 `tests/test_helpers.py`（23 个辅助函数）。
   `test.py` 变为薄编排器（99 行），从各模块导入 `TESTS` 列表并
   以原有 try/except 契约运行。所有预存模块测试文件
-  （`test_r1.py` … `test_p34_r6.py`、`test_p0_js_budget.py` 等）
-  新增 `TESTS` 列表。新增 `test_p0_policy.py`（16 条 CORS/CSP
-  策略测试）+ `test_p1_supports.py`（19 条 @supports 测试）。
+  （`tests/test_r1.py` … `tests/test_p34_r6.py`、`tests/test_p0_js_budget.py` 等）
+  新增 `TESTS` 列表。新增 `tests/test_p0_policy.py`（16 条 CORS/CSP
+  策略测试）+ `tests/test_p1_supports.py`（19 条 @supports 测试）。
 - **`README.md` — 功能状态说明（GPT P1-3）**：新增
   "功能状态说明"表格，标注每项功能为
   "已实现 / 部分支持 / 模拟实现 / 尚未实现"（@supports、
@@ -102,9 +102,9 @@ P34 R2 CJK 字体 ×2，与整改前基线一致）。*
 
 ### Changed
 
-- **`browser.py`**：`render_document_from_url` 传递文档 CSP 头到
+- **`toy_browser/app/browser.py`**：`render_document_from_url` 传递文档 CSP 头到
   `load_subresources(doc_csp=...)`。
-- **`net.py`**：`load_subresources` / `load_subresources_parallel`
+- **`toy_browser/network/net.py`**：`load_subresources` / `load_subresources_parallel`
   默认执行 CORS/CSP 策略检查（`enforce_policy=True`），可通过
   `enforce_policy=False` 恢复旧行为（测试用）。
 
@@ -124,10 +124,10 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
 
 ### Added
 
-- **`text.py` — 字体渲染崩溃修复（GLM P0-1）**：`_face_baseline(None)`
+- **`toy_browser/typography/text.py` — 字体渲染崩溃修复（GLM P0-1）**：`_face_baseline(None)`
   现在对 None face 做 `.notdef` 回退而不是崩溃；`wrap()` 中的
   `float()` 类型转换防止 int/float 混用时的 TypeError。
-- **`js.py` — JS 执行预算（GPT P0-1 / GLM P0-2）**：
+- **`toy_browser/scripting/js.py` — JS 执行预算（GPT P0-1 / GLM P0-2）**：
   `Interpreter._steps`/`_budget` 计数每个 eval 步骤；
   `_BudgetExceeded` 异常在超限时抛出；`Host.execute` 捕获并记录日志
   而不崩溃。新增 `Ternary` 节点、`typeof` 一元运算符、零除→
@@ -138,12 +138,12 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
   栈溢出在 JS 守卫的 256 层上限附近触发，需统一 API）。
   `eval_block` 的 `_Return` 捕获仅在非函数帧时生效（函数体直接
   遍历语句，`return` 正常传播到函数级捕获）。
-- **`net.py` — 网络默认超时 + 响应大小上限（GLM P0-3 / GPT P0-5）**：
+- **`toy_browser/network/net.py` — 网络默认超时 + 响应大小上限（GLM P0-3 / GPT P0-5）**：
   `DEFAULT_TIMEOUT = 10.0`；所有 `fetch_*` 函数在 `timeout is None`
   时替换为 `DEFAULT_TIMEOUT`。`MAX_RESPONSE_BYTES = 256 MB`；
   `ResponseTooLarge` 异常；`HttpClient.max_response_bytes` 参数；
   `_single_get` 原始响应体和 gunzip 解压体均受上限约束。
-- **`cookie_store.py` — Cookie 安全边界（GPT P0-3）**：
+- **`toy_browser/network/cookie_store.py` — Cookie 安全边界（GPT P0-3）**：
   `Cookie.secure`/`http_only`/`same_site` 标志；
   `parse_set_cookie` 解析 `Secure`/`HttpOnly`/`SameSite` 属性，
   拒绝无 `Secure` 的 `SameSite=None`，通过 `_domain_matches()`
@@ -151,7 +151,7 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
   `CookieJar.cookie_header_for(url, is_cross_site, method,
   is_top_level)` 强制 Secure + SameSite 过滤；
   `for_url` 同步过滤器。
-- **`css.py` — 级联源优先级（GLM P1-1）**：
+- **`toy_browser/style/css.py` — 级联源优先级（GLM P1-1）**：
   `Rule.source`（"author"/"ua"）；`parse_rulesheet_nocache` 现在
   接受 `source` 参数并传播到每个 Rule；
   `css.apply(..., ua_css="")` 将 UA 表以 `source="ua"` 解析并
@@ -160,17 +160,17 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
   `Selector._simple_matches` 中 `*` 通配符现在匹配所有元素
   （`node.is_element()`），修复了 `* { margin: 0 }` 永远不生效的
   问题。
-- **`browser.py` — head/meta/style display:none（GLM P1-2）**：
+- **`toy_browser/app/browser.py` — head/meta/style display:none（GLM P1-2）**：
   `_default_css()` 首行添加
   `head, meta, link, style, script, title { display: none; }`。
   `render_document_from_url`：`timeout is None` 时使用
   `net.DEFAULT_TIMEOUT`（10 s），不再无限阻塞。
   `devtools_computed_style` 新增 `ua_css` 参数。
-- **`layout.py` — 行内盒子宽度（GLM P1-4）**：
+- **`toy_browser/layout/layout.py` — 行内盒子宽度（GLM P1-4）**：
   `layout_block` 行内 run 循环中，当行内盒子无显式宽度且所有
   子节点为 TEXT 时，通过 `text_mod.measure` 计算文本内容宽度
   + padding，作为 `containing_w` 传入子盒子布局。
-- **`ttf_font.py` — CJK 字体发现（GLM P0-1 配套）**：
+- **`toy_browser/typography/ttf_font.py` — CJK 字体发现（GLM P0-1 配套）**：
   `find_cjk_font` 改用基于 token 的 stem 匹配
   （`_cjk_stem_match`：noto, droid, wqy, wenquanyi, sourcehan,
   cjk, simsun 等），不再依赖字面 basename，修复
@@ -179,11 +179,11 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
 ### Changed
 
 - `browser._full_css` 现在返回 `(author_css, ua_css)` 元组；
-  所有 24 个调用点（`browser.py` 13、`gui.py` 2、`test_p2.py` 4、
-  `test_p3.py` 5）已更新为解包。
+  所有 24 个调用点（`toy_browser/app/browser.py` 13、`toy_browser/app/gui.py` 2、`tests/test_p2.py` 4、
+  `tests/test_p3.py` 5）已更新为解包。
 - `net._single_get` / `post` 新增 `cookie_context` 参数，用于
   SameSite 元数据。
-- `js.py` 的 `CallSpread` 拼接：空数组 `[]` 现在拼接零个参数
+- `toy_browser/scripting/js.py` 的 `CallSpread` 拼接：空数组 `[]` 现在拼接零个参数
   （旧代码会把 `null` 值本身追加为参数）；`null`/`undefined`
   展开也拼接零个参数。
 
@@ -191,7 +191,7 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
 
 - 主测试套件：**807/807 通过**（修复前 805/807，
   `js_call_spread_zero_args` 和 `r1_blit_coverage_render` 已修复）。
-- P0 JS 预算测试（`test_p0_js_budget.py`）：12/12 通过。
+- P0 JS 预算测试（`tests/test_p0_js_budget.py`）：12/12 通过。
 - P34 R1–R6 回归测试：全部通过（P34 R2 中
   `get_glyph_mask_uses_resolved_face` 在本机因 CJK 字体环境
   跳过，非代码回归）。
@@ -225,7 +225,7 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
 - **`layout._build_children` 叶子快路径**（P34.6c）：无子节点的
   box（10k 节点基准中 ~50% 是叶子）直接 `return`，省掉
   `parent_w` / `parent_h` 计算和空 `sn.children` 循环。
-- **`test_p34_r6.py`**：19 条 P34.6 回归测试（继承候选字典、
+- **`tests/test_p34_r6.py`**：19 条 P34.6 回归测试（继承候选字典、
   纯容器快路径、叶子快路径、管线像素不变性、性能阈值）。
 
 ### Changed
@@ -277,7 +277,7 @@ head/meta/style 隐藏、行内盒子宽度、网络默认超时、响应大小�
   从每节点 2 次降为 1 次（10k 文档 43k+ 次 attr 查找 → 21k）。
 - **`layout.clear_caches` 调用 `css.clear_caches`**（P34.5 接线）：
   两次独立文档渲染之间丢弃 CSS 候选缓存 + 文本缓存。
-- **`test_p34_r5.py`**：20 条 P34.5 回归测试（候选缓存命中/重置、
+- **`tests/test_p34_r5.py`**：20 条 P34.5 回归测试（候选缓存命中/重置、
   同身份同结果、shorthand 短路语义、`_adv_char_cache` 幂等性、
   `layout.clear_caches` 联动、管线正确性 + 像素不变性、性能阈值）。
 
@@ -333,7 +333,7 @@ contributes a smaller but measurable improvement on layout.*
   (plain method local) and `DisplayCommand` to `_dc` so the
   constructor name is a local read instead of a module-global
   lookup at every command construction.
-- **`test_p34_r4.py`** — 15 P34.4 regression tests (measure cache
+- **`tests/test_p34_r4.py`** — 15 P34.4 regression tests (measure cache
   correctness, edge cases, `clear_advance_cache` reset semantics,
   `layout.clear_caches` wiring, half-leading cache consistency,
   `_emit` closure refactor regression guards, perf thresholds).
@@ -389,10 +389,10 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
   mixed-script path caches `(ch, face)` → advance in a local dict
   so the hot loop is a single dict hit instead of a
   `resolve_metrics_for_char` function call + method lookup.
-- **`p34r3_perf.py`** — per-stage pipeline benchmark
+- **`tools/benchmarks/p34r3_perf.py`** — per-stage pipeline benchmark
   (parse / css / layout / emit / rasterize) at 1k / 3k / 10k
   nodes.
-- **`test_p34_r3.py`** — 25 P34.3 regression tests (culling
+- **`tests/test_p34_r3.py`** — 25 P34.3 regression tests (culling
   bounds, text fast path correctness, short-text skip-wrap
   consistency, line-clamp slow path preservation, emit `_layer`
   field / sort / empty box).
@@ -432,7 +432,7 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
 
 ### Tests
 
-- 10 new P3 tests (`test_p3.py`): `@font-face` parsing (4 tests) +
+- 10 new P3 tests (`tests/test_p3.py`): `@font-face` parsing (4 tests) +
   SVG/video/audio sizing and placeholder rendering (6 tests).
 - Test count: 797 → **807**.
 
@@ -470,7 +470,7 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
 
 ### Tests
 
-- 21 new P2 tests (`test_p2.py`): CORS (5), CSP (8), Canvas (5),
+- 21 new P2 tests (`tests/test_p2.py`): CORS (5), CSP (8), Canvas (5),
   benchmarks (3). Test count: 776 → **797**.
 
 ---
@@ -497,7 +497,7 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
 - **`gui.TabBrowser` event bindings** — `<Tab>`/`<Shift-Tab>`
   keyboard focus navigation, `<Button-1>` click dispatch,
   `<Motion>` hover tracking, `<Return>` activation.
-- **`web_api.py`** — Web API globals for the toy JS engine:
+- **`toy_browser/scripting/web_api.py`** — Web API globals for the toy JS engine:
   `localStorage` / `sessionStorage` (in-memory, 5 MiB quota,
   `QuotaExceededError`), `WebSocket` (toy: no real I/O,
   `_simulate_message` test hook), `navigator`, `location`,
@@ -512,7 +512,7 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
 
 ### Tests
 
-- 22 new P1 tests (`test_web_api.py`): localStorage (5),
+- 22 new P1 tests (`tests/test_web_api.py`): localStorage (5),
   WebSocket (3), navigator (2), location (3), history (1),
   URL/URLSearchParams (6), JS integration (2), idempotency (1).
   Test count: 754 → **776**.
@@ -539,4 +539,4 @@ short-text skip-wrap dominate the win; emit/rasterize follow.*
 
 ## P33.R1–R4 — Roadmap milestones (completed)
 
-*Details in `ROADMAP.md`.*
+*Details in `docs/ROADMAP.md`.*

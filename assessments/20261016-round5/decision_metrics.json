@@ -1,0 +1,20 @@
+{
+  "representative_5000": {
+    "parse_ms": 176.3109000021359,
+    "style_ms": 1075.618000002578,
+    "layout_ms": 3319.0210000029765,
+    "emit_ms": 1336.1924000055296,
+    "raster_ms": 151.12029999727383,
+    "png_ms": 571.0313000017777,
+    "commands": 15000,
+    "render_total_ms": 6058.262600010494
+  },
+  "raster_fraction": 0.024944494812260545,
+  "zero_cost_raster_theoretical_speedup": 1.0255826408645914,
+  "photoimage_conversion_median_ms": 1208.905200008303,
+  "navigation_handler_median_ms": 1526.9283999950858,
+  "pending_timer_median_ms": 1527.2429000033299,
+  "rgba8_800_600_mib": 1.8310546875,
+  "rgba8_1080p_mib": 7.91015625,
+  "rgba8_4k_mib": 31.640625
+}

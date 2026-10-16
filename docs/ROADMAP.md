@@ -7,14 +7,14 @@
 
 ## 已完成（807/807 测试通过）
 
-- [x] 阶段 1 — HTML 解析（`dom.py`）
-- [x] 阶段 2 — CSS 样式 + 级联 + 内联（`css.py`）
-- [x] 阶段 3 — 盒模型布局（`layout.py`）
-- [x] 阶段 4 — 显示列表 + CPU 光栅化（`paint_engine.py`）
-- [x] 阶段 5 — 玩具 JS 引擎 + DOM 绑定 + `setTimeout` FIFO（`js.py`）
+- [x] 阶段 1 — HTML 解析（`toy_browser/document/dom.py`）
+- [x] 阶段 2 — CSS 样式 + 级联 + 内联（`toy_browser/style/css.py`）
+- [x] 阶段 3 — 盒模型布局（`toy_browser/layout/layout.py`）
+- [x] 阶段 4 — 显示列表 + CPU 光栅化（`toy_browser/rendering/paint_engine.py`）
+- [x] 阶段 5 — 玩具 JS 引擎 + DOM 绑定 + `setTimeout` FIFO（`toy_browser/scripting/js.py`）
 - [x] 阶段 6（部分）— `urllib.request` 拉取 URL；`fetch` 沙箱只允许 http(s)
 - [x] 阶段 7（部分）— iframe 占位框、跨源 src 白名单、子 DOM 隔离
-- [x] 文本 8×8 位图字体 + 换行/对齐（`text.py` + `font.py`）
+- [x] 文本 8×8 位图字体 + 换行/对齐（`toy_browser/typography/text.py` + `toy_browser/typography/font.py`）
 - [x] 坐标命中测试 + 事件循环（`layout.hit_test` + `browser.render_document_with_click`）
 
 ---
@@ -23,14 +23,14 @@
 
 ### 0.1 图片 `<img>` 支持（阶段 15 Embedded Content）✅
 
-- [x] `layout.py`：`img` box 读 `width`/`height` DOM 属性，缺省 32×32。
-- [x] `paint_engine.py`：灰色填充 + 1px 边框 + `img: <src>` 角标文字。
+- [x] `toy_browser/layout/layout.py`：`img` box 读 `width`/`height` DOM 属性，缺省 32×32。
+- [x] `toy_browser/rendering/paint_engine.py`：灰色填充 + 1px 边框 + `img: <src>` 角标文字。
 - [x] 测试：`test_img_placeholder`、`test_img_explicit_size`、`test_img_paints`。
 
 ### 0.2 表单控件渲染（阶段 7 Forms）✅
 
 - [x] `browser._default_css()`：`button` 1px 边框 + 4px 内边距；`input` 1px 边框。
-- [x] `layout.py`：`input[type=text]` 固定 160×20 占位框。
+- [x] `toy_browser/layout/layout.py`：`input[type=text]` 固定 160×20 占位框。
 - [x] 测试：`test_button_border`、`test_input_placeholder`。
 
 ### 0.3 CSS 选择器扩展（阶段 2 深化）✅
@@ -121,11 +121,11 @@
 
 ### 3.1 内嵌图片解码（阶段 15 深化）✅
 
-- [x] `layout.py`：`_decode_data_uri()` 解析 `data:` URI（base64 解码 + 最小 PNG 解码器）。
+- [x] `toy_browser/layout/layout.py`：`_decode_data_uri()` 解析 `data:` URI（base64 解码 + 最小 PNG 解码器）。
 - [x] `data:image/octet-stream;base64,…` — 原始 RGB 字节（w×h×3）直接映射。
 - [x] `data:image/png;base64,…` — 最小 PNG 解码器（IHDR + zlib IDAT + 5 种行滤波器）。
 - [x] 无显式 width/height 时，使用像素缓冲的固有尺寸（intrinsic size）。
-- [x] `paint_engine.py`：`DisplayCommand("img", …)` + 最近邻缩放渲染。
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand("img", …)` + 最近邻缩放渲染。
 - [x] 测试：`test_embedded_img_base64`、`test_embedded_img_intrinsic_size`、`test_embedded_img_png_data_uri`。
 
 ### 3.2 Flexbox 深化（阶段 3 扩展）✅
@@ -144,7 +144,7 @@
 
 ### 3.4 CSS Transition（阶段 11 扩展）✅
 
-- [x] `transition.py`：`TransitionSpec`（属性名 + 起/止值 + 帧数）+ `TransitionEngine`（帧推进 + 线性插值）。
+- [x] `toy_browser/style/transition.py`：`TransitionSpec`（属性名 + 起/止值 + 帧数）+ `TransitionEngine`（帧推进 + 线性插值）。
 - [x] `browser.run_transition(html, css, w, h, element_id, start, end, frames)` → 返回 N+1 帧 Bitmap。
 - [x] 支持颜色（RGB 各通道插值）与标量（width/opacity 等）属性。
 - [x] 测试：`test_transition_color_interpolation`、`test_transition_render_frames`、`test_transition_lerp_color`。
@@ -160,7 +160,7 @@
 
 ### 4.1 动画时间线 / @keyframes（阶段 11 扩展）✅
 
-- [x] `css.py`：`@keyframes` 解析器（`from` / `to` / `NN%` 关键帧选择器，`Keyframe` / `Animation` 数据类）。
+- [x] `toy_browser/style/css.py`：`@keyframes` 解析器（`from` / `to` / `NN%` 关键帧选择器，`Keyframe` / `Animation` 数据类）。
 - [x] `css.apply_animation_frame(styled, element_id, anim, t)` — 在两个相邻关键帧之间做属性插值（颜色 / 标量 / Length / Keyword）。
 - [x] `transition.lerp_value(v1, v2, t)` — 统一插值器（Color、Length、Keyword、标量）。
 - [x] `browser.animate_keyframes(html, css, w, h, element_id, anim_name, frames)` → 返回 N+1 帧 `Bitmap`。
@@ -199,19 +199,19 @@
 
 ### 5.1 CSS 视觉特效深化（阶段 11 扩展）✅
 
-- [x] `layout.py`：`border-radius`（px 圆角）、`box-shadow`（X/Y/blur/color）、`transform:translate(x,y)` 解析并存入 `LayoutBox`。
-- [x] `paint_engine.py`：`"rounded"` 命令（圆角矩形填充，逐像素圆形测试）+ `"shadow"` 命令（阴影扩展 + alpha 混合）+ transform 平移。
+- [x] `toy_browser/layout/layout.py`：`border-radius`（px 圆角）、`box-shadow`（X/Y/blur/color）、`transform:translate(x,y)` 解析并存入 `LayoutBox`。
+- [x] `toy_browser/rendering/paint_engine.py`：`"rounded"` 命令（圆角矩形填充，逐像素圆形测试）+ `"shadow"` 命令（阴影扩展 + alpha 混合）+ transform 平移。
 - [x] 测试：`test_border_radius_layout`、`test_border_radius_render_clips_corner`、`test_box_shadow_render`、`test_transform_translate_render`。
 
 ### 5.2 CSS float（阶段 3 扩展）✅
 
-- [x] `layout.py`：`float: left` / `float: right` 解析 + 浮动定位（子元素固定在容器指定侧，后续内容环绕）。
+- [x] `toy_browser/layout/layout.py`：`float: left` / `float: right` 解析 + 浮动定位（子元素固定在容器指定侧，后续内容环绕）。
 - [x] 测试：`test_float_left_layout`、`test_float_right_layout`。
 
 ### 5.3 JS 数组高阶方法 + console.assert（阶段 5 深化）✅
 
-- [x] `js.py`：`Array.map`、`filter`、`forEach`、`join`、`reverse`、`concat`。
-- [x] `js.py`：`console.assert(cond, msg)` — 条件为假时记录失败消息。
+- [x] `toy_browser/scripting/js.py`：`Array.map`、`filter`、`forEach`、`join`、`reverse`、`concat`。
+- [x] `toy_browser/scripting/js.py`：`console.assert(cond, msg)` — 条件为假时记录失败消息。
 - [x] 测试：`test_js_array_map_join`、`test_js_array_filter`、`test_js_array_reverse_concat`、
   `test_js_array_foreach`、`test_console_assert_false`、`test_console_assert_true_silent`。
 
@@ -226,22 +226,22 @@
 
 ### 6.1 position: absolute（阶段 3 扩展）✅
 
-- [x] `layout.py`：`position: absolute` + `top` / `left` 解析 → `LayoutBox.is_absolute` / `abs_top` / `abs_left`。
+- [x] `toy_browser/layout/layout.py`：`position: absolute` + `top` / `left` 解析 → `LayoutBox.is_absolute` / `abs_top` / `abs_left`。
 - [x] `layout_block`：绝对定位子元素跳过文档流，相对父内容区按 `top` / `left` 偏移放置。
 - [x] 测试：`test_abs_position_layout`、`test_abs_position_render`、`test_abs_position_top_left_offset`。
 
 ### 6.2 text-overflow / line-clamp（阶段 11 扩展）✅
 
-- [x] `layout.py`：`text-overflow: ellipsis` + `line-clamp: N` 解析 → `LayoutBox.text_overflow` / `line_clamp`；
+- [x] `toy_browser/layout/layout.py`：`text-overflow: ellipsis` + `line-clamp: N` 解析 → `LayoutBox.text_overflow` / `line_clamp`；
   向 `TEXT` 子盒传播。
-- [x] `paint_engine.py`：文本发射时按 `max_width` 截断并追加 `…`；`line-clamp` 限制行数。
+- [x] `toy_browser/rendering/paint_engine.py`：文本发射时按 `max_width` 截断并追加 `…`；`line-clamp` 限制行数。
 - [x] 测试：`test_text_overflow_ellipsis_stored`、`test_line_clamp_layout`。
 
 ### 6.3 JS 内置对象深化（阶段 5 深化）✅
 
-- [x] `js.py`：`Array.reduce(fn, init?)` — 累加器折叠（支持初始值 / 首元素两种模式）。
-- [x] `js.py`：`Object` 内置对象 — `Object.keys(obj)` / `Object.values(obj)`（跳过 `__` 前缀内部键）。
-- [x] `js.py`：`String.repeat(n)` / `padStart(len, fill)` / `padEnd(len, fill)`。
+- [x] `toy_browser/scripting/js.py`：`Array.reduce(fn, init?)` — 累加器折叠（支持初始值 / 首元素两种模式）。
+- [x] `toy_browser/scripting/js.py`：`Object` 内置对象 — `Object.keys(obj)` / `Object.values(obj)`（跳过 `__` 前缀内部键）。
+- [x] `toy_browser/scripting/js.py`：`String.repeat(n)` / `padStart(len, fill)` / `padEnd(len, fill)`。
 - [x] 测试：`test_js_array_reduce`、`test_js_array_reduce_init`、`test_js_object_keys`、
   `test_js_object_values`、`test_js_string_repeat`、`test_js_string_pad_start`、`test_js_string_pad_end`。
 
@@ -256,14 +256,14 @@
 
 ### 7.1 CSS z-index（阶段 11 扩展）✅
 
-- [x] `layout.py`：`z-index` 解析 → `LayoutBox.z_index`。
-- [x] `paint_engine.py`：`DisplayCommand` 增加 `_layer` 标记；`emit_commands` 按层稳定排序
+- [x] `toy_browser/layout/layout.py`：`z-index` 解析 → `LayoutBox.z_index`。
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand` 增加 `_layer` 标记；`emit_commands` 按层稳定排序
   （高层级命令后绘制，同层保持 DOM 序）。
 - [x] 测试：`test_z_index_layout`、`test_z_index_paint_sort`。
 
 ### 7.2 display: table 完整布局（阶段 3 扩展）✅
 
-- [x] `layout.py`：`display: table` + `tr`/`td`/`th` 识别 → `is_table` / `is_table_row` /
+- [x] `toy_browser/layout/layout.py`：`display: table` + `tr`/`td`/`th` 识别 → `is_table` / `is_table_row` /
   `is_table_cell` / `border_collapse` 字段。
 - [x] `_layout_table`：等宽列轨道（`available / n_cols`），行高取该行最高单元格；
   `border-collapse` 存储。
@@ -271,16 +271,16 @@
 
 ### 7.3 JS 数组高阶方法补全（阶段 5 深化）✅
 
-- [x] `js.py`：`Array.find(pred)` — 返回首个匹配元素。
-- [x] `js.py`：`Array.findIndex(pred)` — 返回首个匹配索引，无匹配返回 -1。
-- [x] `js.py`：`Array.some(pred)` — 任一匹配返回 true。
-- [x] `js.py`：`Array.every(pred)` — 全部匹配返回 true。
+- [x] `toy_browser/scripting/js.py`：`Array.find(pred)` — 返回首个匹配元素。
+- [x] `toy_browser/scripting/js.py`：`Array.findIndex(pred)` — 返回首个匹配索引，无匹配返回 -1。
+- [x] `toy_browser/scripting/js.py`：`Array.some(pred)` — 任一匹配返回 true。
+- [x] `toy_browser/scripting/js.py`：`Array.every(pred)` — 全部匹配返回 true。
 - [x] 测试：`test_js_array_find`、`test_js_array_find_index`、`test_js_array_some`、
   `test_js_array_every`。
 
 ### 7.4 position: sticky（阶段 3 扩展）✅
 
-- [x] `layout.py`：`position: sticky` + `top` / `right` / `bottom` / `left` 全向偏移
+- [x] `toy_browser/layout/layout.py`：`position: sticky` + `top` / `right` / `bottom` / `left` 全向偏移
   解析 → `LayoutBox.is_sticky` / `sticky_top` / `sticky_right` / `sticky_bottom` / `sticky_left`。
 - [x] `layout_block`：静态布局下 sticky 盒保持文档流位置，偏移量记录供未来
   滚动感知渲染器使用。
@@ -297,7 +297,7 @@
 
 ### 8.1 CSS :hover / :focus 伪类选择器（阶段 2 扩展）✅
 
-- [x] `css.py`：`Selector` 新增 `pseudo` 字段；`parse` 解析 `a:hover` / `.btn:focus`
+- [x] `toy_browser/style/css.py`：`Selector` 新增 `pseudo` 字段；`parse` 解析 `a:hover` / `.btn:focus`
   右末伪类；`matches(node, interaction_state)` 按交互状态匹配。
 - [x] `css.apply(dom_root, css_text, interaction_state=None)` 透传交互状态；
   `:hover` / `:focus` 规则仅在状态匹配时级联。
@@ -306,7 +306,7 @@
 
 ### 8.2 position: relative（阶段 3 扩展）✅
 
-- [x] `layout.py`：`position: relative` + `top` / `left` 解析 →
+- [x] `toy_browser/layout/layout.py`：`position: relative` + `top` / `left` 解析 →
   `LayoutBox.is_relative` / `rel_top` / `rel_left`。
 - [x] `layout_block`：相对定位盒保留文档流占位，自身按偏移量平移（不影响兄弟流位置）。
 - [x] 测试：`test_relative_position_layout`、`test_relative_position_render`、
@@ -314,18 +314,18 @@
 
 ### 8.3 JS 数组 / 对象 / 字符串方法补全（阶段 5 深化）✅
 
-- [x] `js.py`：`Array.sort()` — 数值排序（无比较器）。
-- [x] `js.py`：`Array.includes(v)` — 线性查找。
-- [x] `js.py`：`Object.entries(o)` — 返回 `[[key, value], …]`（跳过 `__` 前缀键）。
-- [x] `js.py`：`String.startsWith(prefix)` / `endsWith(suffix)`。
+- [x] `toy_browser/scripting/js.py`：`Array.sort()` — 数值排序（无比较器）。
+- [x] `toy_browser/scripting/js.py`：`Array.includes(v)` — 线性查找。
+- [x] `toy_browser/scripting/js.py`：`Object.entries(o)` — 返回 `[[key, value], …]`（跳过 `__` 前缀键）。
+- [x] `toy_browser/scripting/js.py`：`String.startsWith(prefix)` / `endsWith(suffix)`。
 - [x] 测试：`test_js_array_sort`、`test_js_array_includes`、`test_js_object_entries`、
   `test_js_string_starts_with`、`test_js_string_ends_with`。
 
 ### 8.4 CSS letter-spacing / word-spacing / text-transform（阶段 11 扩展）✅
 
-- [x] `layout.py`：`letter-spacing` / `word-spacing`（px）+ `text-transform`
+- [x] `toy_browser/layout/layout.py`：`letter-spacing` / `word-spacing`（px）+ `text-transform`
   （`uppercase` / `lowercase` / `capitalize`）解析 → `LayoutBox` 字段。
-- [x] `paint_engine.py`：文本发射前应用 `text-transform` 大小写变换。
+- [x] `toy_browser/rendering/paint_engine.py`：文本发射前应用 `text-transform` 大小写变换。
 - [x] 测试：`test_text_transform_layout`、`test_text_transform_render_uppercase`、
   `test_letter_spacing_layout`、`test_word_spacing_layout`。
 
@@ -340,9 +340,9 @@
 
 ### 9.1 CSS @media queries（阶段 2 响应式扩展）✅
 
-- [x] `css.py`：`MediaQuery` dataclass + `parse_media_queries(css_text)` 提取所有
+- [x] `toy_browser/style/css.py`：`MediaQuery` dataclass + `parse_media_queries(css_text)` 提取所有
   `@media` 块（条件字符串 + 内部规则列表）。
-- [x] `css.py`：`media_matches(condition, viewport_w, viewport_h)` 评估
+- [x] `toy_browser/style/css.py`：`media_matches(condition, viewport_w, viewport_h)` 评估
   `min-width` / `max-width` / `min-height` / `max-height`（支持 `and` 组合）。
 - [x] `css.apply` 新增 `media_rules` + `viewport_w` / `viewport_h` 参数；
   匹配的 media 规则并入级联。
@@ -353,7 +353,7 @@
 
 ### 9.2 position:absolute / relative 全向偏移（阶段 3 扩展）✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `abs_right` / `abs_bottom` /
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `abs_right` / `abs_bottom` /
   `rel_right` / `rel_bottom` 字段。
 - [x] `build_box`：`position:absolute` / `relative` 解析 `right` / `bottom` 偏移。
 - [x] `layout_block`：absolute 盒按 `right` / `bottom` 从父容器边缘反向偏移；
@@ -363,13 +363,13 @@
 
 ### 9.3 JS 方法补全（阶段 5 深化）✅
 
-- [x] `js.py`：`Array.flat(depth)` — 深度展平（默认 1）。
-- [x] `js.py`：`Array.flatMap(fn)` — map + 一层展平。
-- [x] `js.py`：`Array.map` / `filter` / `forEach` 回调增加第二个参数 `index`。
-- [x] `js.py`：`Object.assign(target, …sources)` — 浅合并。
-- [x] `js.py`：`String.trimStart()` / `trimEnd()`。
-- [x] `js.py`：`Number` 内置对象（`isInteger` / `isNaN` / `parseInt` / `parseFloat`）。
-- [x] `js.py`：`Host.eval(code)` — 表达式求值 API。
+- [x] `toy_browser/scripting/js.py`：`Array.flat(depth)` — 深度展平（默认 1）。
+- [x] `toy_browser/scripting/js.py`：`Array.flatMap(fn)` — map + 一层展平。
+- [x] `toy_browser/scripting/js.py`：`Array.map` / `filter` / `forEach` 回调增加第二个参数 `index`。
+- [x] `toy_browser/scripting/js.py`：`Object.assign(target, …sources)` — 浅合并。
+- [x] `toy_browser/scripting/js.py`：`String.trimStart()` / `trimEnd()`。
+- [x] `toy_browser/scripting/js.py`：`Number` 内置对象（`isInteger` / `isNaN` / `parseInt` / `parseFloat`）。
+- [x] `toy_browser/scripting/js.py`：`Host.eval(code)` — 表达式求值 API。
 - [x] 测试：`test_js_array_flat`、`test_js_array_flat_depth`、
   `test_js_array_flat_map`、`test_js_object_assign`、
   `test_js_object_assign_override`、`test_js_number_is_integer`、
@@ -379,16 +379,16 @@
 
 ### 9.4 CSS 视觉效果深化（阶段 11 扩展）✅
 
-- [x] `layout.py`：`clip-path: inset(T R B L)` 解析 →
+- [x] `toy_browser/layout/layout.py`：`clip-path: inset(T R B L)` 解析 →
   `LayoutBox.clip_enabled` / `clip_inset_*` 字段。
-- [x] `layout.py`：`background: linear-gradient(angle, c1, c2)` 解析 →
+- [x] `toy_browser/layout/layout.py`：`background: linear-gradient(angle, c1, c2)` 解析 →
   `LayoutBox.gradient_enabled` / `gradient_c1` / `gradient_c2` / `gradient_angle`。
-- [x] `layout.py`：`text-shadow: X Y B color` 解析 →
+- [x] `toy_browser/layout/layout.py`：`text-shadow: X Y B color` 解析 →
   `LayoutBox.text_shadow_*` 字段。
-- [x] `paint_engine.py`：`DisplayCommand` 新增 gradient / clip / text-shadow 字段；
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand` 新增 gradient / clip / text-shadow 字段；
   `rasterize` 新增 `"gradient"` 和 `"text_shadow"` 命令类型；
   `_draw_gradient` 逐像素双线性插值；`_apply_clip_path` 后置裁剪。
-- [x] `browser.py`：`render_document_with_hover(html, css, w, h, hover_id)` API
+- [x] `toy_browser/app/browser.py`：`render_document_with_hover(html, css, w, h, hover_id)` API
   — 传入 `{"hover": hover_id}` 交互态，`:hover` 规则生效。
 - [x] 测试：`test_clip_inset_layout`、`test_clip_inset_4val_layout`、
   `test_linear_gradient_layout`、`test_linear_gradient_render`、
@@ -405,23 +405,23 @@
 
 ### 10.1 CSS :first-child / :last-child / :nth-child(n) 伪类（阶段 2 扩展）✅
 
-- [x] `css.py`：`Selector` 支持 `:first-child` / `:last-child` / `:nth-child(N)` /
+- [x] `toy_browser/style/css.py`：`Selector` 支持 `:first-child` / `:last-child` / `:nth-child(N)` /
   `:nth-child(even)` / `:nth-child(odd)` / `:nth-child(An+B)`。
-- [x] `css.py`：`Selector._child_index(node)` / `_is_first_child` / `_is_last_child` /
+- [x] `toy_browser/style/css.py`：`Selector._child_index(node)` / `_is_first_child` / `_is_last_child` /
   `_nth_matches(pseudo, idx)` 辅助方法。
-- [x] `layout.py`：`LayoutBox.child_index` 字段 — 计算 1-based 元素兄弟索引。
+- [x] `toy_browser/layout/layout.py`：`LayoutBox.child_index` 字段 — 计算 1-based 元素兄弟索引。
 - [x] `Selector.parse` 更新：识别 `:first-child` / `:last-child` / `:nth-child(...)`。
 - [x] 测试：`first_child_layout`、`last_child_layout`、`nth_child_odd`、
   `nth_child_an_plus_b`、`nth_child_specificity`。
 
 ### 10.2 JS Map / Set / Array.from / String.replaceAll（阶段 5 深化）✅
 
-- [x] `js.py`：`ToyMap` 类 — `set` / `get` / `has` / `delete` / `size` /
+- [x] `toy_browser/scripting/js.py`：`ToyMap` 类 — `set` / `get` / `has` / `delete` / `size` /
   `keys` / `values` / `entries` / `forEach`。
-- [x] `js.py`：`ToySet` 类 — `add` / `has` / `delete` / `size` / `values` /
+- [x] `toy_browser/scripting/js.py`：`ToySet` 类 — `add` / `has` / `delete` / `size` / `values` /
   `forEach`（自动去重）。
-- [x] `js.py`：`Array.from(iterable, mapFn?)` / `Array.of(...items)`。
-- [x] `js.py`：`String.replaceAll(search, replace)`。
+- [x] `toy_browser/scripting/js.py`：`Array.from(iterable, mapFn?)` / `Array.of(...items)`。
+- [x] `toy_browser/scripting/js.py`：`String.replaceAll(search, replace)`。
 - [x] `call_method` 更新：ToyMap / ToySet 通过 `getattr` 分发 + `size` 属性。
 - [x] 测试：`js_map_basic`、`js_map_delete`、`js_set_basic`、`js_array_from`、
   `js_array_from_mapfn`、`js_array_of`、`js_string_replace_all`、
@@ -429,19 +429,19 @@
 
 ### 10.3 CSS outline + background-image (toy)（阶段 11 扩展）✅
 
-- [x] `layout.py`：`outline` / `outline-width` / `outline-color` 解析 →
+- [x] `toy_browser/layout/layout.py`：`outline` / `outline-width` / `outline-color` 解析 →
   `LayoutBox.outline_width` / `outline_color`（缺省色 black）。
-- [x] `layout.py`：`background-image` 属性 → `LayoutBox.bg_image_set` 标志。
-- [x] `paint_engine.py`：`DisplayCommand.outline_width` / `outline_color` 字段；
+- [x] `toy_browser/layout/layout.py`：`background-image` 属性 → `LayoutBox.bg_image_set` 标志。
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand.outline_width` / `outline_color` 字段；
   `outline` 以 4 条 `rect` 命令在 border 外侧绘制空心环。
 - [x] `layout._raw_str` 修复：`Length` 对象正确返回 `"4px"` 而非 `"4.0"`。
 - [x] 测试：`outline_layout`、`outline_render`、`outline_width_only`。
 
 ### 10.4 JS Error / 嵌套 JSON / Array.toString（阶段 5 深化）✅
 
-- [x] `js.py`：`ToyError` 类 — `message` / `name` 属性；`ToyTypeError` 子类。
-- [x] `js.py`：`JSON.parse` 改用 stdlib `json.loads` — 支持嵌套对象/数组。
-- [x] `js.py`：`Array.toString()` 逗号连接 + 嵌套数组扁平化。
+- [x] `toy_browser/scripting/js.py`：`ToyError` 类 — `message` / `name` 属性；`ToyTypeError` 子类。
+- [x] `toy_browser/scripting/js.py`：`JSON.parse` 改用 stdlib `json.loads` — 支持嵌套对象/数组。
+- [x] `toy_browser/scripting/js.py`：`Array.toString()` 逗号连接 + 嵌套数组扁平化。
 - [x] 测试：`js_error_object`、`js_error_name`、`js_json_nested_parse`、
   `js_json_stringify_nested`、`js_array_to_string`、`js_array_to_string_nested`。
 
@@ -456,7 +456,7 @@
 
 ### 11.1 CSS transition 多属性 + transform（阶段 4 深化）✅
 
-- [x] `transition.py`：`TransitionSpec.value_at` 支持 `("translate", x, y)` 元组
+- [x] `toy_browser/style/transition.py`：`TransitionSpec.value_at` 支持 `("translate", x, y)` 元组
   线性插值；`TransitionEngine.add_multi` 批量添加；`parse_transition_css_multi`
   解析逗号分隔的多属性 transition（`background 1s, opacity 2s, transform 1s`）。
 - [x] `lerp_value` 支持 transform 元组。
@@ -466,7 +466,7 @@
 
 ### 11.2 JS try / catch / finally + throw（阶段 5 深化）✅
 
-- [x] `js.py`：AST 节点 `Try` / `Throw` + `parse_statement` 识别 `try` /
+- [x] `toy_browser/scripting/js.py`：AST 节点 `Try` / `Throw` + `parse_statement` 识别 `try` /
   `throw`；`_Throw` 异常携带值；`Interpreter.this_value` 绑定 `this` 关键字。
 - [x] `Host.execute_event` 将 `this` 绑定到目标元素（onclick 中
   `this.style.display = 'none'` 可用）。
@@ -476,10 +476,10 @@
 
 ### 11.3 CSS @supports 玩具 + display 切换（阶段 2 扩展）✅
 
-- [x] `css.py`：`SupportsRule` dataclass + `parse_supports_blocks` 提取
+- [x] `toy_browser/style/css.py`：`SupportsRule` dataclass + `parse_supports_blocks` 提取
   `@supports` 块；`supports_matches` 玩具永远为 True；`css.apply` 新增
   `supports_rules` 参数并入级联。
-- [x] `layout.py`：display:none 盒保留在布局树中（`is_display_none` 标志 +
+- [x] `toy_browser/layout/layout.py`：display:none 盒保留在布局树中（`is_display_none` 标志 +
   零尺寸 rect），flex / grid / table 布局跳过隐藏子项；
   原有 `display_none` 测试更新为新语义。
 - [x] 测试：`supports_parse`、`supports_matches_always_true`、
@@ -487,11 +487,11 @@
 
 ### 11.4 命中测试 + 事件坐标 API（阶段 4/5 连接）✅
 
-- [x] `browser.py`：`element_at(html, css, w, h, x, y)` →
+- [x] `toy_browser/app/browser.py`：`element_at(html, css, w, h, x, y)` →
   `{"id", "tag", "rect"}` 或 `None`。
-- [x] `browser.py`：`event_target(html, css, w, h, x, y)` 命中并执行
+- [x] `toy_browser/app/browser.py`：`event_target(html, css, w, h, x, y)` 命中并执行
   onclick，返回元素 id。
-- [x] `browser.py`：`click_and_render(html, css, w, h, x, y)` →
+- [x] `toy_browser/app/browser.py`：`click_and_render(html, css, w, h, x, y)` →
   `(id, Bitmap)` 元组。
 - [x] 全部渲染 API 接入 `@supports` 级联。
 - [x] 测试：`element_at_basic`、`element_at_miss`、`event_target_runs_handler`、
@@ -508,7 +508,7 @@
 
 ### 12.1 多属性 @keyframes + Web Animations 迷你 API（阶段 4 深化）✅
 
-- [x] `css.py`：`KeyframeTrack` dataclass（property + samples + duration）+
+- [x] `toy_browser/style/css.py`：`KeyframeTrack` dataclass（property + samples + duration）+
   `AnimationHandle`（tracks、`frame_overrides(t)`、`update(t)`、
   `playState` / `currentTime` / `iterations` 字段）。
 - [x] `css.build_keyframe_handle(anim)` — 将 `@keyframes` 声明按属性分组
@@ -521,7 +521,7 @@
 
 ### 12.2 JS class / extends / constructor / super（阶段 5 深化）✅
 
-- [x] `js.py`：AST 节点 `ClassDecl` / `NewExpr`；`parse_class` 解析
+- [x] `toy_browser/scripting/js.py`：AST 节点 `ClassDecl` / `NewExpr`；`parse_class` 解析
   `class X extends Y { constructor(…) { super(…) } method() { super.m() } }`。
 - [x] `ToyClass` — dict 实例（`__instance_of__` / `__class__` /
   `__parent__`）；构造函数设置 `this.x` 字段；`super()` 通过
@@ -541,7 +541,7 @@
 
 ### 12.3 CSS calc() 玩具 + media 复合条件（阶段 2 扩展）✅
 
-- [x] `css.py`：`parse_calc(expr)` — 两个操作数之间支持二元 `+` / `-`，
+- [x] `toy_browser/style/css.py`：`parse_calc(expr)` — 两个操作数之间支持二元 `+` / `-`，
   可选单位；`em` → `px`（1em = 16px）；不支持的单位组合回退为
   `Keyword(f"calc({expr})")`；裸数字 → `Length` 或 `Keyword`。
 - [x] `css.parse_value` 接入 `calc()` 分支；
@@ -555,9 +555,9 @@
 
 ### 12.4 mousemove 状态机 + 预渲染回调（阶段 4/5 连接）✅
 
-- [x] `browser.py`：`render_document_with_hover_at(html, css, w, h, x, y)`
+- [x] `toy_browser/app/browser.py`：`render_document_with_hover_at(html, css, w, h, x, y)`
   — 通过 `element_at` 命中测试将 `:hover` 应用到目标元素。
-- [x] `browser.py`：`render_document_with_mouse(html, css, w, h, events,
+- [x] `toy_browser/app/browser.py`：`render_document_with_mouse(html, css, w, h, events,
   on_before_render=None, log_sink=None)` — 驱动 mousemove / mouseleave /
   click 事件序列，返回每事件一帧的 `list[Bitmap]`；状态 =
   `{"hover": id, "mouse": (x, y)}`；`on_before_render(state, i)` 回调
@@ -578,7 +578,7 @@
 
 ### 13.1 JS 解构赋值 + 对象展开运算符（阶段 5 深化）✅
 
-- [x] `js.py`：`DestructuringDecl` AST 节点（`let {a, b} = obj` /
+- [x] `toy_browser/scripting/js.py`：`DestructuringDecl` AST 节点（`let {a, b} = obj` /
   `let [x, y] = arr`）；`parse_destructuring` 解析对象解构
   （支持 `key: alias` 重命名）和数组解构（按位置绑定）。
 - [x] `ObjectSpread` AST 节点：`{...obj}` 展开语法；`parse_object_lit`
@@ -592,7 +592,7 @@
 
 ### 13.2 JS 字符串模板字面量（阶段 5 深化）✅
 
-- [x] `js.py` 词法器：反引号 `` ` `` 触发模板字面量分支，将文本块发射为
+- [x] `toy_browser/scripting/js.py` 词法器：反引号 `` ` `` 触发模板字面量分支，将文本块发射为
   `"tpl"` token，`${` 发射 `"open_tpl"` + 内部表达式 token 序列 +
   `"close_tpl"`。
 - [x] `TemplateLit` AST 节点：`chunks` 交替存放文本（str）与插值表达式
@@ -605,10 +605,10 @@
 
 ### 13.3 CSS filter 效果 (blur / brightness / contrast)（阶段 4 深化）✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `filter_blur` / `filter_brightness` /
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `filter_blur` / `filter_brightness` /
   `filter_contrast` / `filter_enabled` 字段；`build_box` 解析
   `filter: blur(Npx) / brightness(N%) / contrast(N%)`。
-- [x] `paint_engine.py`：`DisplayCommand` 新增 filter 字段；`emit_commands`
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand` 新增 filter 字段；`emit_commands`
   将 filter 参数透传到 rect / rounded / gradient 命令；`rasterize` 末尾
   调用 `_apply_filters` 后处理：brightness/contrast 直接变换区域像素，
   blur 用 `(2r+1)²` 盒式平均近似。
@@ -618,12 +618,12 @@
 
 ### 13.4 事件委托 + 输入事件模拟（阶段 5 深化）✅
 
-- [x] `js.py`：`execute_event(element_id, event_name="onclick")` 扩展为
+- [x] `toy_browser/scripting/js.py`：`execute_event(element_id, event_name="onclick")` 扩展为
   通用事件名；P13.4 委托回退——若目标元素没有该 handler，沿 DOM 父链
   向上查找最近的祖先 handler（`this` 仍绑定到目标元素）。
-- [x] `js.py`：`DomElement` 属性读取/写入新增 `value`
+- [x] `toy_browser/scripting/js.py`：`DomElement` 属性读取/写入新增 `value`
   （`eval_element_prop` / `set_element_prop`）。
-- [x] `browser.py`：`render_document_with_mouse` 新增事件类型
+- [x] `toy_browser/app/browser.py`：`render_document_with_mouse` 新增事件类型
   `{"type": "input", "id": …, "value": …}`（设置 input value + 触发
   oninput）和 `{"type": "focus", "id": …}`（触发 onfocus）；
   新增 `_find_element_by_id` DOM 遍历辅助函数。
@@ -639,15 +639,15 @@
 
 ### 14.1 CSS 滚动容器 (overflow:auto + scroll-top/scroll-left) ✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `overflow_x` / `overflow_y` /
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `overflow_x` / `overflow_y` /
   `scroll_left` / `scroll_top` 字段；`build_box` 解析 `overflow:auto`、
   `overflow:scroll`、`overflow-x` / `overflow-y` 及内联
   `scroll-top: Npx` / `scroll-left: Npx`。
-- [x] `paint_engine.py`：`DisplayCommand` 新增 scroll 字段；
+- [x] `toy_browser/rendering/paint_engine.py`：`DisplayCommand` 新增 scroll 字段；
   `emit_commands` 中 scroll 容器子命令通过 `_tag_scroll` 偏移
   并标记 `scroll_enabled`；`rasterize` 末尾调用
   `_apply_scroll_clips` 后处理，将超出滚动视口的像素擦白。
-- [x] `js.py`：`DomElement` 属性读写新增 `scrollTop` / `scrollLeft`
+- [x] `toy_browser/scripting/js.py`：`DomElement` 属性读写新增 `scrollTop` / `scrollLeft`
   / `offsetWidth` / `offsetHeight` / `overflow`（`eval_element_prop`
   + 惰性 layout cache `_layout_box_for`）。
 - [x] 测试：`css_scroll_container_overflow_auto`、
@@ -657,7 +657,7 @@
 
 ### 14.2 JS 箭头函数（阶段 5 深化）✅
 
-- [x] `js.py` 词法器：`TWO_CHAR_OPS` 新增 `=>`。
+- [x] `toy_browser/scripting/js.py` 词法器：`TWO_CHAR_OPS` 新增 `=>`。
 - [x] `ArrowFunc` AST 节点：`params` / `body` / `is_block`；
   表达式体隐式返回（JS 箭头语义），块体显式 `return`。
 - [x] `parse_primary`：识别 `v => …`（单标识符参数）与
@@ -675,10 +675,10 @@
 
 ### 14.3 CSS text-indent（阶段 3 深化）✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `text_indent` 字段；
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `text_indent` 字段；
   `build_box` 通过 `get_number("text-indent", 0.0)` 解析
   `text-indent: Npx`（支持负值，首行左移）。
-- [x] `paint_engine.py`：文本命令 x 偏移应用 `text_indent`。
+- [x] `toy_browser/rendering/paint_engine.py`：文本命令 x 偏移应用 `text_indent`。
 - [x] 测试：`css_text_indent_layout`、`css_text_indent_render`、
   `css_text_indent_zero_default`、`css_text_indent_negative`、
   `css_text_indent_render_negative`、`css_text_indent_layout_block_child`、
@@ -686,7 +686,7 @@
 
 ### 14.4 CSS @font-face 玩具（阶段 2 深化）✅
 
-- [x] `css.py`：`@font-face` 块解析不崩溃（toy 语义：存储 font-family
+- [x] `toy_browser/style/css.py`：`@font-face` 块解析不崩溃（toy 语义：存储 font-family
   名称，不做真实字体加载）；多个 `@font-face` + `font-family` 引用
   级联安全。
 - [x] 测试：`css_font_face_parse`、`css_font_face_no_crash`。
@@ -700,15 +700,15 @@
 
 ### 15.1 JS 高阶数组方法补全（Infinity / NaN + Array.at）✅
 
-- [x] `js.py`：`Infinity` / `NaN` 作为 JS 字面量支持（`Num(float("inf"))` /
+- [x] `toy_browser/scripting/js.py`：`Infinity` / `NaN` 作为 JS 字面量支持（`Num(float("inf"))` /
   `Num(float("nan"))`），`console.log` / 字符串拼接 / 模板字面量统一渲染
   为 `"Infinity"` / `"NaN"`（不再是 `float('inf')` 字面量或崩溃）。
-- [x] `js.py`：`Number.isNaN` / `Number.isInteger` 支持 Infinity / NaN
+- [x] `toy_browser/scripting/js.py`：`Number.isNaN` / `Number.isInteger` 支持 Infinity / NaN
   浮点值（不再把 `NaN` 当作字符串标识符处理）。
-- [x] `js.py`：`Array.at(index)` 方法 — 支持正/负下标，越界返回 `null`。
-- [x] `js.py`：`Array.flat(Infinity)` 全深度展平（`float("inf")` 触发
+- [x] `toy_browser/scripting/js.py`：`Array.at(index)` 方法 — 支持正/负下标，越界返回 `null`。
+- [x] `toy_browser/scripting/js.py`：`Array.flat(Infinity)` 全深度展平（`float("inf")` 触发
   递归展平至底层）。
-- [x] `js.py`：箭头函数回调可携带 `(v, i)` 双参数（P14.2 已实现，
+- [x] `toy_browser/scripting/js.py`：箭头函数回调可携带 `(v, i)` 双参数（P14.2 已实现，
   P15.1 补充 `filter` 等方法的回归测试）。
 - [x] 测试：`js_array_at_positive`、`js_array_at_negative`、
   `js_infinity_literal`、`js_nan_literal`、`js_flat_infinity`、
@@ -718,24 +718,24 @@
 
 ### 15.2 CSS 滚动容器 JS API 完善（scrollIntoView / scrollBy）✅
 
-- [x] `js.py`：`DomElement.scrollIntoView()` — 记录滚动目标
+- [x] `toy_browser/scripting/js.py`：`DomElement.scrollIntoView()` — 记录滚动目标
   （`log("scrollIntoView: #<id>")`）。
-- [x] `js.py`：`DomElement.scrollBy(dx, dy)` — 记录滚动偏移
+- [x] `toy_browser/scripting/js.py`：`DomElement.scrollBy(dx, dy)` — 记录滚动偏移
   （`log("scrollBy: dx=<dx> dy=<dy>")`）。
-- [x] `js.py`：`DomElement.overflow` 属性读取内联 `overflow` 样式值
+- [x] `toy_browser/scripting/js.py`：`DomElement.overflow` 属性读取内联 `overflow` 样式值
   （无则默认 `"visible"`）。
-- [x] `js.py`：`DomElement.scrollTop` / `scrollLeft` / `offsetWidth` /
+- [x] `toy_browser/scripting/js.py`：`DomElement.scrollTop` / `scrollLeft` / `offsetWidth` /
   `offsetHeight` 属性（惰性 layout cache，P14.1 已实现，P15.2 回归测试）。
 - [x] 测试：`js_scroll_into_view`、`js_scroll_by`、
   `js_scroll_props_readable`、`js_element_overflow_prop`。
 
 ### 15.3 CSS box-decoration-break / -webkit-appearance 玩具 ✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `box_decoration_break` /
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `box_decoration_break` /
   `webkit_appearance` 字段；`build_box` 通过 `sn.get_keyword` 解析
   内联样式 `box-decoration-break: clone|slice` 与
   `-webkit-appearance: none|button|auto`。
-- [x] `js.py`：`DomElement.boxDecorationBreak` / `appearance` 属性
+- [x] `toy_browser/scripting/js.py`：`DomElement.boxDecorationBreak` / `appearance` 属性
   读取内联样式值。
 - [x] 测试：`css_box_decoration_break_layout`、`css_webkit_appearance_layout`、
   `css_box_decoration_default_empty`、`css_webkit_appearance_default_empty`、
@@ -743,16 +743,16 @@
 
 ### 15.4 字体切换渲染（font-family 选择 + 多种位图字体）✅
 
-- [x] `font.py`：新增 `serif` 字体变体（10×8 宽字形，由 8×8 基础字形
+- [x] `toy_browser/typography/font.py`：新增 `serif` 字体变体（10×8 宽字形，由 8×8 基础字形
   右扩 2 列空白生成）；`_FONT_FAMILIES` 注册表；`cell_width(family)` /
   `glyph_for(ch, family)` / `family_from_css(value)` 辅助函数。
-- [x] `text.py`：`char_advance` / `measure` / `wrap` / `draw_text` 全部
+- [x] `toy_browser/typography/text.py`：`char_advance` / `measure` / `wrap` / `draw_text` 全部
   新增 `font_family` 参数（默认 `"monospace"`），`_blit` 支持 8/10 字节
   宽字形。
-- [x] `layout.py`：`LayoutBox.font_family` 字段；`build_box` 签名新增
-  `parent_font_family` 参数（继承链），`css.py` 将 `font-family` 加入
+- [x] `toy_browser/layout/layout.py`：`LayoutBox.font_family` 字段；`build_box` 签名新增
+  `parent_font_family` 参数（继承链），`toy_browser/style/css.py` 将 `font-family` 加入
   `INHERITED_PROPS`。
-- [x] `paint_engine.py`：文本命令传 `font_family` 给 `draw_text`。
+- [x] `toy_browser/rendering/paint_engine.py`：文本命令传 `font_family` 给 `draw_text`。
 - [x] 测试：`font_cell_widths`、`font_family_from_css`、
   `font_measure_family`、`css_font_family_layout`、
   `css_font_family_inheritance`、`css_font_family_unknown_fallback`、
@@ -767,13 +767,13 @@
 
 ### 16.1 JS 对象展开运算符 + 数组展开 + 调用参数展开 ✅
 
-- [x] `js.py` 词法器：`THREE_CHAR_OPS = ["..."]`（spread 操作符，
+- [x] `toy_browser/scripting/js.py` 词法器：`THREE_CHAR_OPS = ["..."]`（spread 操作符，
   优先于 2-char 匹配）；`parse_array_lit` 支持 `[...xs, 3]`
   （`ArraySpread` AST 节点）；`parse_arg_list` 支持 `f(...xs)`
   （`CallSpread` AST 节点）。
 - [x] 解释器：`ArrayLit` 求值时 splice 展开元素；`Call` 求值时
   展开调用参数；嵌套对象展开 `{z: 3, ...a, y: 99}` 回归测试。
-- [x] `js.py`：`===` / `!==` 严格相等操作符词法支持（3-char token，
+- [x] `toy_browser/scripting/js.py`：`===` / `!==` 严格相等操作符词法支持（3-char token，
   优先于 `==` / `!=`）。
 - [x] 测试：`js_array_spread`、`js_array_spread_empty`、
   `js_array_spread_multiple`、`js_array_spread_non_list`、
@@ -783,7 +783,7 @@
 
 ### 16.2 JS 可选链 + 空值合并（?. / ??）✅
 
-- [x] `js.py` 词法器：`?.` 加入 `TWO_CHAR_OPS`（优先于单 `.`）。
+- [x] `toy_browser/scripting/js.py` 词法器：`?.` 加入 `TWO_CHAR_OPS`（优先于单 `.`）。
 - [x] `OptionalChain` AST 节点：`base` / `prop` / `call` / `call_args`；
   `parse_postfix` 识别 `a?.b` / `a?.b()` / `a?.[b]` / `f?.(args)` 四种
   形式；base 为 null 时短路返回 null。
@@ -801,7 +801,7 @@
 
 ### 16.3 CSS 文本增强（text-justify / word-break / hyphens toy）✅
 
-- [x] `layout.py`：`LayoutBox` 新增 `text_justify` / `word_break` /
+- [x] `toy_browser/layout/layout.py`：`LayoutBox` 新增 `text_justify` / `word_break` /
   `hyphens` 字段；`build_box` 通过 `sn.get_keyword` 解析内联样式。
 - [x] 测试：`css_text_justify_layout`、`css_word_break_layout`、
   `css_hyphens_layout`、默认值 + 各取值（`keep-all` / `inter-word` /
@@ -809,7 +809,7 @@
 
 ### 16.4 CSS scroll-snap 玩具 + 粘性定位深化 ✅
 
-- [x] `layout.py`：`LayoutBox.scroll_snap_type` 字段；`build_box`
+- [x] `toy_browser/layout/layout.py`：`LayoutBox.scroll_snap_type` 字段；`build_box`
   解析 `scroll-snap-type: x mandatory` / `y proximity` / `x both` /
   `none`（toy 语义：存储，不影响静态布局）。
 - [x] 与 `overflow:scroll` 共存回归测试。
@@ -829,7 +829,7 @@
 
 ### 17.1 TTF/OTF 头部表解析（head / hhea / hmtx / maxp / OS/2）✅
 
-- [x] `ttf_font.py`（新模块，纯标准库 `struct`）：解析 sfnt 头部、
+- [x] `toy_browser/typography/ttf_font.py`（新模块，纯标准库 `struct`）：解析 sfnt 头部、
   表目录、`head`（unitsPerEm）、`hhea`（ascent / descent / lineGap）、
   `maxp`（numGlyphs）、`hmtx`（advance + LSB per glyph）、`OS/2`
   （weightClass）。
@@ -839,7 +839,7 @@
 
 ### 17.2 glyf / loca 轮廓提取（二次贝塞尔 + 复合字形）✅
 
-- [x] `ttf_font.py`：`_read_loca`（short/long 自适应）、`_read_glyf`、
+- [x] `toy_browser/typography/ttf_font.py`：`_read_loca`（short/long 自适应）、`_read_glyf`、
   `_parse_simple_glyph`（endPtsOfContours + flags 重复编码 + 累计
   delta 坐标）、`_parse_composite_glyph`（递归解析组件字形 + 仿射
   变换到父坐标系）、`_extract_glyph`（统一入口）。
@@ -853,11 +853,11 @@
 
 ### 17.3 cmap 逆向查询 + advance width 替换估算 ✅
 
-- [x] `ttf_font.py`：`_parse_cmap`（format 4 + format 12，platform 3/1
+- [x] `toy_browser/typography/ttf_font.py`：`_parse_cmap`（format 4 + format 12，platform 3/1
   优先，子表偏移相对于 cmap 表起始）；`FontMetrics.advance_width(ch,
   font_px)` 用真实 hmtx 值替换固定 8px/字符估算。
 - [x] 缺字形 fallback：CJK / 未映射字符返回宽格（`int(font_px)`）。
-- [x] `text.py`：`advance_text` / `measure` 使用 TTF 逐字符 advance；
+- [x] `toy_browser/typography/text.py`：`advance_text` / `measure` 使用 TTF 逐字符 advance；
   `line_height_px` 使用 TTF ascent/descent/lineGap；`draw_text` 逐字符
   推进（比例字距）。
 - [x] 测试：`ttf_cmap_lookup`、`ttf_advance_width`、
@@ -867,10 +867,10 @@
 
 ### 17.4 @font-face 升级：加载真实字体文件 + font-weight 双字重切换 ✅
 
-- [x] `ttf_font.py`：`load_font_for_family(family, font_px, bold,
+- [x] `toy_browser/typography/ttf_font.py`：`load_font_for_family(family, font_px, bold,
   search_dirs)` — 按 family → 文件名注册表 + fallback 链定位
   TTF/OTF 文件；`_font_cache` 缓存。
-- [x] `font.py`：`init_real_fonts(search_dirs)` 启动时加载
+- [x] `toy_browser/typography/font.py`：`init_real_fonts(search_dirs)` 启动时加载
   serif / monospace 真实字体；`get_real_metrics(family)` 查询。
 - [x] 双字重：`arial.ttf`（weight=400）+ `arialbd.ttf`（weight=700）
   通过 `weight_class` 区分。
@@ -890,11 +890,11 @@
 
 ### 18.1 半领导者模型：ascent / descent + 行盒垂直居中 ✅
 
-- [x] `layout.py` 文本盒：`font_ascent_px` / `font_descent_px` /
+- [x] `toy_browser/layout/layout.py` 文本盒：`font_ascent_px` / `font_descent_px` /
   `baseline_y` 新字段；`line_height_px > em_box` 时计算
   `half_lead = (line_h - em_box) / 2`，文本盒 y 偏移 `half_lead`，
   文字垂直居中于行盒。
-- [x] `css.py`：`INHERITED_PROPS` 扩展 `line-height` / `text-align` /
+- [x] `toy_browser/style/css.py`：`INHERITED_PROPS` 扩展 `line-height` / `text-align` /
   `text-transform` / `font-family`；`line_height_px()` 优先 TTF 自然
   行高（ascent/descent/lineGap），无 TTF 时回退 `prop_font_px()`。
 - [x] 测试：`p18_half_leading_baseline`、`p18_font_ascent_descent_fields`、
@@ -902,7 +902,7 @@
 
 ### 18.2 内联元素跨行拆分 + 样式保留 ✅
 
-- [x] `layout.py` 内联 run 循环：`<a>` / `<span>` 内联盒子
+- [x] `toy_browser/layout/layout.py` 内联 run 循环：`<a>` / `<span>` 内联盒子
   携带自身 `text_color` / `background` / `border_color`，跨行时
   样式不丢；内联 run 高度取 `max(child_h, line_height_px)`。
 - [x] 测试：`p18_inline_link_cross_line`、`p18_render_inline_styles_preserved`、
@@ -910,7 +910,7 @@
 
 ### 18.3 vertical-align 玩具版（baseline / top / middle）+ 行内图片抬高行高 ✅
 
-- [x] `layout.py`：`LayoutBox.vertical_align` 新字段；`build_box`
+- [x] `toy_browser/layout/layout.py`：`LayoutBox.vertical_align` 新字段；`build_box`
   解析 `vertical-align` 内联样式；内联 run 中 `top` 对齐到行顶、
   `middle` 垂直居中、`baseline`（默认）不偏移。
 - [x] 行内 `<img>` 参与行高：内联 run 的 `run_h` 取
@@ -920,12 +920,12 @@
 
 ### 18.4 text-align 作用于真实行盒 ✅
 
-- [x] `css.py`：`text-align` 加入 `INHERITED_PROPS`，从父元素
+- [x] `toy_browser/style/css.py`：`text-align` 加入 `INHERITED_PROPS`，从父元素
   继承至文本子节点。
-- [x] `paint_engine.py`：`text_align` 已传递给 `draw_text`
+- [x] `toy_browser/rendering/paint_engine.py`：`text_align` 已传递给 `draw_text`
   （center / right / left）；P18 继承修复后 `text-align` 在
   嵌套 `<div><span>` 场景正确生效。
-- [x] `layout.py` 文本盒：`text-transform` 应用于测量前
+- [x] `toy_browser/layout/layout.py` 文本盒：`text-transform` 应用于测量前
   （uppercase / lowercase / capitalize）。
 - [x] 测试：`p18_text_align_center_line_box`、`p18_text_align_right`、
   `p18_text_transform_uppercase`、`p18_text_transform_lowercase`。
@@ -941,9 +941,9 @@
 
 ### 19.1 UAX#14 简化版断行算法（break class 分级）✅
 
-- [x] `text.py`：`_break_class(ch)` 将字符分为 SP/NS/BA/HY/OP/CL/CM/CJK/AL
+- [x] `toy_browser/typography/text.py`：`_break_class(ch)` 将字符分为 SP/NS/BA/HY/OP/CL/CM/CJK/AL
   九类（简化 UAX#14 常用类别）。
-- [x] `text.py`：`wrap()` 重写为逐字符扫描（替代旧的 `str.split()`
+- [x] `toy_browser/typography/text.py`：`wrap()` 重写为逐字符扫描（替代旧的 `str.split()`
   按词分组）；空格后断行、CJK 逐字断行、`word-break:break-all`
   每字符都是断点。
 - [x] 测试：`p19_english_word_wrap`、`p19_cjk_char_by_char`、
@@ -951,7 +951,7 @@
 
 ### 19.2 CJK 逐字断行 + 禁则处理（行首/行尾禁则字）✅
 
-- [x] `text.py`：`_CJK_NO_LINE_START`（，。！？）〉」】》、…～―
+- [x] `toy_browser/typography/text.py`：`_CJK_NO_LINE_START`（，。！？）〉」】》、…～―
   等）+ `_CJK_NO_LINE_END`（（〈《【〔［「『 等）禁则字符集合。
 - [x] `wrap()` 断行逻辑：禁则字不能出现在行首 → 若下一词以禁则
   字开头且会溢出，将该词拉回当前行（允许轻微溢出）；闭括号
@@ -961,14 +961,14 @@
 
 ### 19.3 &shy; 软连字符 + hyphens 玩具 + word-break/overflow-wrap 补全 ✅
 
-- [x] `dom.py`：`_decode_entities()` 将 `&shy;` 解码为 U+00AD、
+- [x] `toy_browser/document/dom.py`：`_decode_entities()` 将 `&shy;` 解码为 U+00AD、
   `&nbsp;` 为 U+00A0。
-- [x] `text.py` `wrap()`：软连字符（U+00AD）是断行机会；断行时
+- [x] `toy_browser/typography/text.py` `wrap()`：软连字符（U+00AD）是断行机会；断行时
   行末显示 '-'。
-- [x] `layout.py`：`LayoutBox.overflow_wrap` 新字段；`build_box`
+- [x] `toy_browser/layout/layout.py`：`LayoutBox.overflow_wrap` 新字段；`build_box`
   解析 `overflow-wrap` 内联样式；`wrap()` 接收 `word_break` +
   `overflow_wrap` 参数。
-- [x] `css.py`：`overflow-wrap` 加入 `INHERITED_PROPS`。
+- [x] `toy_browser/style/css.py`：`overflow-wrap` 加入 `INHERITED_PROPS`。
 - [x] 测试：`p19_soft_hyphen`、`p19_shy_html_entity`、
   `p19_word_break_all`、`p19_overflow_wrap_break_word`、
   `p19_overflow_wrap_layout`、`p19_word_break_layout`、
@@ -976,7 +976,7 @@
 
 ### 19.4 长单词溢出的最小处理 ✅
 
-- [x] `text.py` `wrap()`：单词本身超过 `width` 时，逐字符折断
+- [x] `toy_browser/typography/text.py` `wrap()`：单词本身超过 `width` 时，逐字符折断
   （不丢失任何字符）；`overflow-wrap:break-word` 触发同样的
   强制断行。
 - [x] 测试：`p19_long_word_overflow`、`p19_render_cjk_wrap`。
@@ -994,7 +994,7 @@
 
 ### 31.1 tkinter 零依赖外壳 ✅
 
-- [x] `gui.py`：`TabBrowser` — tkinter ttk.Notebook 多标签页、
+- [x] `toy_browser/app/gui.py`：`TabBrowser` — tkinter ttk.Notebook 多标签页、
   地址栏、前进/后退/刷新按钮、状态栏 + 进度条。
 - [x] `PageInstance`：每标签独立的 URL、标题、Bitmap、
   前进/后退栈；与渲染管线 `browser.render_document` 解耦。
@@ -1030,7 +1030,7 @@
 > 近似渲染）、覆盖率灰度抗锯齿、合成粗体（无字重文件时的兜底）、
 > 完整字重阶梯、字体回退链、letter-spacing / text-rendering 玩具。
 >
-> 说明：本阶段构建了完整的曲线光栅化机制（`rasterize.py`）+ 字重
+> 说明：本阶段构建了完整的曲线光栅化机制（`toy_browser/typography/rasterize.py`）+ 字重
 > 体系 + 回退链 + CSS 属性接线。TTF 轮廓坐标解析器（`_parse_simple_glyph`）
 > 对部分复杂字形仍有已知的坐标读取缺陷，因此曲线渲染路径经
 > bbox 校验（`ttf_font.outline_valid`）门控：轮廓点数落在字形 bbox 内
@@ -1040,7 +1040,7 @@
 
 ### 20.1 二次贝塞尔曲线填充 + 覆盖率抗锯齿 ✅
 
-- [x] `rasterize.py`：`_flatten_quadratic`（de Casteljau 细分，
+- [x] `toy_browser/typography/rasterize.py`：`_flatten_quadratic`（de Casteljau 细分，
   直线退化为端点、弯曲曲线自适应细分）、`_contour_to_points`
   （TrueType off-curve 中点规则：连续 off-curve 点之间插入其中点
   作为隐式 on-curve 顶点 + y 轴翻转）。
@@ -1124,7 +1124,7 @@
 
 ### 21.1 URL 解析 ✅
 
-- [x] `net.py`：`URL` frozen dataclass（scheme/host/port/path/query/
+- [x] `toy_browser/network/net.py`：`URL` frozen dataclass（scheme/host/port/path/query/
   fragment/user/password）+ `parse_url(url, base=None)` 相对解析
   （WHATWG 规则：`?q`/`#f` 替换 base 的 query/fragment；`/abs` 同 host
   新 path；`//host` scheme-relative；相对 path 按 base 目录 + `..`
@@ -1156,7 +1156,7 @@
   `FetchError`（下载/忽略路径）；4xx/5xx 抛 `FetchError` 携带 status。
 - [x] `error_page_html(title, detail)` + `render_error_page(...)`
   （经完整管线出 Bitmap）：超时 / 连接 / 404 / 500 统一错误页。
-- [x] `gui.py`：http/https 输入走 `net.fetch_html`，`FetchError` →
+- [x] `toy_browser/app/gui.py`：http/https 输入走 `net.fetch_html`，`FetchError` →
   统一错误页（替换 P31 的「M2 前暂不支持」占位页）。
 - [x] `main.py`：URL 输入走 `net` 栈；网络失败退出码 3 + 仍写
   错误页 PPM（不崩）。
@@ -1278,7 +1278,7 @@
 
 ## P24 — HTML5 容错解析（M2 收官硬仗）✅
 
-> 依据 `项目未来规划.txt` §P24：Parser 独立成 `html_pkg/` 子模块、
+> 依据 `项目未来规划.txt` §P24：Parser 独立成 `toy_browser/document/html_pkg/` 子模块、
 > 输入统一为字节流；void elements、自动闭合纠错、格式化元素重构
 > （adoption agency 简化版）、原始文本模式、完整 entities 表、注释 /
 > DOCTYPE / 大小写不敏感。测试目标 492 → 512，实际 492 → **514**
@@ -1286,12 +1286,12 @@
 
 ### 24.1 原始文本模式 + HTML entities 完整表 ✅
 
-- [x] `html_pkg/entities.py` — `decode_entities(text)` 单遍解码命名
+- [x] `toy_browser/document/html_pkg/entities.py` — `decode_entities(text)` 单遍解码命名
   实体（WHATWG 策展子集 ~120 条，覆盖常用字符 / 希腊字母 / 数学
   运算符 / 上下标 / 引号）+ 数字引用（`&#65;` 十进制、`&#x1F600;`
   十六进制，`&#X42;` 大写 X）；码点 0 与代理区 → U+FFFD（规范
   §tokenization）；未知名实体保留原文。
-- [x] `html_pkg/tokenize.py` 的 `RAWTEXT_TAGS`（`script` / `style` /
+- [x] `toy_browser/document/html_pkg/tokenize.py` 的 `RAWTEXT_TAGS`（`script` / `style` /
   `textarea` / `title` / `xmp`）— 内容原样取到匹配的关闭标签为止，
   不做 HTML 解析、不做实体解码（`<script>if (a < b) {}</script>` 内
   的 `<` 不被误判为标签）。
@@ -1323,13 +1323,13 @@
   关闭标签弹出。文本随元素移动。格式化标签族
   （`b i u s em strong small mark sub sup span`）。
 
-### 24.5 Parser 独立成 html_pkg/ 子模块 + 字节流输入 ✅
+### 24.5 Parser 独立成 toy_browser/document/html_pkg/ 子模块 + 字节流输入 ✅
 
-- [x] 新建 `html_pkg/` 包：`node.py`（DOM `Node` + `VOID_TAGS`）、
+- [x] 新建 `toy_browser/document/html_pkg/` 包：`node.py`（DOM `Node` + `VOID_TAGS`）、
   `entities.py`（P24.1）、`tokenize.py`（P24.2/5 词法 + BOM 嗅探
   UTF-8 / UTF-16 LE-BE / Latin-1 回退）、`build.py`（P24.2/3/4 树
   构建）、`__init__.py`（公共 API）。
-- [x] `dom.py` 瘦身为兼容 shim：`import dom` / `from dom import Node`
+- [x] `toy_browser/document/dom.py` 瘦身为兼容 shim：`from toy_browser.document import dom` / `from toy_browser.document.dom import Node`
   继续工作（Node 与 `html_pkg.node.Node` 是同一类对象，`isinstance`
   跨模块有效）；`dom.parse` 接受 str 或 bytes（str 先 UTF-8 编码
   再走字节流契约）。
@@ -1683,7 +1683,7 @@
 
 ### 32.1 历史记录（session.HistoryStore）✅
 
-- [x] `session.py`：`HistoryStore` 全局访问日志，JSON 原子写
+- [x] `toy_browser/app/session.py`：`HistoryStore` 全局访问日志，JSON 原子写
   （`.tmp` + `os.replace`），损坏文件降级为空。
 - [x] `add()` 折叠相邻重复 URL；`about:` 前缀不记录；`recent()`/`all()`/`clear()`。
 - [x] 上限 `max_entries`（默认 500）；`in_memory_only` 供测试。
@@ -1696,14 +1696,14 @@
 - [x] `BookmarkStore`：`{url,title}` 列表，URL 唯一（重复 add 更新标题），
   `add/remove/has/urls/all`，JSON 持久化。
 - [x] `bookmarks_page_html(store)` 渲染 `about:bookmarks` 页 + 空态提示。
-- [x] `gui.py`：`TabBrowser` 挂 `history`/`bookmarks`，书签菜单 +
+- [x] `toy_browser/app/gui.py`：`TabBrowser` 挂 `history`/`bookmarks`，书签菜单 +
   "Bookmark This Page" 动作；`_navigate`/`load_url` 写全局历史。
 - [x] 测试：`p32_bookmarks_add_remove` / `p32_bookmarks_update_title` /
   `p32_bookmarks_persist` / `p32_bookmarks_page_html`。
 
 ### 32.3 Cookie 玩具（cookie_store.CookieJar）✅
 
-- [x] `cookie_store.py`：`parse_set_cookie`（`name=value` +
+- [x] `toy_browser/network/cookie_store.py`：`parse_set_cookie`（`name=value` +
   `Domain`/`Path`/`Max-Age`/`Expires`，`Max-Age<=0` 立即过期，非法丢弃）。
 - [x] `CookieJar` 按 `(name, domain, path)` upsert；`cookie_header_for`
   做 host 后缀 + path 前缀匹配。**无安全边界**（计划明示）。
@@ -1732,7 +1732,7 @@
 - [x] `net.error_page_html(title, detail, category)` 按类别出独立文案：
   `dns`/`connect`/`timeout`/`bad_url`/`redirect`/`http`/空=透传。
 - [x] `categorize_fetch_error(exc)`：异常类型 + 消息启发式归类。
-- [x] `gui.py` 与 `main.py` 网络失败分支统一调用。
+- [x] `toy_browser/app/gui.py` 与 `main.py` 网络失败分支统一调用。
 - [x] 测试：`p32_categorize_dns` / `p32_categorize_timeout` /
   `p32_categorize_connect` / `p32_categorize_bad_url` /
   `p32_categorize_redirect` / `p32_categorize_http_status` /
@@ -1748,7 +1748,7 @@
 
 ### 32.7 M4 重构窗口：ARCHITECTURE.md ✅
 
-- [x] 新增 `ARCHITECTURE.md`：模块边界、数据流、P32 新增模块说明、
+- [x] 新增 `docs/ARCHITECTURE.md`：模块边界、数据流、P32 新增模块说明、
   M5 扩展点、边界不变式。
 - [x] **回归修复**：P30 把 `tag.class` 解析为单一 opaque token
   `("p.x",)`，但 `css._simple_matches` 仍按旧的"单 segment"逻辑，导致
@@ -1958,7 +1958,7 @@ P24.1 原始文本模式 + entities 完整表（~1h）
 P24.2 void elements + 自动闭合纠错（~2h）
 P24.3 注释/DOCTYPE/大小写 + foster parenting（~1h）
 P24.4 格式化元素重构（~1.5h）
-P24.5 html_pkg/ 子模块 + 字节流输入（~2h）
+P24.5 toy_browser/document/html_pkg/ 子模块 + 字节流输入（~2h）
 P25.1 specificity 四元组 + !important 来源级联（~2h）
 P25.2 继承关键字 inherit/initial/unset（~1.5h）
 P25.3 shorthand 展开为 longhand（~1h）
@@ -2041,7 +2041,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [x] 字形 mask 缓存上限 4096（`text._glyph_cache_max`）。
 - [x] `simhei.ttf`（9.7 MB，plain TTF）排在 CJK 面首位，`find_cjk_font`
   耗时 ~7 ms；simsun/msyh .ttc 的 CJK 面是 CFF（upm=1），排除。
-- [x] `mem_guard.py`（P33.R1 新增）：进程级堆内存看门狗，
+- [x] `toy_browser/common/mem_guard.py`（P33.R1 新增）：进程级堆内存看门狗，
   硬上限 6 GB（`MEMORY_CAP_MB`）；`can_load_face` 按文件大小 +
   当前堆预测拒绝超大面；`ttf_font._load_font_path` 接入该门控。
 - [x] `FontMetrics._outline_cache`：逐字形 outline 缓存，上限 4096
@@ -2071,11 +2071,11 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### R1.6 测试（28 条 r1_* + 12 条 mem_guard 测试，657 → 697）✅
 
-- [x] `test_r1.py` 注册 28 条测试，覆盖：TTC 检测 / face count /
+- [x] `tests/test_r1.py` 注册 28 条测试，覆盖：TTC 检测 / face count /
   CJK cmap / simhei glyph / `find_cjk_font` / 前进宽度 clamp /
   字形 mask 缓存 / blit coverage / cmap fmt4 / composite cycle guard /
   候选链 / CJK div 渲染。
-- [x] `test_mem.py` 注册 12 条测试，覆盖：`mem_guard` 6 GB 硬上限 /
+- [x] `tests/test_mem.py` 注册 12 条测试，覆盖：`mem_guard` 6 GB 硬上限 /
   12 MiB 面门控 / 堆探针 / `ttf_font._load_font_path` 接入门控 /
   outline 缓存上限 4096 / 前进宽度数组上限 4096 / 清 registry 后
   re-init 幂等性。
@@ -2103,7 +2103,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 > 在 GUI 里滚动长文档。
 > 测试 697 → **709**（12 条 r2_* 测试）。
 
-### R2.1 网络并发（`net.py`）✅
+### R2.1 网络并发（`toy_browser/network/net.py`）✅
 
 - [x] `HttpClient._conn_pool`：`(scheme, host, port, verify_tls)` 键控的
   keep-alive 连接池，上限 8 条；`close_pool()` 关闭全部。
@@ -2118,7 +2118,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   通过 `load_subresources_parallel` 拉取子资源，把已取回的
   `<style>` / `<link>` 内容拼到 CSS 字符串里再渲染。
 
-### R2.2 GUI 全内容高度 + 滚动条（`gui.py`）✅
+### R2.2 GUI 全内容高度 + 滚动条（`toy_browser/app/gui.py`）✅
 
 - [x] `PageInstance` 新增字段：`yoffset`、`content_height`、
   `_full_bitmap`。
@@ -2134,7 +2134,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### R2.3 测试（12 条 r2_* 测试，697 → 709）✅
 
-- [x] `test_r2.py` 注册 12 条测试，覆盖：连接池存在 /
+- [x] `tests/test_r2.py` 注册 12 条测试，覆盖：连接池存在 /
   键形 / keep-alive 复用 / 死连接不归还 / 池上限 8 /
   data: URI / 真实 4 子资源并行 / 404 → None /
   顺序快速路径 / 滚动最大 / 裁剪行 / 内容高度探测。
@@ -2148,7 +2148,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 > 原型语法糖、Web API 桥（fetch/cookie/localStorage/location）。
 > 测试 709 → **721**（12 条 r3_* 测试）。
 
-### R3.1 块作用域 + TDZ（`js.py`）✅
+### R3.1 块作用域 + TDZ（`toy_browser/scripting/js.py`）✅
 
 - [x] `Env` 重写：`scope` 映射 `name → _Binding`（value + kind +
   initialized 标记）；`let`/`const` 创建块级绑定记录；
@@ -2180,7 +2180,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### R3.4 测试（12 条 r3_* 测试，709 → 721）✅
 
-- [x] `test_r3.py` 注册 12 条测试，覆盖：块作用域 /
+- [x] `tests/test_r3.py` 注册 12 条测试，覆盖：块作用域 /
   const 不可变 / TDZ 读前报 / var 提升 / 嵌套块 /
   for-let 循环 / 后缀前缀自增 / 嵌套函数遮蔽 /
   const 数组可变 / 外层块可见 / while let / 顶层 const 重赋值。
@@ -2190,20 +2190,20 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [ ] `class` / `extends` 原型语法糖（现有 P12.2 `ToyClass`
   已支持构造器 + 继承；下一步：`super()` 链 + `__proto__`）。
 - [ ] Web API 桥：`fetch`（复用 `net.HttpClient` keep-alive 池）、
-  `document.cookie`、`localStorage`（`session.py` 底层）、
+  `document.cookie`、`localStorage`（`toy_browser/app/session.py` 底层）、
   `location`（当前 URL 只读）。
 
 ---
 
 ## P33.R4 — 布局验证（position / z-index / transform / overflow / grid）✅
 
-> 依据 `项目未来规划.txt` R4：验证 `layout.py` 中
+> 依据 `项目未来规划.txt` R4：验证 `toy_browser/layout/layout.py` 中
 > `position:absolute/relative/sticky`、`z-index`、`transform:translate`、
 > `overflow:scroll/hidden/auto` 的字段解析与布局行为，填补 CSS Grid
 > 行累积高度与 scroll 容器 paint 标记的缺口。
 > 测试 721 → **745**（24 条 r4_* 测试）。
 
-### R4.1 布局字段验证（`layout.py` + `paint_engine.py`）✅
+### R4.1 布局字段验证（`toy_browser/layout/layout.py` + `toy_browser/rendering/paint_engine.py`）✅
 
 - [x] `position:absolute`：`is_absolute` + `abs_top/left/right/bottom`
   字段正确存储与偏移应用；right/bottom 从父边缘反向偏移。
@@ -2221,7 +2221,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [x] `overflow-x`/`overflow-y` 分轴指定：`overflow-x:hidden;overflow-y:auto`
   正确分别存储。
 
-### R4.2 CSS Grid 行累积高度修复（`layout.py`）✅
+### R4.2 CSS Grid 行累积高度修复（`toy_browser/layout/layout.py`）✅
 
 - [x] `_layout_grid` 原实现所有子项都放在 `content_y0`（顶部），
   不同行的子项 y 坐标相同。修复为按行累积高度：先计算每行
@@ -2229,7 +2229,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [x] 3 列 × 2 行 grid 的子项正确排列：`c1`(row0,col0) 在
   `c4`(row1,col1) 的上方左侧。
 
-### R4.3 Scroll 容器 paint 标记修复（`paint_engine.py`）✅
+### R4.3 Scroll 容器 paint 标记修复（`toy_browser/rendering/paint_engine.py`）✅
 
 - [x] `_emit` 中 scroll 容器自身的背景/边框命令现在使用
   `emit_tag`（`_tag_scroll`），`scroll_enabled=True` + 滚动偏移
@@ -2239,7 +2239,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### R4.4 测试（24 条 r4_* 测试，721 → 745）✅
 
-- [x] `test_r4.py` 注册 24 条测试，覆盖：
+- [x] `tests/test_r4.py` 注册 24 条测试，覆盖：
   - **absolute**：flag 存储 / right+bottom / top+left 渲染 /
     两个子项不同偏移（4 条）
   - **relative**：flag 存储 / top+left 偏移 / right+bottom（3 条）
@@ -2260,7 +2260,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 > navigator / location / history / URL / URLSearchParams）。
 > 测试 754 → **776**（22 条 p1_* 测试）。
 
-### P1.1 CSS var() 自定义属性 + calc() 完整语义（`css.py` + `layout.py`）✅
+### P1.1 CSS var() 自定义属性 + calc() 完整语义（`toy_browser/style/css.py` + `toy_browser/layout/layout.py`）✅
 
 - [x] `css.CalcExpr` dataclass：`(terms, unit_hint)` 支持混合 %/px 项；
   `parse_calc` 多术语解析器：同单位→`Length`，无单位→`Keyword`，
@@ -2279,7 +2279,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   frozenset（含 `line-height`），`sn.props` dict 直读 width/height/
   color/background（跳过 `_resolve_var` + `_edges_for` + 方法调用）。
 
-### P1.2 GUI 事件模型 + 焦点管理（`gui.py`）✅
+### P1.2 GUI 事件模型 + 焦点管理（`toy_browser/app/gui.py`）✅
 
 - [x] `PageInstance` 事件字段：`hover_id`、`focus_id`、`focus_chain`、
   `active_form_field`、`_form_states`、`_interaction_state`、
@@ -2296,7 +2296,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   `<Motion>` 悬停跟踪（throttled：仅命中变化时重渲染）、
   `<Return>` 激活焦点元素。
 
-### P1.3 表单交互（`gui.py`）✅
+### P1.3 表单交互（`toy_browser/app/gui.py`）✅
 
 - [x] `_form_states` dict：按 DOM 节点索引存储 `value` / `checked`
   / `dirty`；`_set_form_value` / `_toggle_checkbox` 更新状态。
@@ -2306,7 +2306,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   设为 `active_form_field`（键盘输入焦点）、`select` / `textarea`
   同样。
 
-### P1.4 JS Web API（`web_api.py` + `js.py`）✅
+### P1.4 JS Web API（`toy_browser/scripting/web_api.py` + `toy_browser/scripting/js.py`）✅
 
 - [x] `web_api.Storage`：`localStorage` / `sessionStorage`（内存，
   5 MiB 配额，`QuotaExceededError`）。
@@ -2322,7 +2322,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### P1.5 测试（22 条 p1_* 测试，754 → 776）✅
 
-- [x] `test_web_api.py`：localStorage 基本操作（5）、WebSocket（3）、
+- [x] `tests/test_web_api.py`：localStorage 基本操作（5）、WebSocket（3）、
   navigator（2）、location（3）、history（1）、URL/URLSearchParams（6）、
   JS 集成脚本（2）、幂等性（1）。
 
@@ -2334,7 +2334,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 > Canvas 元素渲染支持、性能基准注册进套件。
 > 测试 776 → **797**（21 条 p2_* 测试）。
 
-### P2.1 CORS / CSP（`net.py`）✅
+### P2.1 CORS / CSP（`toy_browser/network/net.py`）✅
 
 - [x] `net.CorsPolicy` dataclass：解析 `Access-Control-Allow-Origin` /
   `Allow-Credentials` / `Allow-Headers`；`permits(origin)` 判断。
@@ -2345,14 +2345,14 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   `HttpResponse.is_csp_violation(kind, source)` toy 执行。
 - [x] `net.is_origin_match(a, b)`：大小写不敏感 + 默认端口归一化。
 
-### P2.2 Canvas 2D 基础（`layout.py` + `paint_engine.py`）✅
+### P2.2 Canvas 2D 基础（`toy_browser/layout/layout.py` + `toy_browser/rendering/paint_engine.py`）✅
 
 - [x] `layout.build_box`：`<canvas>` 读 `width`/`height` DOM 属性，
   缺省 300×150（HTML spec）；CSS 宽度覆盖属性值。
 - [x] `paint_engine`：`<canvas>` 无 CSS 背景时渲染白色占位矩形；
   有 CSS 背景时渲染该背景色。
 
-### P2.3 性能基准注册（`test_p2.py`）✅
+### P2.3 性能基准注册（`tests/test_p2.py`）✅
 
 - [x] `test_p2_bench_1000_nodes_under_100ms`：1000 节点全管线
   （parse+css+layout+paint）墙钟时间（soft threshold，打印实际值）。
@@ -2363,7 +2363,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### P2.4 测试（21 条 p2_* 测试，776 → 797）✅
 
-- [x] `test_p2.py`：CORS（5）、CSP（8）、Canvas（5）、基准（3）。
+- [x] `tests/test_p2.py`：CORS（5）、CSP（8）、Canvas（5）、基准（3）。
 
 ---
 
@@ -2373,7 +2373,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 > SVG/video/audio 占位渲染、LICENSE/CONTRIBUTING/CHANGELOG。
 > 测试 797 → **807**（10 条 p3_* 测试）。
 
-### P3.1 @font-face（`css.py`）✅
+### P3.1 @font-face（`toy_browser/style/css.py`）✅
 
 - [x] `css.FontFace` dataclass：`family` / `src` / `weight` / `style` /
   `unicode_range`；`is_local` 属性（`src` 是否 `local(...)`）；
@@ -2381,7 +2381,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [x] `css.parse_font_faces(css_text)`：扫描 `@font-face` 块，
   解析声明为 `FontFace` 对象列表。
 
-### P3.2 SVG / 媒体占位渲染（`layout.py` + `paint_engine.py`）✅
+### P3.2 SVG / 媒体占位渲染（`toy_browser/layout/layout.py` + `toy_browser/rendering/paint_engine.py`）✅
 
 - [x] `layout.build_box`：`<svg>` / `<video>` / `<audio>` 读
   `width`/`height` DOM 属性，缺省 300×150。
@@ -2392,26 +2392,26 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 ### P3.3 项目元数据 ✅
 
 - [x] `LICENSE`（MIT）。
-- [x] `CONTRIBUTING.md`（代码风格、测试规范、里程碑标签说明）。
-- [x] `CHANGELOG.md`（P33.R1–R5 + P1–P3 完整变更记录）。
+- [x] `docs/CONTRIBUTING.md`（代码风格、测试规范、里程碑标签说明）。
+- [x] `docs/CHANGELOG.md`（P33.R1–R5 + P1–P3 完整变更记录）。
 
 ### P3.4 测试（10 条 p3_* 测试，797 → 807）✅
 
-- [x] `test_p3.py`：@font-face 解析（4）、SVG/video/audio 尺寸
+- [x] `tests/test_p3.py`：@font-face 解析（4）、SVG/video/audio 尺寸
   与占位渲染（6）。
 
 ---
 
 ## P33.R5 — 增量布局 + 区域光栅化 + 布局性能优化 ✅
 
-> 依据 `项目未来规划.txt` R5：为 `layout.py` 增加 `dirty` 子树标记与
-> 脏子树增量布局（`layout_dirty_only`）；为 `paint_engine.py` 增加
+> 依据 `项目未来规划.txt` R5：为 `toy_browser/layout/layout.py` 增加 `dirty` 子树标记与
+> 脏子树增量布局（`layout_dirty_only`）；为 `toy_browser/rendering/paint_engine.py` 增加
 > 区域级重光栅化（`rasterize_region`）；优化 `build_box` 热点路径
 > （child-index 缓存、O(n²)→O(n) 子索引、`_edges_for` 模块级导入、
 > `line_height_px` 每节点缓存）使 1000 节点布局在冷缓存下显著加速。
 > 测试 745 → **754**（9 条 r5_* 测试）。
 
-### R5.1 `LayoutBox.dirty` 标志 + 脏子树标记（`layout.py`）✅
+### R5.1 `LayoutBox.dirty` 标志 + 脏子树标记（`toy_browser/layout/layout.py`）✅
 
 - [x] `LayoutBox` 新增 `dirty: bool = False` 字段。
 - [x] `mark_dirty(bx)`：迭代 DFS 将 `bx` 及全部后代标记为 dirty，幂等。
@@ -2425,7 +2425,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   变更（宽/高/位置/背景）正确；对插入/移除 block 兄弟节点须重跑
   完整 `layout()`。
 
-### R5.2 区域级重光栅化（`paint_engine.py` + `paint.py`）✅
+### R5.2 区域级重光栅化（`toy_browser/rendering/paint_engine.py` + `toy_browser/rendering/paint.py`）✅
 
 - [x] `paint_engine.rasterize_region(bmp, dl, rx, ry, rw, rh)`：
   仅绘制 bbox 与区域 `(rx, ry, rw, rh)` 相交的显示命令；
@@ -2436,7 +2436,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   返回 `(r, g, b)` 元组（0x00RRGGBB u32 反解）。
 - [x] 原有全幅 `rasterize(bmp, w, h)` 路径不变。
 
-### R5.3 布局热点优化（`layout.py` + `css.py` + `text.py` + `font.py`）✅
+### R5.3 布局热点优化（`toy_browser/layout/layout.py` + `toy_browser/style/css.py` + `toy_browser/typography/text.py` + `toy_browser/typography/font.py`）✅
 
 - [x] `build_box` 快速路径：普通 block 元素（无 flex/grid/table/
   position/overflow/float 等特殊属性）跳过 ~50 次属性读取，
@@ -2461,7 +2461,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ### R5.4 测试（9 条 r5_* 测试，745 → 754）✅
 
-- [x] `test_r5.py` 注册 9 条测试，覆盖：
+- [x] `tests/test_r5.py` 注册 9 条测试，覆盖：
   - **dirty 标志**：`dirty` 字段存在 / `mark_dirty` 子树传播 /
     `layout_dirty_only` 仅重布局脏盒子 / 幂等性 / 标记幂等（5 条）
   - **区域光栅化**：`rasterize_region` 存在 / 局部更新像素 /
@@ -2476,12 +2476,12 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ## P33.R2-2 — P2 遗留几何 diff（D1/D2/D3）消除 ✅
 
-> 依据 `assessments/20261015/P2布局几何改进记录.md` 下轮建议顺序：
+> 依据 `assessments/20261015/docs/P2布局几何改进记录.md` 下轮建议顺序：
 > 先修 D1/D2（首子顶边距折叠贯通），再修 D3（表格 collapse 边框
 > 分配）。`toy_layout_runner.py` 布局几何对照 Edge 45/48 → **48/48**
 > （0.6px 容差）；`test.py` 保持 925/925。
 
-### R2-2.1 D1/D2 — 首子顶边距折叠贯通到 body 流起点（`layout.py`）✅
+### R2-2.1 D1/D2 — 首子顶边距折叠贯通到 body 流起点（`toy_browser/layout/layout.py`）✅
 
 - [x] `layout_block`：父为 `<body>` 且顶边可折叠（无 padding/border、
   非 flex/grid/table/BFC/abs/rel）时，首个流内块级子的内容原点推进
@@ -2495,7 +2495,7 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - [x] 连带修正：`test_js_event_loop` 点击坐标 (15,25)→(15,35)
   （button 边框盒顶 19.2→27.2，CSS 正确位置）。
 
-### R2-2.2 D3 — `border-collapse: collapse` 表格列宽分配（`layout.py`）✅
+### R2-2.2 D3 — `border-collapse: collapse` 表格列宽分配（`toy_browser/layout/layout.py`）✅
 
 - [x] collapse 模式下每列自然宽 = 文本 + 全 padding − 半边框对
   （共享边框只绘制一次，边框像素计入列间空隙/表格外缘，不计列内容）；

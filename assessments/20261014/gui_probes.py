@@ -1,6 +1,6 @@
 import sys,json
 from pathlib import Path
-D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));import gui,dom,browser
+D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));from toy_browser.app import gui; from toy_browser.document import dom; from toy_browser.app import browser
 def text(n):return (getattr(n,'text','') or '')+''.join(text(c) for c in n.children)
 html="<html><body><div id='out'>BEFORE</div><script>document.getElementById('out').textContent='AFTER';</script></body></html>"
 p=gui.PageInstance();p.load_html(html,w=400,h=200);browser.write_png(p.bitmap,str(D/'gui_script.png'))

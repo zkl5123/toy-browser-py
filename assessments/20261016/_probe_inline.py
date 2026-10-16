@@ -2,7 +2,7 @@ import sys, json
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-import browser, layout, css, dom
+from toy_browser.app import browser; from toy_browser.layout import layout; from toy_browser.style import css; from toy_browser.document import dom
 
 html = ('<html><head><style>*{box-sizing:border-box} body{margin:0} '
         '.box{width:240px;height:80px;background:#eef;border:2px solid #039;'

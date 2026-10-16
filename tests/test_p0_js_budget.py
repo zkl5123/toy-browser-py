@@ -9,7 +9,7 @@ _project_sys.path.insert(0, str(_PROJECT_ROOT))
 _project_sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "benchmarks"))
 _project_os.chdir(_PROJECT_ROOT)
 
-import js, dom
+from toy_browser.scripting import js; from toy_browser.document import dom
 
 _failures = []
 def check(name, cond, detail=""):

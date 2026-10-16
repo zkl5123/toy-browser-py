@@ -3,7 +3,7 @@ import json,sys,types
 from pathlib import Path
 D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]))
 import tkinter as tk
-import gui
+from toy_browser.app import gui
 root=tk.Tk();root.withdraw();app=gui.TabBrowser(root);out={}
 try:
  app._open_url('about:version');app._open_url('about:bookmarks');app._back();out['back_url']=app.tabs[app.current].url;app._forward();out['forward_url']=app.tabs[app.current].url

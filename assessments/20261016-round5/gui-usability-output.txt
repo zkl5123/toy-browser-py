@@ -1,0 +1,45 @@
+{
+  "scrollbar_drag": {
+    "offset": 0,
+    "max": 1800,
+    "expected_nonzero": true
+  },
+  "scrollbar_up": {
+    "before": 100,
+    "after": 100,
+    "expected_less_than": 100
+  },
+  "enter_button": {
+    "actual": "SAFE",
+    "expected": "CLICKED"
+  },
+  "bindings": {
+    "root_configure": "",
+    "root_keypress": "",
+    "label_mousewheel": "",
+    "viewport_mousewheel": true
+  },
+  "navigation_event_loop": [
+    {
+      "navigation_handler_ms": 1527.7505999983987,
+      "pending_1ms_timer_actual_ms": 2745.2302999881795
+    },
+    {
+      "navigation_handler_ms": 1526.9283999950858,
+      "pending_1ms_timer_actual_ms": 1527.2429000033299
+    },
+    {
+      "navigation_handler_ms": 1516.308400008711,
+      "pending_1ms_timer_actual_ms": 1516.3413000118453
+    }
+  ],
+  "viewport_after_navigation": [
+    800,
+    600
+  ],
+  "photoimage_conversion_ms": [
+    1182.297599996673,
+    1209.1436999908183,
+    1208.905200008303
+  ]
+}

@@ -41,3 +41,6 @@ _cache_test/
 Thumbs.db
 desktop.ini
 .git_commit_msg.txt
+
+# Workspace-local temporary directory for test runs
+.test-tmp/

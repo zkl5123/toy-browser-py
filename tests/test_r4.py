@@ -18,11 +18,11 @@ _project_os.chdir(_PROJECT_ROOT)
 #   * CSS Grid (grid-template-rows / grid-template-columns)
 # All tests are pure DOM + CSS + layout + paint (no network, no Tk).
 
-import dom as _dom
-import css as _css
-import layout as _layout
-import paint_engine as _pe
-import browser as _browser
+from toy_browser.document import dom as _dom
+from toy_browser.style import css as _css
+from toy_browser.layout import layout as _layout
+from toy_browser.rendering import paint_engine as _pe
+from toy_browser.app import browser as _browser
 
 
 def _find_by_id(n, eid):

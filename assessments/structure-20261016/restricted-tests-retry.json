@@ -1,0 +1,50 @@
+[
+  {
+    "name": "test_p23_cache_etag_304_reuse",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_etag_absent_refetches",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_heuristic_ttl",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_hit_skips_wire",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_max_age_expiry",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_no_store_not_cached",
+    "passed": true
+  },
+  {
+    "name": "test_p23_cache_store_clear",
+    "passed": true
+  },
+  {
+    "name": "test_p23_https_tls_handshake",
+    "passed": true
+  },
+  {
+    "name": "test_p32_bookmarks_persist",
+    "passed": true
+  },
+  {
+    "name": "test_p32_history_corrupt_graceful",
+    "passed": true
+  },
+  {
+    "name": "test_p32_history_persist_roundtrip",
+    "passed": true
+  },
+  {
+    "name": "test_p32_view_source_local_file",
+    "passed": true
+  }
+]

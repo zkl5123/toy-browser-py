@@ -25,7 +25,7 @@ _R1_SIMSUN = r"C:\Windows\Fonts\simsun.ttc"
 
 
 def test_r1_is_ttc_detects_collection():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMSUN):
         return
     assert ttf_font.is_ttc(_R1_SIMSUN) is True
@@ -34,7 +34,7 @@ def test_r1_is_ttc_detects_collection():
 
 
 def test_r1_ttc_face_count():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMSUN):
         return
     n = ttf_font.ttc_face_count(_R1_SIMSUN)
@@ -43,7 +43,7 @@ def test_r1_ttc_face_count():
 
 
 def test_r1_load_ttc_face_zero():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMSUN):
         return
     fm = ttf_font.load_ttc(_R1_SIMSUN, 0)
@@ -51,7 +51,7 @@ def test_r1_load_ttc_face_zero():
 
 
 def test_r1_load_face_best_cjk():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMSUN):
         return
     fm = ttf_font.load_face_best_cjk(_R1_SIMSUN)
@@ -60,7 +60,7 @@ def test_r1_load_face_best_cjk():
 
 
 def test_r1_simhei_cjk_glyphs():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMHEI):
         return
     fm = ttf_font.load_ttf(_R1_SIMHEI)
@@ -69,14 +69,14 @@ def test_r1_simhei_cjk_glyphs():
 
 
 def test_r1_find_cjk_font():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.find_cjk_font(ttf_font._system_font_dirs())
     assert m is not None, "no CJK font found on this system"
     assert m.num_glyphs > 1000
 
 
 def test_r1_advance_width_missing_glyph():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMHEI):
         return
     fm = ttf_font.load_ttf(_R1_SIMHEI)
@@ -85,14 +85,14 @@ def test_r1_advance_width_missing_glyph():
 
 
 def test_r1_font_search_dirs():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     dirs = ttf_font._system_font_dirs()
     assert any(d.lower().endswith("fonts") for d in dirs), \
         f"system font dirs should include a fonts dir: {dirs}"
 
 
 def test_r1_get_cjk_fallback_is_fontmetrics():
-    import font
+    from toy_browser.typography import font
     font.init_real_fonts([])
     cjk = font.get_cjk_fallback()
     if cjk is not None:
@@ -102,7 +102,7 @@ def test_r1_get_cjk_fallback_is_fontmetrics():
 
 
 def test_r1_text_draw_cjk_returns_height():
-    import font, text, paint
+    from toy_browser.typography import font; from toy_browser.typography import text; from toy_browser.rendering import paint
     font.init_real_fonts([])
     bm = paint.Bitmap(200, 60, paint.WHITE)
     h = text.draw_text(bm, 0, 10, "中文", 16.0, paint.Color(0, 0, 0), 200.0)
@@ -112,12 +112,12 @@ def test_r1_text_draw_cjk_returns_height():
 
 
 def test_r1_glyph_mask_cache_cap():
-    import text
+    from toy_browser.typography import text
     assert text._glyph_cache_max == 4096
 
 
 def test_r1_cjk_glyph_outline_extractable():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMHEI):
         return
     fm = ttf_font.load_ttf(_R1_SIMHEI)
@@ -127,7 +127,7 @@ def test_r1_cjk_glyph_outline_extractable():
 
 
 def test_r1_ttc_cjk_face_score():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMSUN):
         return
     fm = ttf_font.load_face_best_cjk(_R1_SIMSUN)
@@ -136,7 +136,7 @@ def test_r1_ttc_cjk_face_score():
 
 
 def test_r1_cjk_div_render():
-    import browser, font, paint
+    from toy_browser.app import browser; from toy_browser.typography import font; from toy_browser.rendering import paint
     font.init_real_fonts([])
     html = '<div style="font-size:16px;width:200px;height:40px">中文</div>'
     bmp = browser.render_document(html, "", 300, 200)
@@ -145,7 +145,7 @@ def test_r1_cjk_div_render():
 
 
 def test_r1_advance_width_clamped():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     if not _os.path.isfile(_R1_SIMHEI):
         return
     fm = ttf_font.load_ttf(_R1_SIMHEI)
@@ -154,12 +154,12 @@ def test_r1_advance_width_clamped():
 
 
 def test_r1_max_font_bytes_cap():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     assert ttf_font._MAX_FONT_BYTES == 12 * 1024 * 1024
 
 
 def test_r1_glyph_bbox_valid():
-    import ttf_font, rasterize
+    from toy_browser.typography import ttf_font; from toy_browser.typography import rasterize
     if not _os.path.isfile(_R1_SIMHEI):
         return
     fm = ttf_font.load_ttf(_R1_SIMHEI)
@@ -173,13 +173,13 @@ def test_r1_glyph_bbox_valid():
 
 
 def test_r1_font_family_fallback_chain():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.find_font_for_family("nonexistentfamily123", 400, ["fonts"])
     assert m is not None, "fallback chain must land on a bundled TTF"
 
 
 def test_r1_cjk_fallback_for_missing_glyph():
-    import font, ttf_font
+    from toy_browser.typography import font; from toy_browser.typography import ttf_font
     font.init_real_fonts(["fonts"])
     primary = font.get_real_metrics("monospace")
     if primary is None:
@@ -190,14 +190,14 @@ def test_r1_cjk_fallback_for_missing_glyph():
 
 
 def test_r1_advance_text_cjk():
-    import font, text
+    from toy_browser.typography import font; from toy_browser.typography import text
     font.init_real_fonts([])
     w = text.advance_text("中文", 16.0, "monospace")
     assert w > 0, "CJK advance must be > 0"
 
 
 def test_r1_glyph_mask_cache_hit():
-    import text, font
+    from toy_browser.typography import text; from toy_browser.typography import font
     font.init_real_fonts(["fonts"])
     m = font.get_real_metrics("monospace")
     if m is None:
@@ -209,7 +209,7 @@ def test_r1_glyph_mask_cache_hit():
 
 
 def test_r1_blit_coverage_render():
-    import font, text, paint
+    from toy_browser.typography import font; from toy_browser.typography import text; from toy_browser.rendering import paint
     font.init_real_fonts(["fonts"])
     bm = paint.Bitmap(100, 40, paint.WHITE)
     ok = text._blit_coverage(bm, 0, 10, "A", 16.0, 1.0, paint.Color(0, 0, 0))
@@ -219,13 +219,13 @@ def test_r1_blit_coverage_render():
 
 
 def test_r1_parse_cmap_fmt4():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     assert len(m.cmap) > 100, f"cmap should have >100 entries, got {len(m.cmap)}"
 
 
 def test_r1_parse_cmap_cjk_absent():
-    import ttf_font, font
+    from toy_browser.typography import ttf_font; from toy_browser.typography import font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     assert m.has_glyph("\u4e2d") == False, "arial should not have CJK"
     saved = font._cjk_fallback
@@ -237,14 +237,14 @@ def test_r1_parse_cmap_cjk_absent():
 
 
 def test_r1_composite_glyph_cycle_guard():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     m = ttf_font.load_ttf("fonts/arial.ttf")
     o = m.glyph_outline("!")
     assert o is not None
 
 
 def test_r1_glyf_read_clamped():
-    import ttf_font, struct
+    from toy_browser.typography import ttf_font; import struct
     m = ttf_font.load_ttf("fonts/arial.ttf")
     gid = m.cmap.get(0x41, 0)
     raw = ttf_font._read_glyf(m, gid)
@@ -254,7 +254,7 @@ def test_r1_glyf_read_clamped():
 
 
 def test_r1_num_contours_truncated_rejected():
-    import ttf_font, struct
+    from toy_browser.typography import ttf_font; import struct
     m = ttf_font.load_ttf("fonts/arial.ttf")
     bad = struct.pack(">h", -18931) + b"\x00" * 100
     pts = ttf_font._parse_composite_glyph(bad, m, 0)
@@ -262,7 +262,7 @@ def test_r1_num_contours_truncated_rejected():
 
 
 def test_r1_load_font_candidate_chain():
-    import ttf_font
+    from toy_browser.typography import ttf_font
     cands = ttf_font._font_candidates("monospace", False, ["fonts", r"C:\Windows\Fonts"])
     assert len(cands) >= 1, "at least one candidate expected"
     m = ttf_font.load_font_for_family("monospace", 0.0, False, ["fonts"])

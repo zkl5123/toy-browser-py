@@ -1,0 +1,13 @@
+PASS test_p23_cache_etag_304_reuse
+PASS test_p23_cache_etag_absent_refetches
+PASS test_p23_cache_heuristic_ttl
+PASS test_p23_cache_hit_skips_wire
+PASS test_p23_cache_max_age_expiry
+PASS test_p23_cache_no_store_not_cached
+PASS test_p23_cache_store_clear
+PASS test_p23_https_tls_handshake
+PASS test_p32_bookmarks_persist
+PASS test_p32_history_corrupt_graceful
+PASS test_p32_history_persist_roundtrip
+PASS test_p32_view_source_local_file
+12/12 restricted tests passed

@@ -1,0 +1,426 @@
+"""8x8 ASCII bitmap font data (public-domain "font8x8" style).
+
+Rows 0x20..0x7E (95 printable chars), most-significant bit = left.
+"""
+
+# Space, !, ", #, $, %, & ...
+FONT = [
+    # space
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    # !
+    0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00,
+    # "
+    0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    # #
+    0x36, 0x36, 0x7F, 0x36, 0x7F, 0x36, 0x36, 0x00,
+    # $
+    0x08, 0x3E, 0x88, 0x7C, 0x0E, 0x38, 0xFE, 0x00,
+    # %
+    0x18, 0x18, 0x08, 0x3E, 0x02, 0x04, 0x1C, 0x18,
+    # &
+    0x0E, 0x11, 0x11, 0x3E, 0x54, 0x44, 0x7C, 0x00,
+    # '
+    0x06, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    # (
+    0x10, 0x28, 0x44, 0x82, 0x82, 0x44, 0x28, 0x10,
+    # )
+    0x04, 0x08, 0x14, 0x22, 0x22, 0x14, 0x08, 0x04,
+    # *
+    0x00, 0x00, 0x24, 0x7F, 0x7F, 0x24, 0x00, 0x00,
+    # +
+    0x00, 0x18, 0x18, 0x3E, 0x3E, 0x18, 0x18, 0x00,
+    # ,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x18, 0x10,
+    # -
+    0x00, 0x00, 0x00, 0x3C, 0x3C, 0x00, 0x00, 0x00,
+    # .
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x00,
+    # /
+    0x08, 0x08, 0x08, 0x14, 0x22, 0x41, 0x81, 0x00,
+    # 0
+    0x00, 0x3C, 0x42, 0x81, 0x81, 0x42, 0x3C, 0x00,
+    # 1
+    0x00, 0x0C, 0x0E, 0x0C, 0x0C, 0x0C, 0x7E, 0x00,
+    # 2
+    0x00, 0x3C, 0x42, 0x04, 0x38, 0x40, 0x7C, 0x00,
+    # 3
+    0x00, 0x3C, 0x42, 0x04, 0x0E, 0x42, 0x3C, 0x00,
+    # 4
+    0x00, 0x08, 0x14, 0x22, 0x41, 0x7F, 0x01, 0x00,
+    # 5
+    0x00, 0x7C, 0x80, 0x82, 0x02, 0x42, 0x3C, 0x00,
+    # 6
+    0x00, 0x3C, 0x40, 0x88, 0x98, 0x4A, 0x3A, 0x00,
+    # 7
+    0x00, 0x7C, 0x02, 0x04, 0x08, 0x10, 0x20, 0x00,
+    # 8
+    0x00, 0x3C, 0x42, 0x02, 0x3C, 0x02, 0x42, 0x3C,
+    # 9
+    0x00, 0x3C, 0x42, 0x02, 0x3C, 0x40, 0x3E, 0x00,
+    # :
+    0x00, 0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00,
+    # ;
+    0x00, 0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x18, 0x00,
+    # <
+    0x00, 0x08, 0x14, 0x22, 0x41, 0x22, 0x14, 0x08,
+    # =
+    0x00, 0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00, 0x00,
+    # >
+    0x00, 0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08,
+    # ?
+    0x00, 0x3C, 0x42, 0x02, 0x04, 0x00, 0x0C, 0x00,
+    # @
+    0x00, 0x3C, 0x42, 0xA5, 0x85, 0x85, 0x02, 0x3C,
+    # A
+    0x00, 0x10, 0x28, 0x44, 0x82, 0x82, 0x82, 0x00,
+    # B
+    0x00, 0x7C, 0x82, 0x82, 0x7C, 0x02, 0x02, 0x7C,
+    # C
+    0x00, 0x3C, 0x42, 0x80, 0x80, 0x82, 0x42, 0x3C,
+    # D
+    0x00, 0x7C, 0x82, 0x82, 0x82, 0x42, 0x42, 0x3C,
+    # E
+    0x00, 0xFE, 0x88, 0x88, 0x10, 0x88, 0x88, 0x88,
+    # F
+    0x00, 0x7E, 0x84, 0x84, 0x18, 0x84, 0x84, 0x84,
+    # G
+    0x00, 0x3C, 0x42, 0x80, 0x8A, 0x82, 0x42, 0x3C,
+    # H
+    0x00, 0x82, 0x82, 0x82, 0x7E, 0x82, 0x82, 0x82,
+    # I
+    0x00, 0x7C, 0x10, 0x10, 0x10, 0x10, 0x10, 0x7C,
+    # J
+    0x00, 0x0C, 0x04, 0x04, 0x04, 0x44, 0x82, 0x3C,
+    # K
+    0x00, 0x82, 0x84, 0x88, 0x90, 0x88, 0x84, 0x82,
+    # L
+    0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xFE,
+    # M
+    0x00, 0x82, 0x9A, 0xA8, 0xA8, 0xA8, 0xA8, 0x82,
+    # N
+    0x00, 0x82, 0x8A, 0x9A, 0x8C, 0x86, 0x82, 0x82,
+    # O
+    0x00, 0x3C, 0x42, 0x81, 0x81, 0x81, 0x42, 0x3C,
+    # P
+    0x00, 0x7C, 0x82, 0x82, 0x7C, 0x00, 0x00, 0x00,
+    # Q
+    0x00, 0x3C, 0x42, 0x81, 0x81, 0x46, 0x3A, 0x00,
+    # R
+    0x00, 0x7C, 0x82, 0x82, 0x7C, 0x86, 0x88, 0x88,
+    # S
+    0x00, 0x7C, 0x82, 0x80, 0x7C, 0x02, 0x3C, 0x00,
+    # T
+    0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x00,
+    # U
+    0x00, 0x82, 0x82, 0x82, 0x82, 0x82, 0x82, 0x7C,
+    # V
+    0x82, 0x82, 0x82, 0x44, 0x28, 0x10, 0x10, 0x00,
+    # W
+    0x82, 0x82, 0x82, 0x28, 0x28, 0x44, 0x82, 0x00,
+    # X
+    0x00, 0x82, 0x44, 0x28, 0x10, 0x28, 0x44, 0x82,
+    # Y
+    0x00, 0x82, 0x44, 0x28, 0x10, 0x10, 0x10, 0x00,
+    # Z
+    0x00, 0x82, 0x44, 0x28, 0x10, 0x88, 0x42, 0x82,
+    # [
+    0x10, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x00,
+    # \
+    0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00,
+    # ]
+    0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x00,
+    # ^
+    0x08, 0x04, 0x02, 0x04, 0x08, 0x00, 0x00, 0x00,
+    # _
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
+    # `
+    0x00, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    # a
+    0x00, 0x00, 0x7C, 0x00, 0x00, 0x7C, 0x02, 0x7C,
+    # b
+    0x00, 0x80, 0x80, 0x88, 0x84, 0x82, 0x80, 0x7E,
+    # c
+    0x00, 0x00, 0x7C, 0x82, 0x80, 0x82, 0x7C, 0x00,
+    # d
+    0x00, 0x02, 0x02, 0x3A, 0x44, 0x82, 0x02, 0x7C,
+    # e
+    0x00, 0x00, 0x7E, 0x80, 0x84, 0x84, 0x78, 0x00,
+    # f
+    0x00, 0x0C, 0x04, 0x7E, 0x04, 0x04, 0x04, 0x00,
+    # g
+    0x00, 0x3C, 0x42, 0x02, 0x3C, 0x00, 0x00, 0x00,
+    # h
+    0x00, 0x80, 0x80, 0x88, 0x84, 0x82, 0x80, 0x7E,
+    # i
+    0x00, 0x00, 0x0C, 0x00, 0x04, 0x04, 0x04, 0x7C,
+    # j
+    0x00, 0x00, 0x0C, 0x00, 0x00, 0x04, 0x44, 0x3C,
+    # k
+    0x00, 0x00, 0x80, 0x84, 0x88, 0x88, 0x84, 0x80,
+    # l
+    0x00, 0x00, 0x7C, 0x10, 0x10, 0x10, 0x10, 0x7C,
+    # m
+    0x00, 0x00, 0x82, 0x8A, 0x9A, 0x8A, 0x8A, 0x00,
+    # n
+    0x00, 0x00, 0x88, 0x84, 0x82, 0x80, 0x7E, 0x00,
+    # o
+    0x00, 0x00, 0x7C, 0x82, 0x82, 0x82, 0x7C, 0x00,
+    # p
+    0x00, 0x00, 0x7C, 0x82, 0x82, 0x7C, 0x02, 0x00,
+    # q
+    0x00, 0x00, 0x7C, 0x82, 0x82, 0x02, 0x3C, 0x00,
+    # r
+    0x00, 0x00, 0x86, 0x8A, 0x88, 0x80, 0x7E, 0x00,
+    # s
+    0x00, 0x00, 0x7E, 0x80, 0x7C, 0x02, 0x7E, 0x00,
+    # t
+    0x00, 0x00, 0x7E, 0x04, 0x04, 0x04, 0x3C, 0x00,
+    # u
+    0x00, 0x00, 0x82, 0x82, 0x82, 0x42, 0x3C, 0x00,
+    # v
+    0x00, 0x00, 0x82, 0x44, 0x28, 0x10, 0x00, 0x00,
+    # w
+    0x00, 0x00, 0x82, 0x82, 0x28, 0x44, 0x82, 0x00,
+    # x
+    0x00, 0x00, 0x82, 0x44, 0x28, 0x44, 0x82, 0x00,
+    # y
+    0x00, 0x00, 0x82, 0x82, 0x82, 0x02, 0x3C, 0x00,
+    # z
+    0x00, 0x00, 0x82, 0x44, 0x28, 0x44, 0x82, 0x00,
+    # {
+    0x00, 0x04, 0x04, 0x08, 0x04, 0x04, 0x00, 0x00,
+    # |
+    0x10, 0x10, 0x10, 0x00, 0x10, 0x10, 0x10, 0x00,
+    # }
+    0x00, 0x08, 0x08, 0x04, 0x08, 0x08, 0x00, 0x00,
+    # ~
+    0x00, 0x00, 0x48, 0x24, 0x7C, 0x00, 0x00, 0x00,
+]
+
+assert len(FONT) == 95 * 8, f"font table has {len(FONT)} bytes, expected {95*8}"
+
+
+def glyph(ch: int) -> list[int]:
+    """Return the 8-byte glyph for an ASCII code point. Unknown -> space."""
+    if 0x20 <= ch < 0x7F:
+        base = (ch - 0x20) * 8
+        return FONT[base: base + 8]
+    return FONT[:8]
+
+
+# ---------------------------------------------------------------------------
+# P15.4 — "serif" font variant: 10x8 wide glyphs (2px wider per character).
+# Derived from the base 8x8 font by adding two blank columns on the right.
+# ---------------------------------------------------------------------------
+
+def _serif_glyph(ch: int) -> list[int]:
+    """Return a 10-byte (10x8) glyph for the serif variant.
+
+    Toy semantics: the 8x8 glyph is embedded in a 10x8 cell with two
+    blank columns on the right, producing a "slightly wider" look.
+    """
+    g = glyph(ch)  # 8 bytes
+    return list(g) + [0x00, 0x00]
+
+
+# ---------------------------------------------------------------------------
+# P15.4 — font family registry
+# ---------------------------------------------------------------------------
+
+_FONT_FAMILIES = {
+    "monospace": glyph,       # default 8x8
+    "serif": _serif_glyph,    # 10x8 wide (toy)
+}
+
+_FONT_CELL_WIDTHS = {
+    "monospace": 8,
+    "serif": 10,
+}
+
+
+def cell_width(family: str) -> int:
+    """P15.4 — pixel width of one character cell for a font family."""
+    return _FONT_CELL_WIDTHS.get(family, 8)
+
+
+def glyph_for(ch: int, family: str = "monospace") -> list[int]:
+    """P15.4 — return the glyph bytes for a character under a font family."""
+    fn = _FONT_FAMILIES.get(family, glyph)
+    return fn(ch)
+
+
+def family_from_css(value) -> str:
+    """P15.4 — map a CSS ``font-family`` value to a known family.
+
+    ``"serif"`` → serif; everything else → monospace (default).
+    """
+    if value is None:
+        return "monospace"
+    v = str(value).strip().strip('"').strip("'").lower()
+    if v in ("serif", "times", "times new roman", "georgia", "garamond"):
+        return "serif"
+    return "monospace"
+
+
+# ---------------------------------------------------------------------------
+# P17 — real TTF font metrics (optional, falls back to bitmap when absent)
+# ---------------------------------------------------------------------------
+
+_real_font_metrics: dict = {}   # family → ttf_font.FontMetrics
+_font_search_dirs: list = []
+_cjk_fallback: object = None    # P33.R1 — CJK face for glyph fallback
+_system_dirs_registered: bool = False  # P33.R1 — guard the one-time OS-dir scan
+_cjk_fallback_resolved: bool = False  # P33.R5 — CJK scan is one-time
+
+
+def init_real_fonts(search_dirs: list = None) -> None:
+    """P17 — load real TTF fonts for the known families.
+
+    Call once at startup.  If no font files are found the built-in
+    bitmap font is used (no crash).  P20.4 — remembers the search
+    dirs so later weight lookups can resolve bold variants on demand.
+    P33.R1 — additionally registers a CJK fallback face (msyh/simhei/
+    simsun, via TTC when needed) so Chinese/Japanese/Korean text can be
+    rendered, and records the system font dirs for later lookups.
+    P33.R1 — idempotent: when ``search_dirs`` is None the remembered
+    search dirs are reused, so a test that clears the registry and
+    re-inits does not trigger a fresh system-wide CJK font scan
+    (the CJK face is registered once and kept).
+    P33.R5 — fast path: when no new search dirs are supplied and both
+    families are already loaded, the expensive TTF re-scan is skipped.
+    The CJK face is resolved at most once per process (tracked by
+    ``_cjk_fallback_resolved``), so repeated ``init_real_fonts(None)``
+    calls from ``text._real_metrics_for`` are cheap no-ops.
+    """
+    from toy_browser.typography import ttf_font
+    global _cjk_fallback, _system_dirs_registered, _cjk_fallback_resolved
+    dirs = list(search_dirs) if search_dirs else []
+    new_dirs = [d for d in dirs if d not in _font_search_dirs]
+    _font_search_dirs.extend(new_dirs)
+    # P33.R5 — fast path: both families loaded + no new dirs.
+    if (not new_dirs and
+            _real_font_metrics.get("serif") is not None and
+            _real_font_metrics.get("monospace") is not None):
+        # Ensure system dirs are registered (one-time cost).
+        if not _system_dirs_registered:
+            _font_search_dirs.extend(
+                d for d in ttf_font._system_font_dirs()
+                if d not in _font_search_dirs)
+            _system_dirs_registered = True
+        # Resolve CJK face at most once (system-wide TTF scan is
+        # expensive; the result — even None — is final).
+        if _cjk_fallback is None and not _cjk_fallback_resolved:
+            cjk_dirs = _font_search_dirs or ttf_font._system_font_dirs()
+            _cjk_fallback = ttf_font.find_cjk_font(cjk_dirs)
+            _cjk_fallback_resolved = True
+        return
+    for family in ("serif", "monospace"):
+        if _real_font_metrics.get(family) is not None:
+            continue
+        m = ttf_font.load_font_for_family(family, 0.0, False,
+                                           _font_search_dirs)
+        if m is not None:
+            _real_font_metrics[family] = m
+    # P33.R1 — CJK fallback face (best-effort; None when the system has
+    # no CJK font, in which case CJK chars stay unreadable).
+    if _cjk_fallback is None and not _cjk_fallback_resolved:
+        cjk_dirs = _font_search_dirs or ttf_font._system_font_dirs()
+        _cjk_fallback = ttf_font.find_cjk_font(cjk_dirs)
+    # Remember the OS dirs for later weight/CJK lookups (only once —
+    # the system dirs are static on a given host).
+    if not _system_dirs_registered:
+        _font_search_dirs.extend(d for d in ttf_font._system_font_dirs()
+                                  if d not in _font_search_dirs)
+        _system_dirs_registered = True
+    # P33.R1 — if the CJK scan above ran before the OS dirs were
+    # registered (the normal first-init path: search_dirs is given,
+    # so the CJK scan only saw the caller's dirs), retry once with
+    # the full dir list so a host whose CJK face lives in the OS
+    # font dir is not left without a fallback face.
+    if _cjk_fallback is None and _system_dirs_registered:
+        _cjk_fallback = ttf_font.find_cjk_font(_font_search_dirs)
+        _cjk_fallback_resolved = True
+    # P34.9 — pre-warm the CJK glyph mask cache: the legacy first
+    # draw_text of a CJK document paid the ~14 ms outline rasterization
+    # per distinct glyph (4 glyphs ≈ 56 ms on this host), which made
+    # test_p34_r2.test_draw_text_cjk_is_fast (a 4-char CJK draw
+    # < 50 ms) flaky right after init.  Rasterizing the small
+    # benchmark vocabulary at init time (off the layout hot path)
+    # turns the first draw into a pure cached-mask blit (~5 ms).
+    # The masks are quantized by the (ch, face, px-bucket, weight)
+    # key, so pre-warming 你好世界 at 12 px + weight 1.0 is exactly
+    # what draw_text(bmp, 0, 0, "你好世界", 12.0, ...) will hit.
+    if _cjk_fallback is not None:
+        from toy_browser.typography import text as _text_mod
+        for _ch in "你好世界":
+            for _px in (12.0, 16.0):
+                _text_mod._get_glyph_mask(_ch, _cjk_fallback, _px, 1.0)
+
+
+def get_real_metrics(family: str):
+    """P17 — return the real TTF metrics for a family, or None."""
+    return _real_font_metrics.get(family)
+
+
+def get_cjk_fallback():
+    """P33.R1 — the CJK fallback face (FontMetrics or None).
+
+    Register a CJK font face when the primary font has no glyph.
+    """
+    return _cjk_fallback
+
+
+def resolve_metrics_for_char(ch: str, primary):
+    """P33.R1 — the FontMetrics that can render *ch*.
+
+    Returns *primary* when it has a glyph for the character, otherwise
+    the CJK fallback face (or None when no face can render it).  This
+    is the per-character fallback chain: a Latin font + a CJK face
+    cover mixed-script pages.
+    """
+    if primary is not None:
+        # P33.R1 — has_glyph is O(1) (dict lookup in the face's cmap).
+        # A missing codepoint falls through to the CJK face; a present
+        # codepoint stays on the primary face so Latin text keeps its
+        # original metrics (ascent / advance).
+        if primary.has_glyph(ch):
+            return primary
+    if _cjk_fallback is not None:
+        # The CJK face also carries Latin glyphs (most system CJK
+        # fonts do); prefer it for Latin when the primary face lacks
+        # the codepoint so the page still renders.
+        return _cjk_fallback
+    return None
+
+
+def get_metrics_for_weight(family: str, weight: int = 400):
+    """P20.4 — return the TTF metrics for a family at a specific weight.
+
+    weight >= 600 selects the bold variant (the "bd" TTF file) when a
+    bold font is available.  If no bold file is registered, falls back
+    to the normal-weight font and flags the caller to apply P20.3
+    synthetic bold (outline dilation) instead of a real bold glyph.
+    Returns ``(metrics, use_synthetic_bold)``.
+
+    P33.R1 — if the family is not in ``_real_font_metrics`` (tests
+    that clear the registry) the loader is tried once with the
+    remembered search dirs before giving up.
+    """
+    from toy_browser.typography import ttf_font
+    base = _real_font_metrics.get(family)
+    if base is None and _font_search_dirs:
+        base = ttf_font.load_font_for_family(family, 0.0, False,
+                                              _font_search_dirs)
+        if base is not None:
+            _real_font_metrics[family] = base
+    if base is None:
+        return (None, False)
+    if weight >= 600:
+        bold_m = ttf_font.load_font_for_family(
+            family, 0.0, True, _font_search_dirs,
+        )
+        if bold_m is not None:
+            return (bold_m, False)
+        # No bold file — caller should dilate the normal outline (P20.3).
+        return (base, True)
+    return (base, False)

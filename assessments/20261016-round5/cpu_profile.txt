@@ -1,0 +1,33 @@
+         626735 function calls (618731 primitive calls) in 5.331 seconds
+
+   Ordered by: cumulative time
+   List reduced from 175 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    5.403    5.403 pipeline_profile.py:6(run)
+        1    0.000    0.000    3.198    3.198 layout.py:1922(layout)
+   2002/1    1.814    0.001    2.808    2.808 layout.py:666(build_box)
+        1    0.000    0.000    0.881    0.881 css.py:2090(apply)
+   2002/1    0.405    0.000    0.868    0.868 css.py:2287(_apply_subtree)
+        1    0.000    0.000    0.577    0.577 browser.py:1564(write_png_bytes)
+   144030    0.573    0.000    0.573    0.000 {method 'get' of 'dict' objects}
+        1    0.003    0.003    0.571    0.571 browser.py:1532(_png_raw_rows)
+      600    0.568    0.001    0.568    0.001 browser.py:1491(_png_pack_row)
+        1    0.000    0.000    0.382    0.382 paint_engine.py:112(emit_commands)
+   2002/1    0.235    0.000    0.382    0.382 layout.py:2082(layout_block)
+   2002/1    0.344    0.000    0.382    0.382 paint_engine.py:148(_emit)
+    34630    0.247    0.000    0.247    0.000 {method 'lower' of 'str' objects}
+        1    0.000    0.000    0.200    0.200 dom.py:42(parse)
+        1    0.000    0.000    0.200    0.200 build.py:211(parse)
+     1056    0.027    0.000    0.176    0.000 css.py:104(parse_declaration_pairs)
+        1    0.001    0.001    0.159    0.159 paint_engine.py:765(rasterize)
+        1    0.083    0.083    0.158    0.158 tokenize.py:211(tokenize_rawtext)
+       56    0.005    0.000    0.155    0.003 text.py:814(draw_text)
+      260    0.137    0.001    0.137    0.001 rasterize.py:387(blit_glyph_mask)
+    17326    0.131    0.000    0.131    0.000 {method 'append' of 'list' objects}
+     4180    0.054    0.000    0.114    0.000 css.py:167(parse_value)
+     3006    0.038    0.000    0.075    0.000 layout.py:627(_edges_for)
+     7141    0.072    0.000    0.072    0.000 {built-in method builtins.max}
+    30118    0.059    0.000    0.059    0.000 {method 'strip' of 'str' objects}
+
+

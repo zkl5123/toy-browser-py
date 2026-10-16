@@ -2,7 +2,7 @@ import sys,json,time,platform,statistics
 from pathlib import Path
 D=Path(__file__).resolve().parent
 sys.path.insert(0,str(D.parents[1]))
-import browser,dom,js,css,layout
+from toy_browser.app import browser; from toy_browser.document import dom; from toy_browser.scripting import js; from toy_browser.style import css; from toy_browser.layout import layout
 cases=json.loads((D/'js_cases.json').read_text(encoding='utf8'))
 extra={
  'probe_microtasks':"console.log('start'); Promise.resolve().then(function(){console.log('promise')}); console.log('end');",
@@ -27,7 +27,7 @@ for n in [100,1000,5000]:
   browser.write_png(bmp,str(D/f'perf_{n}.png'));samples.append({'renderMs':render,'totalWithPngMs':(time.perf_counter()-t)*1000})
  out['perf'][n]=samples
 try:
- import gui
+ from toy_browser.app import gui
  page=gui.PageInstance();page.load_html('<html><body><div style="height:2000px">long</div></body></html>',w=400,h=200)
  page.scroll_to(99999)
  out['gui_page_scroll']={'content_height':page.content_height,'max':page.scroll_max(),'actual':page.yoffset,'bitmap':[page.bitmap.width,page.bitmap.height]}

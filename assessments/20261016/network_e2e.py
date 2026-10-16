@@ -1,7 +1,7 @@
 import sys,json,threading,subprocess
 from pathlib import Path
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
-D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));import browser
+D=Path(__file__).resolve().parent;sys.path.insert(0,str(D.parents[1]));from toy_browser.app import browser
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_GET(self):
@@ -41,7 +41,7 @@ out={}
 try:
  subprocess.run(['node',str(D/'network_reference.cjs'),base],check=True,timeout=45)
  for name in ['cross_css','csp_self','csp_inline','external_script','script_order','csp_nonce','repeat_external','fetch_real','xhr_real','data_script']:
-  import js
+  from toy_browser.scripting import js
   from unittest.mock import patch
   captured=[]
   original=js.Host.execute_scripts_in_order
@@ -55,7 +55,7 @@ try:
   with patch.object(js.Host,'execute_scripts_in_order',record):
    bmp=browser.render_document_from_url(base+'/'+name,width=400,height=200)
   browser.write_png(bmp,str(D/f'toy_{name}.png'))
-  import gui
+  from toy_browser.app import gui
   page=gui.PageInstance();page.load_url(base+'/'+name,w=400,h=200)
   sh=getattr(page,"_script_host",None)
   if sh is not None:sh.flush_timers();sh.flush_microtasks()

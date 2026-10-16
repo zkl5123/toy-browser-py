@@ -14,11 +14,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import dom
-import css
-import layout
-import paint_engine
-from paint import Bitmap, Color, WHITE
+from toy_browser.document import dom
+from toy_browser.style import css
+from toy_browser.layout import layout
+from toy_browser.rendering import paint_engine
+from toy_browser.rendering.paint import Bitmap, Color, WHITE
 
 _pass = 0
 _fail = 0
@@ -146,7 +146,7 @@ def test_text_node_special_prop_goes_slow_path():
     So we set the prop on the <span> element's StyledNode and check the
     inner text box inherits it.
     """
-    import layout as _L
+    from toy_browser.layout import layout as _L
     ok("line-clamp is a special prop", "line-clamp" in _L._SPECIAL_PROPS)
     root = dom.parse('<div><span>abc</span></div>')
     styled = css.apply(root, "")
@@ -173,7 +173,7 @@ def test_text_node_special_prop_goes_slow_path():
 
 def test_wrap_decision_single_line():
     """Short text that fits the available width → single-line box, no wrap."""
-    import text as text_mod
+    from toy_browser.typography import text as text_mod
     w = text_mod.measure("内容 123", 14.0)
     ok("wrap decision: short text measures under 100px", w < 100.0,
        f"w={w}")
@@ -185,7 +185,7 @@ def test_wrap_decision_single_line():
 
 def test_wrap_decision_overflow():
     """Text wider than available → wrap produces multiple lines."""
-    import text as text_mod
+    from toy_browser.typography import text as text_mod
     w = text_mod.measure("aaaa bbbb cccc dddd eeee", 14.0)
     ok("wrap decision: long text exceeds 50px", w > 50.0, f"w={w}")
     lines = text_mod.wrap("aaaa bbbb cccc dddd eeee", 50.0, 14.0)
@@ -219,7 +219,7 @@ def test_emit_layer_field_default():
     """P34.3: DisplayCommand declares _layer as a dataclass field
     defaulting to 0, so emit_commands can sort by it without a
     hasattr-based defaulting loop."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     ok("_layer is a DisplayCommand field",
        "_layer" in paint_engine.DisplayCommand.__dataclass_fields__)
     ok("_layer defaults to 0",
@@ -230,7 +230,7 @@ def test_emit_layer_field_default():
 
 def test_emit_commands_sorts_by_layer():
     """emit_commands sorts display commands by _layer (z-index)."""
-    import paint_engine
+    from toy_browser.rendering import paint_engine
     html = '<div style="z-index:2">B</div><div style="z-index:1">A</div>'
     root = dom.parse(html)
     styled = css.apply(root, "")
@@ -245,8 +245,8 @@ def test_emit_commands_sorts_by_layer():
 def test_emit_commands_empty_tree():
     """emit_commands on a leaf box with no paintable fields still
     returns a well-formed DisplayList without error."""
-    import paint_engine
-    from layout import Rect, EdgeSizes
+    from toy_browser.rendering import paint_engine
+    from toy_browser.layout.layout import Rect, EdgeSizes
     bx = layout.LayoutBox(layout.BoxType.BLOCK, Rect(0, 0, 0, 0),
                          EdgeSizes(), EdgeSizes(), EdgeSizes())
     d = paint_engine.emit_commands(bx)

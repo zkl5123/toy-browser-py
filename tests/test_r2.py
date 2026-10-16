@@ -21,7 +21,7 @@ import os as _os
 
 def test_r2_http_client_pool_exists():
     """HttpClient must expose the keep-alive pool internals."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient(timeout=2.0)
     assert hasattr(c, "_conn_pool"), "pool dict missing"
     assert c._conn_pool == {}, "fresh client must have an empty pool"
@@ -32,7 +32,7 @@ def test_r2_http_client_pool_exists():
 def test_r2_pool_key_shape():
     """The pool key is (scheme, host, port, verify_tls) so two
     clients with different verify modes do not share sockets."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient(timeout=2.0)
     key = c._pool_key(net.parse_url("http://example.com:8080/x"))
     assert key == ("http", "example.com", 8080, True), key
@@ -42,7 +42,7 @@ def test_r2_pool_key_shape():
 
 def test_r2_keepalive_reuses_connection():
     """Two GETs to the same origin must share one pooled socket."""
-    import net
+    from toy_browser.network import net
     import http.server
     import threading
 
@@ -78,7 +78,7 @@ def test_r2_keepalive_reuses_connection():
 def test_r2_release_dead_conn_not_pooled():
     """A connection the server marked ``Connection: close`` must not
     be returned to the pool."""
-    import net
+    from toy_browser.network import net
     import http.server
     import threading
 
@@ -111,7 +111,7 @@ def test_r2_release_dead_conn_not_pooled():
 def test_r2_pool_cap_8():
     """_release_conn drops a new connection when the pool already
     holds 8 (the cap prevents unbounded growth across origins)."""
-    import net
+    from toy_browser.network import net
     c = net.HttpClient(timeout=2.0)
 
     class FC:
@@ -134,8 +134,8 @@ def test_r2_load_subresources_parallel_data_uri():
     """data: URIs are recorded inline without touching the network;
     the parallel path produces the same kind→url mapping as the
     sequential path."""
-    import net
-    import dom
+    from toy_browser.network import net
+    from toy_browser.document import dom
     html = ('<html><head>'
             '<link rel="stylesheet" href="data:text/css,body{}"/>'
             '<img src="data:image/png;base64,xx"/>'
@@ -158,8 +158,8 @@ def test_r2_parallel_loader_network():
     """A page with 3 real subresources (distinct paths on one
     origin) must load through the thread pool; all three resolve to
     200 responses over the shared keep-alive client."""
-    import net
-    import dom
+    from toy_browser.network import net
+    from toy_browser.document import dom
     import http.server
     import threading
 
@@ -206,8 +206,8 @@ def test_r2_parallel_loader_network():
 def test_r2_parallel_loader_failure_is_none():
     """A subresource that 404s maps to None (the loader never raises
     on a failing resource — P22.4 contract)."""
-    import net
-    import dom
+    from toy_browser.network import net
+    from toy_browser.document import dom
     import http.server
     import threading
 
@@ -247,8 +247,8 @@ def test_r2_sequential_fast_path_short_list():
     """Two or fewer network specs use the sequential path (thread
     startup would cost more than it saves) — the result is identical
     to the parallel path's mapping shape."""
-    import net
-    import dom
+    from toy_browser.network import net
+    from toy_browser.document import dom
     html = ('<html><head>'
             '<img src="data:image/png;base64,xx"/>'
             '</head><body>x</body></html>')
@@ -260,7 +260,7 @@ def test_r2_sequential_fast_path_short_list():
 def test_r2_gui_page_scroll_max():
     """PageInstance.scroll_max / scroll_ratio reflect the content
     height vs. the viewport (pure arithmetic, no Tk needed)."""
-    import gui
+    from toy_browser.app import gui
     p = gui.PageInstance()
     p.width, p.height = 800, 600
     p.content_height = 1000
@@ -278,8 +278,8 @@ def test_r2_gui_page_scroll_max():
 def test_r2_gui_clip_bitmap_rows():
     """_clip_bitmap crops the scroll window out of the full-document
     bitmap (row offsets, not a copy of the whole document)."""
-    import gui
-    import paint
+    from toy_browser.app import gui
+    from toy_browser.rendering import paint
     p = gui.PageInstance()
     p.width, p.height = 4, 3
     p.content_height = 6
@@ -304,10 +304,10 @@ def test_r2_gui_clip_bitmap_rows():
 def test_r2_gui_content_height_probe():
     """_content_height_probe measures the document's full content
     height from the layout tree (independent of the viewport)."""
-    import gui
-    import dom
-    import css
-    import layout
+    from toy_browser.app import gui
+    from toy_browser.document import dom
+    from toy_browser.style import css
+    from toy_browser.layout import layout
     html = "<html><body>" + "".join(
         f'<div style="height:50px">{i}</div>' for i in range(20)
     ) + "</body></html>"

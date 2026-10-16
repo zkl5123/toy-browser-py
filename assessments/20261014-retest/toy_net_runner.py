@@ -2,7 +2,7 @@
 import os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import net
+from toy_browser.network import net
 from net_server import start
 
 httpd, PORT = start(8977)
@@ -51,7 +51,7 @@ try:
     client = net.HttpClient()
     html, resp = net.fetch_html(base + '/two.html', client=client)
     tree_html = html
-    import dom
+    from toy_browser.document import dom
     tree = dom.parse(html)
     subs = net.collect_subresources(tree)
     srcs = [s['src'] for s in subs]
