@@ -2648,9 +2648,39 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08）已完成（**1019/1019** 测试通过）。
+### R6.12 G09 标签页与历史会话（稳定身份 + 会话持久化）
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）与批次 3（G07/G08）已完成；批次 4（G09–G11 / G07 线程进程分离 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
+**G09 step 1 稳定标签身份**（`toy_browser/app/tab_identity.py`）✅
+
+- [x] `TabIdentityRegistry`：稳定 tab_id（递增、不复用）↔ 可变 idx；
+  `invalidate(idx)` 关闭时标记 tab_id 失效 + 重建槽位；`compact()`
+  返回"关闭前旧 idx → 关闭后新 idx"映射供 widget / 闭包重绑，旧
+  回调经 `valid_idx` 检查后 no-op（不操作别的标签）。
+- [x] 每标签资源（DocumentController / 历史 / 滚动 / 焦点）以 tab_id
+  为 key（step 2）：切换只改前台呈现，不重建文档；`release_tab`
+  关闭时释放资源（step 4）。
+- 回归：`tests/test_tab_identity.py`（5 条）。
+
+**G09 step 5 会话持久化**（`toy_browser/app/session_store.py`）✅
+
+- [x] `SessionStore.save` 仅保存可恢复状态（url / title / back / fwd /
+  scroll / zoom / active，不含 DOM / 位图 / 脚本 Host），`<path>.tmp` +
+  `os.replace` 原子写。
+- [x] `SessionStore.load` 损坏可降级：缺失 / 非对象 / 未知版本 /
+  `tabs` 非 list → 空会话；单 tab 字段缺失 / 类型错 → 逐字段默认值；
+  无 url 的 tab 跳过；活动标签失效 → 回退首个标签。
+- [x] `TabSnapshot` + `TabIdentityRegistry.snapshot/restore` 序列化
+  往返。
+- 回归：`tests/test_tab_identity.py`（9 条）。
+
+**G09 step 3 统一历史提交入口**：未实施（Tk 侧路由改造 + 重定向
+历史项语义，需活显示环境验收，留作后续批次）。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09）已完成（**1033/1033** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）与批次 4（G09 稳定身份 + 会话持久化）已完成；批次 5（G09 step 3 统一历史入口 / G10 / G11 / G07 线程进程分离 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

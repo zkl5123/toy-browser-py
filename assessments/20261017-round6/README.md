@@ -31,6 +31,14 @@
 | G08 导航状态、停止与错误 | ✅ | `toy_browser/app/navigation_state.py` `NavigationState` | `tests/test_navigation_state.py`（10 条） |
 | G07 命令队列 + 任务丢弃 | ✅（批次 2 已落骨架，批次 3 补 drain / apply 门控） | `toy_browser/app/document_controller.py` | 随 G07 测试 |
 
+## 批次 4 完成的工作项（G09 标签页与历史会话）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G09 step 1 稳定标签身份 | ✅ | `toy_browser/app/tab_identity.py` `TabIdentityRegistry` | `tests/test_tab_identity.py`（5 条） |
+| G09 step 5 会话持久化 | ✅ | `toy_browser/app/session_store.py` `SessionStore` | `tests/test_tab_identity.py`（9 条） |
+| G09 step 3 统一历史提交入口 | ⏳ 未实施（见下） | — | — |
+
 ## 批次 2 关键实现说明
 
 ### G03 编辑状态机（纯逻辑核心）
@@ -99,6 +107,30 @@
   transport（G08 step 3 的 socket 收尾）是批次 4 的后续实施——本批
   先把命令契约、有界队列与版本丢弃逻辑落好并测试。
 
+## 批次 4 关键实现说明
+
+### G09 step 1 稳定标签身份（`tab_identity.py`）
+- `TabIdentityRegistry` 把 **稳定 tab_id** 与**可变 idx** 解耦：
+  `allocate()` 分配递增 tab_id（关闭后不复用，避免旧资源 / 回调串页）；
+  `invalidate(idx)` 关闭时标记 tab_id 失效并重建槽位；`compact()` 返回
+  "关闭前旧 idx → 关闭后新 idx" 映射供 widget / 闭包重绑，旧回调经
+  `valid_idx` 检查后 no-op（G09 step 1：不操作别的标签）。
+- 每标签资源（DocumentController / 历史 / 滚动 / 焦点 / 任务）以
+  tab_id 为 key（G09 step 2）：切换标签只改前台呈现，不重建文档；
+  `release_tab` 在关闭时释放资源（G09 step 4）。
+
+### G09 step 5 会话持久化（`session_store.py`）
+- `SessionStore.save` 仅保存**可恢复状态**（url / title / back / fwd /
+  scroll / zoom / active，不含 DOM / 位图 / 脚本 Host），经
+  `<path>.tmp` + `os.replace` 原子写（复用 session.py 同款原子写语义，
+  崩溃中途不写坏文件）。
+- `SessionStore.load` 损坏可降级：文件缺失 / 非对象 / 未知版本 /
+  `tabs` 非 list → 空会话；单 tab 字段缺失 / 类型错 → 逐字段默认值
+  （不整份丢弃）；无 url 的 tab 跳过；活动标签指向不存在 tab_id →
+  回退首个标签。
+- `TabIdentityRegistry.snapshot` / `restore` 负责可恢复状态 ↔ 磁盘
+  快照的序列化往返。
+
 ## 本批未完成 / 阻塞项
 
 - **C03 行内格式化与文字布局**：需先将最小失败页面拆为普通文本 /
@@ -106,12 +138,16 @@
   几何与截图（C03 step 1），本批未执行该冻结步骤，故未实施
   InlineRun/LineBox。
 - **G07 网络 I/O 外移 / 文档进程**：本批落命令队列与版本丢弃骨架；
-  把网络 fetch 真正移出 UI 线程、实现可取消 transport 是批次 4。
+  把网络 fetch 真正移出 UI 线程、实现可取消 transport 是后续批次。
+- **G09 step 3 统一历史提交入口**：本批落稳定身份（step 1）与会话
+  持久化（step 5）；把地址栏 / 链接 / 书签 / 文件打开的导航历史提交
+  收敛到单一入口并明确重定向只形成一个历史项，属 Tk 侧路由改造，
+  需活显示环境验收，留作后续批次。
 
 ## 剩余限制（下一批次）
 
-- G09 标签页与历史会话、G10 工具栏 / 状态栏 / 诊断区、G11
-  可访问性。
+- G10 工具栏 / 状态栏 / 诊断区、G11 可访问性、G09 step 3 统一历史
+  提交入口。
 - G07 线程 / 进程分离（网络 I/O 外移 + 可取消 transport）、G08
   transport 收尾（socket 关闭/超时不强杀线程）。
 - C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
@@ -127,7 +163,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1019/1019 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20） |
+| `py -3 test.py` | **1033/1033 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14） |
 
 ## 关键实现说明
 
