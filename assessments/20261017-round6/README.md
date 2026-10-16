@@ -79,9 +79,9 @@
 - 同址去重：cursor 指向项 URL == 最终 URL 时不新增，原地更新 source。
 - `can_back`/`can_forward`/`current` 供工具栏按钮启停 + 状态栏（G10
   的 `toolbar_state` 消费这里）。
- - **纯逻辑核心**：GUI/CLI/测试都接同一入口；Tk 侧把
-   `PageInstance.back_stack/fwd_stack` 迁移到 `HistoryCommitter`（保留
-   旧调用兼容）属批次 8 的 Tk 路由改造，留后续批次（需活显示验收）。
+- **纯逻辑核心**：GUI/CLI/测试都接同一入口；Tk 侧把
+  `PageInstance.back_stack/fwd_stack` 迁移到 `HistoryCommitter`（保留
+  旧调用兼容）属批次 8 的 Tk 路由改造，留后续批次（需活显示验收）。
 
 ## 批次 9 完成的工作项（G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层，纯逻辑核心）
 
