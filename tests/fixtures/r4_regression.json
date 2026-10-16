@@ -1,0 +1,236 @@
+{
+  "_comment": "R4 stage 6 — offline regression fixtures frozen from the 20261016 assessment (assessments/20261016/). Each case pins a browser-facing contract against its Edge/Chromium reference value. The js_cases / edge_js_expect / layout_cases / edge_layout_expect blocks are copied verbatim from the assessment's edge_*.json reference files; the e2e_cases block freezes the 10 network/CSP e2e pages (document + CSP directives + in-memory subresource/script/fetch responses) so they replay without a socket. Tolerances: painted red-boundary within 1px on every side (the 1px raster ring vs CSS 2px border); layout border-box within 0.1px.",
+
+  "js_dom_html": "<!DOCTYPE html><html><body><div id=\"t1\">orig</div><button id=\"btn\">B</button></body></html>",
+
+  "js_cases": [
+    {"id": "js_basic_arith", "code": "console.log(2 + 3 * 4, 10 / 4, 10 % 3, -5 + 2)"},
+    {"id": "js_precedence", "code": "console.log(2 * 3 + 4, (2 + 3) * 4, 2 ** 3, 100 - 20 * 3)"},
+    {"id": "js_ternary", "code": "var a = 5; console.log(a > 3 ? 'yes' : 'no'); console.log(1 > 2 ? 10 : 20)"},
+    {"id": "js_typeof", "code": "console.log(typeof 42, typeof 's', typeof null, typeof undefined, typeof {}, typeof [])"},
+    {"id": "js_string_concat", "code": "console.log('x:' + 1 + true, 1 + '1', 'a' + 'b' + 2)"},
+    {"id": "js_str_escapes", "code": "console.log('a\\nb'); console.log('say \\\"hi\\\"'); console.log('tab\\tend')"},
+    {"id": "js_arrays", "code": "var arr = [1,2,3,4,5]; console.log(arr.length, arr[2], arr.at(-1), arr.at(99)); console.log(arr.indexOf(3), arr.includes(9), arr.slice(1,3)); console.log(arr.map(function(v,i){return v*2}), arr.join('-'))"},
+    {"id": "js_arrow_funcs", "code": "var f = (a,b) => a + b; console.log(f(1,2), [1,2,3].map(x => x*x).join(','), [1,2,3].filter(x => x > 1).join(','))"},
+    {"id": "js_object_methods", "code": "var o = {a:1,b:2,c:3}; console.log(Object.keys(o).join(','), Object.values(o).join(',')); console.log(JSON.stringify({x:1, arr:[1,2]})); var p = JSON.parse('{\"q\":[1,{r:true}]}'); console.log(p.q[1].r)"},
+    {"id": "js_classes", "code": "class Animal { constructor(n) { this.name = n } speak() { return this.name + ' makes a sound' } } class Dog extends Animal { constructor(n) { super(n) } speak() { return this.name + ' barks' } } var d = new Dog('Rex'); console.log(d.speak()); var a = new Animal('Cow'); console.log(a.speak())"},
+    {"id": "js_templates", "code": "var x = 5; var s = `x is ${x * 2} and ${true}`; console.log(s); console.log(`total=${1+2}`)"},
+    {"id": "js_optional_nullish", "code": "var o = {a: {b: 1}}; console.log(o?.a?.b, o?.z?.b, null ?? 'dflt', 0 ?? 'dflt', '' ?? 'dflt')"},
+    {"id": "js_try_catch", "code": "try { var y = 1 / 0; console.log(y) } catch(e) { console.log('caught', e.message) } finally { console.log('done') }"},
+    {"id": "js_errors", "code": "console.log(NaN === NaN, 1 / 0, 0 / 0, String.fromCharCode(65), 'ABC'.charCodeAt(0))"},
+    {"id": "js_numbers", "code": "console.log(Number.isInteger(3.0), Number.isInteger(3.5), Number.parseInt('42px'), Number.parseFloat('3.14abc'), Math.round(2.5), Math.floor(2.9), Math.max(1,9,3))"},
+    {"id": "js_promise", "code": "var p = Promise.resolve(41).then(function(v){ return v + 1 }).then(function(v){ console.log('prom:', v) });"},
+    {"id": "js_destructuring", "code": "var p = {x: 10, y: 20}; var {x, y} = p; console.log(x + y, x - y); var pair = [1, 2, 3]; var [a, b] = pair; console.log(a, b, pair[2])"},
+    {"id": "js_spread", "code": "var o1 = {a: 1}; var o2 = {...o1, b: 2}; console.log(o2.a, o2.b); var arr = [...[1,2], ...[3,4], 5]; console.log(arr.join(','))"},
+    {"id": "js_for_loops", "code": "var s = ''; for (var i = 0; i < 5; i++) { s += i } console.log(s); var t = 0; for (var v of [1,2,3,4]) { t += v } console.log(t)"},
+    {"id": "js_dom_bind", "code": "var el = document.getElementById('t1'); el.innerHTML = 'clicked!'; console.log(el.tagName, document.body.innerText)"},
+    {"id": "js_event_click", "code": "var c = 0; document.getElementById('btn').onclick = function() { c++; this.style.display = 'none'; console.log('clicks:', c) }; document.getElementById('btn').click(); document.getElementById('btn').click(); console.log('final:', c)"},
+    {"id": "js_set_timeout", "code": "var log2 = []; setTimeout(function(){ log2.push('b') }, 10); setTimeout(function(){ log2.push('a') }, 5); log2.push('sync'); console.log('before:', log2.join(','));"},
+    {"id": "js_while_break", "code": "var n = 0; outer: while (n < 100) { n++; if (n % 7 === 0 && n > 10) { console.log('break at', n); break } } console.log('n =', n)"},
+    {"id": "js_generators", "code": "function* gen() { yield 1; yield 2; yield 3; } var g = gen(); console.log(g.next().value, g.next().value, g.next().done)"},
+    {"id": "js_regexp", "code": "var re = /a(b+)c/dg; var m = re.exec('abcbbc'); console.log(m[0], m[1], m.index); console.log('X1X2X3'.split('X').join('-')); console.log('abc'.replace('b', 'B'), 'a-b-c'.replaceAll('-', '+'))"},
+    {"id": "js_date", "code": "var d = new Date(2024, 1, 15, 10, 30, 0); console.log(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())"},
+    {"id": "js_infinity_nan", "code": "console.log(Infinity > 1e100, 1/0, 0/0, NaN == NaN, Number.isNaN(NaN))"},
+    {"id": "js_functions_args", "code": "function f(a, b, c) { return [a, b, c] } console.log(f(1).join(','), f(1,2,3,4).join(',')); function g() { return [g.length, arguments.length] } console.log(g(1,2,3).join('/'))"},
+    {"id": "js_string_methods", "code": "console.log('  hi  '.trim(), 'abc'.repeat(3), 'hello'.padStart(9, '.'), 'Hello'.toUpperCase().toLowerCase().length, 'a,b,c'.split(',').map(x => x.trim()).join('|'))"},
+    {"id": "probe_const_write", "code": "try{const a=1;a=2;console.log('changed',a)}catch(e){console.log('caught')}"},
+    {"id": "probe_tdz", "code": "try{console.log(x);let x=1}catch(e){console.log('caught')}"},
+    {"id": "probe_reference_error", "code": "try{console.log(noSuchBinding)}catch(e){console.log('caught')}"},
+    {"id": "probe_array_json", "code": "console.log(JSON.stringify([1,2,3].map(function(v){return v*2})) );"},
+    {"id": "probe_object_identity", "code": "var a={};var b={};console.log(a===a,a===b);"},
+    {"id": "probe_remove_dom", "code": "var el=document.getElementById('t1');el.parentNode.removeChild(el);console.log(document.getElementById('t1')===null);"},
+    {"id": "probe_unsupported_css", "code": "console.log(typeof CSS,typeof CSS.supports);"},
+    {"id": "probe_string_timer", "code": "setTimeout(\"console.log('timer')\",0);console.log('sync');"},
+    {"id": "functional_queue_microtask", "code": "console.log('sync');queueMicrotask(function(){console.log('micro')});console.log('end');"},
+    {"id": "functional_mutation_observer", "code": "var observer=new MutationObserver(function(){console.log('mutated')});observer.observe(document.getElementById('t1'),{childList:true});document.getElementById('t1').textContent='changed';Promise.resolve().then(function(){console.log('checkpoint')});"},
+    {"id": "functional_resize_observer", "code": "var observer=new ResizeObserver(function(){console.log('resized')});observer.observe(document.getElementById('t1'));"},
+    {"id": "functional_response_methods", "code": "fetch('http://127.0.0.1:1/').then(function(r){console.log(typeof r.text,typeof r.json)});"},
+    {"id": "probe_microtasks", "code": "console.log('start'); Promise.resolve().then(function(){console.log('promise')}); console.log('end');"},
+    {"id": "probe_timer_order", "code": "setTimeout(function(){console.log('late')},30);setTimeout(function(){console.log('early')},0);console.log('sync');"},
+    {"id": "probe_event_bubble", "code": "document.body.addEventListener('click',function(){console.log('body')});document.getElementById('btn').addEventListener('click',function(){console.log('button')});document.getElementById('btn').click();"},
+    {"id": "probe_dom_live", "code": "var el=document.getElementById('t1');el.innerHTML='<span id=child>new</span>';console.log(document.getElementById('child').textContent);"},
+    {"id": "probe_json_numbers", "code": "console.log(JSON.stringify([NaN,Infinity,undefined,-0]));"},
+    {"id": "probe_equality", "code": "console.log(JSON.stringify([[]==false,[]==0,null==undefined,'0'==false,{}=== {}]));"},
+    {"id": "probe_api_types", "code": "console.log(typeof fetch,typeof XMLHttpRequest,typeof MutationObserver,typeof queueMicrotask,typeof ResizeObserver);"},
+    {"id": "probe_fetch_contract", "code": "console.log(typeof fetch('http://127.0.0.1:1/').then);"},
+    {"id": "probe_async", "code": "async function f(){return 42} f().then(function(v){console.log(v)});"},
+    {"id": "probe_dom_create", "code": "var el=document.createElement('div');el.id='added';el.textContent='hello';document.body.appendChild(el);console.log(document.getElementById('added').textContent);"}
+  ],
+
+  "edge_js_expect": {
+    "js_basic_arith": {"status": "OK", "logs": ["14 2.5 1 -3"]},
+    "js_precedence": {"status": "OK", "logs": ["10 20 8 40"]},
+    "js_ternary": {"status": "OK", "logs": ["yes", "20"]},
+    "js_typeof": {"status": "OK", "logs": ["number string object undefined object object"]},
+    "js_string_concat": {"status": "OK", "logs": ["x:1true 11 ab2"]},
+    "js_str_escapes": {"status": "OK", "logs": ["a\nb", "say \"hi\"", "tab\tend"]},
+    "js_arrays": {"status": "OK", "logs": ["5 3 5 undefined", "2 false [2, 3]", "[2, 4, 6, 8, 10] 1-2-3-4-5"]},
+    "js_arrow_funcs": {"status": "OK", "logs": ["3 1,4,9 2,3"]},
+    "js_object_methods": {"status": "ERROR: SyntaxError: Expected property name or '}' in JSON at position 9 (line 1 column 10)", "logs": ["a,b,c 1,2,3", "{\"x\":1,\"arr\":[1,2]}"]},
+    "js_classes": {"status": "OK", "logs": ["Rex barks", "Cow makes a sound"]},
+    "js_templates": {"status": "OK", "logs": ["x is 10 and true", "total=3"]},
+    "js_optional_nullish": {"status": "OK", "logs": ["1 undefined dflt 0 "]},
+    "js_try_catch": {"status": "OK", "logs": ["Infinity", "done"]},
+    "js_errors": {"status": "OK", "logs": ["false Infinity NaN A 65"]},
+    "js_numbers": {"status": "OK", "logs": ["true false 42 3.14 3 2 9"]},
+    "js_promise": {"status": "OK", "logs": ["prom: 42"]},
+    "js_destructuring": {"status": "OK", "logs": ["30 -10", "1 2 3"]},
+    "js_spread": {"status": "OK", "logs": ["1 2", "1,2,3,4,5"]},
+    "js_for_loops": {"status": "OK", "logs": ["01234", "10"]},
+    "js_dom_bind": {"status": "OK", "logs": ["DIV clicked!\nB"]},
+    "js_event_click": {"status": "OK", "logs": ["clicks: 1", "clicks: 2", "final: 2"]},
+    "js_set_timeout": {"status": "OK", "logs": ["before: sync"]},
+    "js_while_break": {"status": "OK", "logs": ["break at 14", "n = 14"]},
+    "js_generators": {"status": "OK", "logs": ["1 2 false"]},
+    "js_regexp": {"status": "OK", "logs": ["abc b 0", "-1-2-3", "aBc a+b+c"]},
+    "js_date": {"status": "OK", "logs": ["2024 1 15 10"]},
+    "js_infinity_nan": {"status": "OK", "logs": ["true Infinity NaN false true"]},
+    "js_functions_args": {"status": "OK", "logs": ["1,, 1,2,3", "0/3"]},
+    "js_string_methods": {"status": "OK", "logs": ["hi abcabcabc ....hello 5 a|b|c"]},
+    "probe_const_write": {"status": "OK", "logs": ["caught"]},
+    "probe_tdz": {"status": "OK", "logs": ["caught"]},
+    "probe_reference_error": {"status": "OK", "logs": ["caught"]},
+    "probe_array_json": {"status": "OK", "logs": ["[2,4,6]"]},
+    "probe_object_identity": {"status": "OK", "logs": ["true false"]},
+    "probe_remove_dom": {"status": "OK", "logs": ["true"]},
+    "probe_unsupported_css": {"status": "OK", "logs": ["object function"]},
+    "probe_string_timer": {"status": "OK", "logs": ["sync", "timer"]},
+    "functional_queue_microtask": {"status": "OK", "logs": ["sync", "end", "micro"]},
+    "functional_mutation_observer": {"status": "OK", "logs": ["mutated", "checkpoint"]},
+    "functional_resize_observer": {"status": "OK", "logs": ["resized"]},
+    "functional_response_methods": {"status": "OK", "logs": []},
+    "probe_microtasks": {"status": "OK", "logs": ["start", "end", "promise"]},
+    "probe_timer_order": {"status": "OK", "logs": ["sync", "early", "late"]},
+    "probe_event_bubble": {"status": "OK", "logs": ["button", "body"]},
+    "probe_dom_live": {"status": "OK", "logs": ["new"]},
+    "probe_json_numbers": {"status": "OK", "logs": ["[null,null,null,0]"]},
+    "probe_equality": {"status": "OK", "logs": ["[true,true,true,true,false]"]},
+    "probe_api_types": {"status": "OK", "logs": ["function function function function function"]},
+    "probe_fetch_contract": {"status": "OK", "logs": ["function"]},
+    "probe_async": {"status": "OK", "logs": ["42"]},
+    "probe_dom_create": {"status": "OK", "logs": ["hello"]}
+  },
+
+  "layout_cases": {
+    "layout_blocks": "<html><head><style>*{box-sizing:border-box} .a{width:200px;height:50px;margin:10px;border:2px solid red;padding:5px;background:#fdd} .b{width:100px;height:40px;margin-top:20px;background:#dfd}</style></head><body><div class='a' id='a'>AAA</div><div class='b' id='b'>BB</div></body></html>",
+    "layout_margin_collapse": "<html><head><style>*{box-sizing:border-box} #t{width:100px;height:30px;margin-bottom:30px;background:#fdd} #b{width:100px;height:20px;margin-top:10px;background:#dfd}</style></head><body style='margin:0'><div id='t'>T</div><div id='b'>B</div></body></html>",
+    "layout_flex": "<html><head><style>*{box-sizing:border-box} #row{display:flex;width:300px;height:60px;justify-content:center;align-items:center;background:#dfd} #row>div{width:80px;height:30px;background:#fdd;margin:4px}</style></head><body style='margin:0'><div id='row'><div id='c1'>1</div><div id='c2'>2</div><div id='c3'>3</div></div></body></html>",
+    "layout_grid": "<html><head><style>*{box-sizing:border-box} #g{display:grid;width:300px;height:120px;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr;background:#fdd} #g>div{border:1px solid #999}</style></head><body style='margin:0'><div id='g'><div id='g1'>1</div><div id='g2'>2</div><div id='g3'>3</div><div id='g4'>4</div><div id='g5'>5</div><div id='g6'>6</div></div></body></html>",
+    "layout_table": "<html><head><style>table{border:1px solid #000;border-collapse:collapse} td{border:1px solid #999;padding:4px}</style></head><body style='margin:0'><table id='tab'><tr><td>A</td><td>BBB</td></tr><tr><td>CC</td><td>D</td></tr></table></body></html>",
+    "layout_abs": "<html><head><style>*{box-sizing:border-box} #p{position:relative;width:200px;height:100px;background:#dfd} #c{position:absolute;left:30px;top:20px;width:50px;height:40px;background:#fdd}</style></head><body style='margin:0'><div id='p'><div id='c'>C</div></div></body></html>",
+    "layout_text_wrap": "<html><head><style>body{margin:0} #w{width:150px;height:120px;font-size:16px;overflow:hidden;background:#fdd}</style></head><body><div id='w'>The quick brown fox jumps over the lazy dog, and keeps on jumping repeatedly until it is very tired indeed.</div></body></html>",
+    "flex_reverse": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;flex-direction:row-reverse;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "flex_reverse_center": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;flex-direction:row-reverse;justify-content:center;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "flex_reverse_end": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;flex-direction:row-reverse;justify-content:flex-end;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "flex_gap": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;gap:10px;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "flex_single_around": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;justify-content:space-around;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div></div></body></html>",
+    "flex_single_evenly": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;justify-content:space-evenly;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div></div></body></html>",
+    "flex_padding_border": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;justify-content:center;}#row>div{width:40px;height:20px;margin:4px;background:#f00;padding:5px;border:2px solid blue;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "flex_column": "<!DOCTYPE html><html><head><style>body{margin:0}#row{display:flex;width:300px;height:150px;flex-direction:column;justify-content:center;}#row>div{width:40px;height:20px;margin:4px;background:#f00;}</style></head><body><div id=\"row\"><div id=\"c1\"></div><div id=\"c2\"></div><div id=\"c3\"></div></div></body></html>",
+    "grid_unequal": "<!DOCTYPE html><html><head><style>body{margin:0}#g{display:grid;width:300px;grid-template-columns:1fr 2fr;gap:10px}#g>div{height:20px;background:red}</style></head><body><div id=\"g\"><div id=\"g1\"></div><div id=\"g2\"></div></div></body></html>",
+    "percent_height": "<!DOCTYPE html><html><body style=\"margin:0\"><div id=\"p\" style=\"height:200px;width:200px\"><div id=\"c\" style=\"height:50%;width:50%;background:red\"></div></div></body></html>"
+  },
+
+  "layout_probes": {
+    "layout_blocks": ["a", "b"],
+    "layout_margin_collapse": ["t", "b"],
+    "layout_flex": ["row", "c1", "c2", "c3"],
+    "layout_grid": ["g", "g1", "g4"],
+    "layout_table": ["tab"],
+    "layout_abs": ["p", "c"],
+    "layout_text_wrap": ["w"],
+    "flex_reverse": ["row", "c1", "c2", "c3"],
+    "flex_reverse_center": ["row", "c1", "c2", "c3"],
+    "flex_reverse_end": ["row", "c1", "c2", "c3"],
+    "flex_gap": ["row", "c1", "c2", "c3"],
+    "flex_single_around": ["row", "c1"],
+    "flex_single_evenly": ["row", "c1"],
+    "flex_padding_border": ["row", "c1", "c2", "c3"],
+    "flex_column": ["row", "c1", "c2", "c3"],
+    "grid_unequal": ["g", "g1", "g2"],
+    "percent_height": ["p", "c"]
+  },
+
+  "edge_layout_expect": {
+    "layout_blocks": {"a": [18, 10, 200, 50], "b": [8, 80, 100, 40]},
+    "layout_margin_collapse": {"t": [0, 0, 100, 30], "b": [0, 60, 100, 20]},
+    "layout_flex": {"row": [0, 0, 300, 60], "c1": [22, 15, 80, 30], "c2": [110, 15, 80, 30], "c3": [198, 15, 80, 30]},
+    "layout_grid": {"g": [0, 0, 300, 120], "g1": [0, 0, 100, 60], "g4": [0, 60, 100, 60]},
+    "layout_table": {"tab": [0, 0, 70.078, 61]},
+    "layout_abs": {"p": [0, 0, 200, 100], "c": [30, 20, 50, 40]},
+    "layout_text_wrap": {"w": [0, 0, 150, 120]},
+    "flex_reverse": {"row": [0, 0, 300, 150], "c1": [256, 4, 40, 20], "c2": [208, 4, 40, 20], "c3": [160, 4, 40, 20]},
+    "flex_reverse_center": {"row": [0, 0, 300, 150], "c1": [178, 4, 40, 20], "c2": [130, 4, 40, 20], "c3": [82, 4, 40, 20]},
+    "flex_reverse_end": {"row": [0, 0, 300, 150], "c1": [100, 4, 40, 20], "c2": [52, 4, 40, 20], "c3": [4, 4, 40, 20]},
+    "flex_gap": {"row": [0, 0, 300, 150], "c1": [4, 4, 40, 20], "c2": [62, 4, 40, 20], "c3": [120, 4, 40, 20]},
+    "flex_single_around": {"row": [0, 0, 300, 150], "c1": [130, 4, 40, 20]},
+    "flex_single_evenly": {"row": [0, 0, 300, 150], "c1": [130, 4, 40, 20]},
+    "flex_padding_border": {"row": [0, 0, 300, 150], "c1": [61, 4, 54, 34], "c2": [123, 4, 54, 34], "c3": [185, 4, 54, 34]},
+    "flex_column": {"row": [0, 0, 300, 150], "c1": [4, 37, 40, 20], "c2": [4, 65, 40, 20], "c3": [4, 93, 40, 20]},
+    "grid_unequal": {"g": [0, 0, 300, 20], "g1": [0, 0, 96.656, 20], "g2": [106.656, 0, 193.344, 20]},
+    "percent_height": {"p": [0, 0, 200, 200], "c": [0, 0, 100, 100]}
+  },
+
+  "painted_red_cases": {
+    "_edge_ref": {
+      "flex_reverse_center": [82, 4, 218, 24],
+      "flex_gap": [4, 4, 160, 24],
+      "grid_unequal": [0, 0, 300, 20],
+      "flex_padding_border": [63, 6, 237, 36]
+    },
+    "_note": "The 4 documents are rendered with the current paint engine; the visible pure-red bounds must sit within 1px of the Edge GPU screenshot reference on every side. Documents live in layout_cases (same keys)."
+  },
+
+  "e2e_cases": {
+    "cross_css": {
+      "document": "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"http://127.0.0.1:PORT/style.css\"></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div></body></html>",
+      "expect_text": "SAFE",
+      "subresources": [{"kind": "stylesheet", "src": "http://127.0.0.1:PORT/style.css", "css": "#probe{background:#00ff00}"}]
+    },
+    "csp_self": {
+      "document": "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"http://127.0.0.1:PORT/style.css\"></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div></body></html>",
+      "csp_directives": {"style-src": ["'self'"]},
+      "expect_text": "SAFE",
+      "subresources": [{"kind": "stylesheet", "src": "http://127.0.0.1:PORT/style.css", "css": "#probe{background:#00ff00}"}]
+    },
+    "csp_inline": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script>document.getElementById('probe').textContent='EXECUTED'</script></body></html>",
+      "csp_directives": {"script-src": ["'none'"]},
+      "expect_text": "SAFE"
+    },
+    "external_script": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script src=\"/external.js\"></script></body></html>",
+      "expect_text": "EXECUTED",
+      "scripts": [{"src": "/external.js", "url": "http://127.0.0.1:PORT/external.js", "body": "document.getElementById('probe').textContent='EXECUTED';"}]
+    },
+    "script_order": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script src=\"/append.js\"></script><script>document.getElementById(\"probe\").textContent+=\"|INLINE\";</script></body></html>",
+      "expect_text": "SAFE|EXTERNAL|INLINE",
+      "scripts": [{"src": "/append.js", "url": "http://127.0.0.1:PORT/append.js", "body": "document.getElementById('probe').textContent+='|EXTERNAL';"}]
+    },
+    "csp_nonce": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script nonce=\"good\">document.getElementById(\"probe\").textContent=\"EXECUTED\";</script></body></html>",
+      "csp_directives": {"script-src": ["nonce-good"]},
+      "expect_text": "EXECUTED"
+    },
+    "repeat_external": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script src=\"/append.js\"></script><script src=\"/append.js\"></script></body></html>",
+      "expect_text": "SAFE|EXTERNAL|EXTERNAL",
+      "scripts": [{"src": "/append.js", "url": "http://127.0.0.1:PORT/append.js", "body": "document.getElementById('probe').textContent+='|EXTERNAL';"}]
+    },
+    "fetch_real": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script>fetch(\"http://127.0.0.1:PORT/data.json\").then(function(r){document.getElementById(\"probe\").textContent=r.status+\":\"+typeof r.text;});</script></body></html>",
+      "expect_text": "200:function",
+      "fetched": {"data.json": {"status": 200, "body": "NETWORK_OK", "content_type": "application/json"}}
+    },
+    "xhr_real": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script>var xhr=new XMLHttpRequest();xhr.open(\"GET\",\"/data.json\");xhr.onload=function(){document.getElementById(\"probe\").textContent=xhr.status+\":\"+xhr.responseText;};xhr.send();</script></body></html>",
+      "expect_text": "200:NETWORK_OK",
+      "fetched": {"data.json": {"status": 200, "body": "NETWORK_OK", "content_type": "application/json"}}
+    },
+    "data_script": {
+      "document": "<!DOCTYPE html><html><head></head><body><div id=\"probe\" style=\"width:100px;height:100px\">SAFE</div><script type=\"application/json\">document.getElementById(\"probe\").textContent=\"EXECUTED\";</script></body></html>",
+      "expect_text": "SAFE"
+    }
+  }
+}

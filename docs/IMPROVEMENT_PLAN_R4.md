@@ -136,8 +136,8 @@
 ## 执行顺序与门禁
 
 > **进度（2026-10-16 起）**：阶段 0/1/2 已提交（commit 305163d 之后）；
-> 阶段 3（commit d971bb5）、阶段 4（commit d8320e0）已完成并提交；
-> 阶段 5（内联排版 + 绘制盒模型统一 C9）本轮完成并提交。
+> 阶段 3（commit d971bb5）、阶段 4（commit d8320e0）、阶段 5（commit 69ec574）
+> 已完成并提交；阶段 6（离线回归夹具）本轮完成并提交。
 
 1. 第 0 → 1 → 2 轮（P0：统一策略上下文 + 脚本模型 + CSP/nonce），每轮后跑 `test.py` + 对应 functional_summary 场景回归。 **[已完成]**
 2. 第 3 轮（P1 真实 fetch/XHR，注入 transport 模式，离线可测）。**[已完成]**
@@ -182,7 +182,27 @@
       17 项几何探针 **45/48**（3 项既有浮点差：table collapse / grid 1fr2fr，
       非回归）；render_* 前景占比贴近 Edge（render_basic 几何对齐后无重叠/横飞）；
       compare_js 51/51；network_e2e 10/10 CLI+GUI 匹配 Edge；GUI 交互/滚动/历史全绿。
-5. 第 6 轮（回归固化），把探针写进 `tests/`。
+5. 第 6 轮（回归固化），把探针写进 `tests/`。 **[已完成]**
+    - 实现：新增 `tests/fixtures/r4_regression.json`（离线夹具，固化
+      20261016 评估的 Edge 参考值）+ `tests/test_r4_regression.py`
+      （5 个回归门，注册进 `test.py`）：
+      * **JS 引擎**：评估的 51 个 JS 用例经 toy `js.Host` 离线回放，
+        45 个与 Edge 参考完全匹配的用例冻结为本门（`js_object_methods`
+        的 JSON 报错措辞、`js_optional_nullish` 的行尾空格为 toy 与 V8
+        的已知差异，由评估 `compare_js` 门跟踪，不入此门）；
+        `while(true)` 步进预算哨兵保留（性能门不破坏）。
+      * **布局几何**：17 个文档的探针元素 border-box（
+        getBoundingClientRect 契约）对照 Edge 参考，严格相等；
+        3 项既有浮点差（table collapse 高 / grid 1fr2fr 分割）
+        以显式 known-diff 集跟踪，任何 *新* 差异即失败（45/48 契约）。
+      * **绘制红像素**：4 个色块文档的可见纯红边界在 1px 内匹配
+        Edge GPU 截图参考（1px 栅格环 vs CSS 2px border 的既定容差）。
+      * **网络/CSP e2e**：10 个 e2e 页面离线回放——文档 + CSP 指令来自
+        夹具，子资源/外链脚本/fetch/XHR 响应来自内存夹具（无 socket、
+        无线程、无真实服务器），#probe 文本匹配 Edge 参考。
+    - 结果：`test.py` **936/936**（931 基线 + 5 个离线回归门）；
+      4 色块红边界 / 17 几何探针 / JS / 网络 e2e 全部固化，
+      评估探针固化为离线回归（第四轮计划"把探针写进 tests/"落地）。
 6. 第 7 轮（P2 剖析）收尾。
 
 **每轮门禁**：
