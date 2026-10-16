@@ -252,6 +252,49 @@
   缓存键含包含块尺寸与字体版本（C06 步骤 4）：`cache_key = (parent_size,
   font_version, level)`。
 
+## 批次 13 完成的工作项（C07 紧凑显示列表与可见区域裁剪 + C08 脏区域分块与交互重绘，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C07 命令统计 + 保守 bounds + 资源 ID 化 | ✅ | `toy_browser/app/display_list.py` `CommandStats`（命令类型/可见比例/重复资源）/ `conservative_bounds`（含阴影核/描边/滤镜外扩）/ `ResourceTable`（资源 ID 化）/ `viewport_clip`（视口外裁剪，阴影投进不裁掉）/ `ir_payload`（类型化 IR） | `tests/test_display_list.py`（19 条） |
+| C08 damage 生成 + tile 切分 + 回退判定 | ✅ | `toy_browser/app/dirty_region.py` `DamageEvent`/`DamageSet`（合并旧+新 bounds、效果边界扩展、固定 tile 切分、damage 过多/复杂变换/不确定依赖回退全视口）/ `InteractionCommitter`（hover/focus 只在状态变化时提交）/ `scroll_damage`（滚动只更新视口+新暴露区域）/ `TileCache`（按文档/布局/绘制版本失效） | `tests/test_dirty_region.py`（22 条） |
+
+### C07 紧凑显示列表与可见区域裁剪（`display_list.py`）
+- `CommandStats`（C07 步骤 1 "统计命令类型、可见比例、重复资源"）：
+  按 kind 计数、可见比例、重复资源 ID 统计（`record(kind, visible,
+  resource_id)` + `visible_ratio()` + `summary()`）。
+- `conservative_bounds`（C07 步骤 2 "bounds 包含阴影核、描边、变换
+  和裁剪影响，不能只取原始 rect"）：原始 rect + 阴影核（2×blur 覆盖
+  高斯尾部）+ 描边外扩 + 滤镜模糊外扩，返回保守绘制影响盒
+  `(min_x, min_y, max_x, max_y)`。
+- `ResourceTable`（C07 步骤 3 "不可变资源引用改 ID，避免每条命令
+  复制图片数据或大字典"）：资源登记一次返回稳定 ID，命令只持 ID；
+  重复子树显示列表可按版本复用。
+- `viewport_clip`（C07 步骤 4 + 验收 "阴影从视口外投进来不被错误
+  裁掉"）：用保守 bounds（含阴影核）判视口相交；原始 rect 在视口外
+  但阴影投进视口 → 不可跳过（`False`），完全在外 → 可跳过（`True`）。
+- `ir_payload`（C07 交付 "类型化 IR"）：按 kind 收窄字段（rect/text/
+  img/shadow/rounded 各取专属字段，img 用 resource_id 不复制像素；
+  未知 kind 全字段透传，保守不漏字段）。
+
+### C08 脏区域分块与交互重绘（`dirty_region.py`）
+- `merge_bounds` / `expand_to_effect`（C08 步骤 1 "合并旧+新 bounds，
+  向效果边界扩展"）：AABB 合并 + 阴影/描边/透明覆盖外扩。
+- `DamageEvent` / `DamageSet`（C08 步骤 1/3/5）：`to_region()` 从旧+
+  新 bounds 合并+效果扩展生成 `DamageRegion`；`tiled_regions` 固定
+  tile 切分；`should_fallback()` 在 damage 过多（tile 数超阈值）/
+  复杂变换 / 不确定依赖时回退**全视口**（C08 步骤 5 "不回退整页
+  超大位图"）。
+- `InteractionCommitter`（C08 步骤 2 "hover/focus 只在状态变化时
+  提交，避免重复相同输入触发重建"）：记录上次 `(hover_id, focus_id)`
+  状态，相同输入返回 `False`（无变化帧不重新绘制），变化返回 `True`。
+- `scroll_damage`（C08 步骤 2 "滚动只更新视口与新暴露区域"）：视口 +
+  新暴露区域并集（clamp 到可滚动内容），单纯滚动不触发 build_box。
+- `TileCache`（C08 步骤 3 "按文档、布局和绘制版本失效"）：
+  `(document, layout_revision, paint_revision)` 版本戳；版本不匹配
+  的 tile 失效（重放前先查缓存恢复正确背景，再重放相交且顺序正确的
+  图元，避免残影，C08 步骤 4）。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -284,7 +327,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1188/1188 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15） |
+| `py -3 test.py` | **1229/1229 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41） |
 
 ## 批次 2 关键实现说明
 

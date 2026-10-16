@@ -2902,11 +2902,35 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   留后续；本批为纯逻辑决策层。
 
 ---
+### R6.22 C07 紧凑显示列表与可见区域裁剪 + C08 脏区域分块与交互重绘（纯逻辑核心，批次 13）
+
+- [x] **C07 命令统计 + 保守 bounds + 资源 ID 化**（`toy_browser/app/display_list.py`
+  `CommandStats` / `conservative_bounds` / `ResourceTable` / `viewport_clip` /
+  `ir_payload`）：`CommandStats` 统计命令类型 / 可见比例 / 重复资源；
+  `conservative_bounds` 把原始 rect + 阴影核（2×blur）+ 描边 + 滤镜外扩成
+  保守绘制影响盒；`ResourceTable` 不可变资源改 ID（避免每条命令复制图片
+  数据 / 大字典）；`viewport_clip` 用保守 bounds 判视口裁剪（阴影从视口
+  外投进来不被错误裁掉）；`ir_payload` 按 kind 收窄字段的类型化 IR
+  （img 用 resource_id 不复制像素）。
+- [x] **C08 damage 生成 + tile 切分 + 回退判定**（`toy_browser/app/dirty_region.py`
+  `DamageEvent` / `DamageSet` / `InteractionCommitter` / `scroll_damage` /
+  `TileCache`）：`merge_bounds` 合并旧+新 AABB，`expand_to_effect` 向阴影/
+  描边/透明覆盖效果边界扩展；`DamageSet.should_fallback()` 在 damage 过多
+  （tile 数超阈值）/ 复杂变换 / 不确定依赖时回退全视口（不回退整页超大位图）；
+  `InteractionCommitter` hover/focus 只在状态变化时提交（相同输入不触发
+  重建）；`scroll_damage` 滚动只更新视口+新暴露区域（单纯滚动不触发
+  build_box）；`TileCache` 按 (document, layout_rev, paint_rev) 版本失效
+  （重放前先查缓存恢复背景避免残影）。
+- 回归：`tests/test_display_list.py`（19 条）+ `tests/test_dirty_region.py`（22 条）。
+- 说明：本批为纯逻辑决策层；paint_engine 实际显示列表生成 / GUI
+  `_reapply_interaction` 增量重排 / 光栅化重放需活显示环境验收，留后续。
+
+---
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局）已完成（**1188/1188** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘）已完成（**1229/1229** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）与批次 12（C06 布局树构建与增量布局纯逻辑核心）已完成；批次 13（C07 紧凑显示列表与可见区域裁剪 / C08 脏区域分块 / G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C09–C10 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）与批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）已完成；批次 14（C09 PNG 编码与异步导出 / C10 策略 API 与事件循环扩大回归 / G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C02 连续缓冲区 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
