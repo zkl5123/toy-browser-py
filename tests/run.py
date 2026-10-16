@@ -64,6 +64,8 @@ from test_focus_routing import TESTS as _FOCUS_ROUTING_TESTS
 from test_editor import TESTS as _EDITOR_TESTS
 from test_viewport import TESTS as _VIEWPORT_TESTS
 from test_cpu_image import TESTS as _CPU_IMAGE_TESTS
+from test_navigation_state import TESTS as _NAVIGATION_STATE_TESTS
+from test_document_controller import TESTS as _DOCUMENT_CONTROLLER_TESTS
 
 def main():
     tests = []
@@ -100,6 +102,8 @@ def main():
     tests.extend(_EDITOR_TESTS)
     tests.extend(_VIEWPORT_TESTS)
     tests.extend(_CPU_IMAGE_TESTS)
+    tests.extend(_NAVIGATION_STATE_TESTS)
+    tests.extend(_DOCUMENT_CONTROLLER_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

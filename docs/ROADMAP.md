@@ -2611,19 +2611,46 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - 未实施：填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区（批次 3）；
   独立进程 + 共享内存槽（可选 GPU 方案）。
 
-### R6.9 G07 / C03 未实施说明
+### R6.9 G08 导航状态、停止与错误
+（`toy_browser/app/navigation_state.py`）✅
 
-- G07（UI 与文档工作分离）：有界命令队列 + 网络 I/O 移出主线程 +
-  文档进程方案。依赖 G08 导航状态机与 C01 完整 `DocumentState`
-  抽取；本批仅落 C01 版本骨架为其提供任务丢弃基础。
+- [x] `NavigationState` 六态（idle / loading / interactive / complete /
+  failed / cancelled），记录 current/final URL、错误分类、进度、epoch；
+  完成 / 失败 / 取消**分别**更新（不统一写 "Loaded"）。
+- [x] `cancel_request()` 只在 busy 时生效：先逻辑取消（UI 立即反馈 +
+  置 `cancel_requested`），transport 在下一可取消点收尾（不强杀线程）。
+- [x] `accept_result(epoch, ok)` 门控异步结果：旧 epoch / 已取消丢弃
+  （A 文档结果不写入 B 文档）；成功 → COMPLETE，失败 → FAILED +
+  错误分类（与 `net.categorize_fetch_error` 词表对齐）。
+- 回归：`tests/test_navigation_state.py`（10 条）。
+- 未实施：UI 侧把状态接到刷新按钮 / 停止 / 状态栏文本的 Tk 绑定
+  （需活显示环境；状态机本身已纯逻辑可测）。
+
+### R6.10 G07 UI 与文档工作分离（有界命令队列 + 任务版本丢弃）
+（`toy_browser/app/document_controller.py`）✅
+
+- [x] `CommandQueue`：navigate / input / stop 按序保留（`max_pending`
+  有界，超限拒绝）；resize / scroll **同类**合并只留最新（G07 step 5）。
+- [x] `DocumentController.navigate()` 分配 epoch + bump C01
+  navigation_epoch / document_id；`stop()` 先翻 CANCELLED 再投 stop；
+  `drain()` 取出在途命令产出 `Result`（取消时丢弃）。
+- [x] `Result` 携带 C01 `document_id` / `frame_id`；`apply_results()`
+  用 `Result.is_stale` + `NavigationState.accept_result` 双门控——过期
+  帧 / 旧 epoch / 已取消结果不写 DOM、不刷画布（G07 step 6）。
+- 回归：`tests/test_document_controller.py`（10 条）。
+- 未实施：网络 I/O 移出主线程 / 文档进程 + 可取消 transport（批次 4；
+  纯 Python 线程无多核收益，文档建议评估文档进程方案）。
+
+### R6.11 C03 未实施说明
+
 - C03（行内格式化与文字布局）：需先冻结 Edge 几何对照（C03 step 1），
   本批未执行，故未实施 InlineRun/LineBox。
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02）已完成（**999/999** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08）已完成（**1019/1019** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）与批次 2（G03/G06/C02）已完成；G07/C03 与批次 3（G08–G11 / C01 完整抽取 / C03–C10）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）与批次 3（G07/G08）已完成；批次 4（G09–G11 / G07 线程进程分离 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

@@ -20,9 +20,16 @@
 |---|---|---|---|
 | G03 编辑、选区与输入法 | ✅（纯逻辑核心） | `toy_browser/app/editor.py` `EditorState` | `tests/test_editor.py`（16 条） |
 | G06 动态视口、DPI 与缩放 | ✅（坐标契约 + 合并器） | `toy_browser/app/viewport.py` `ViewportState` / `ResizeCoalescer` | `tests/test_viewport.py`（10 条） |
-| G07 UI 与文档工作分离 | ⏳ 未实施（依赖网络线程，见下） | — | — |
+| G07 UI 与文档工作分离 | ✅（有界命令队列 + 任务版本丢弃骨架） | `toy_browser/app/document_controller.py` | `tests/test_document_controller.py`（10 条） |
 | C02 连续像素缓冲区及呈现 | ✅（数据契约 + PPM 批量打包 + 缓冲池） | `toy_browser/rendering/cpu_image.py` | `tests/test_cpu_image.py`（6 条） |
 | C03 行内格式化与文字布局 | ⏳ 未实施（需先冻结 Edge 几何对照，见下） | — | — |
+
+## 批次 3 完成的工作项（G08 / G07 补全）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G08 导航状态、停止与错误 | ✅ | `toy_browser/app/navigation_state.py` `NavigationState` | `tests/test_navigation_state.py`（10 条） |
+| G07 命令队列 + 任务丢弃 | ✅（批次 2 已落骨架，批次 3 补 drain / apply 门控） | `toy_browser/app/document_controller.py` | 随 G07 测试 |
 
 ## 批次 2 关键实现说明
 
@@ -61,24 +68,56 @@
 - **未实施**：填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区
   （批次 3）；独立进程 + 共享内存槽（可选 GPU 方案）。
 
+## 批次 3 关键实现说明
+
+### G08 导航状态机（`navigation_state.py`）
+- `NavigationState` 六态：`idle / loading / interactive / complete /
+  failed / cancelled`，记录 current/final URL、错误分类、进度、
+  epoch。完成 / 失败 / 取消**分别**更新（不统一写 "Loaded"）；
+  `ui_label()` 按态映射状态栏文本，`stop_button_visible` 驱动刷新
+  按钮变停止。
+- `cancel_request()` 只在 busy（loading/interactive）时生效：先逻辑
+  取消（UI 立即反馈 + 置 `cancel_requested`），transport 在下一可
+  取消点收尾（G08 step 3，不强杀线程）。
+- `accept_result(epoch, ok)` 门控异步结果：旧 epoch / 已取消的结果
+  直接丢弃（A 文档的结果不写入 B 文档，与 G07 配合）；成功 →
+  COMPLETE，失败 → FAILED + 错误分类（与 `net.categorize_fetch_error`
+  词表对齐，`describe_error` 出中文摘要）。
+
+### G07 有界命令队列与任务丢弃（`document_controller.py`）
+- `CommandQueue`：navigate / input / stop 按序保留（`max_pending`
+  有界，超限拒绝）；resize / scroll **同类**合并只留最新（旧 resize /
+  scroll 被顶掉，G07 step 5）。
+- `DocumentController.navigate()` 分配 epoch + bump C01
+  `navigation_epoch`/`document_id`；`stop()` 先翻 CANCELLED 再投
+  stop 命令；`drain()` 取出全部在途命令产出 `Result`（取消时丢弃）。
+- `Result` 携带 C01 `document_id`/`frame_id`；`apply_results()` 用
+  `Result.is_stale` + `NavigationState.accept_result` 双门控——过期
+  帧 / 旧 epoch / 已取消的结果不写 DOM、不刷画布（G07 step 6）。
+- **本批为骨架**：内置同步工作单元（about:/本地成功 stub，http(s)
+  占位不实际拉取）。真实的网络 I/O 移出主线程 / 文档进程、可取消
+  transport（G08 step 3 的 socket 收尾）是批次 4 的后续实施——本批
+  先把命令契约、有界队列与版本丢弃逻辑落好并测试。
+
 ## 本批未完成 / 阻塞项
 
-- **G07 UI 与文档工作分离**：有界命令队列 + 网络 I/O 移出主线程 +
-  文档进程方案。依赖 G08 导航状态机与 C01 完整 `DocumentState`
-  抽取（批次 3）；本批先落 C01 版本骨架（批次 1）为 G07 任务丢弃
-  提供基础，但未实施线程分离本身（纯 Python 线程无多核收益，文档
-  建议评估文档进程方案）。
 - **C03 行内格式化与文字布局**：需先将最小失败页面拆为普通文本 /
   b/i/span / 链接 / 连续空白 / 中文拉丁混排 / 长单词，并冻结 Edge
   几何与截图（C03 step 1），本批未执行该冻结步骤，故未实施
   InlineRun/LineBox。
+- **G07 网络 I/O 外移 / 文档进程**：本批落命令队列与版本丢弃骨架；
+  把网络 fetch 真正移出 UI 线程、实现可取消 transport 是批次 4。
 
 ## 剩余限制（下一批次）
 
-- G08 导航状态 / 停止 / 错误、G09 标签页与历史会话、G10 工具栏 /
-  状态栏 / 诊断区、G11 可访问性。
+- G09 标签页与历史会话、G10 工具栏 / 状态栏 / 诊断区、G11
+  可访问性。
+- G07 线程 / 进程分离（网络 I/O 外移 + 可取消 transport）、G08
+  transport 收尾（socket 关闭/超时不强杀线程）。
 - C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
-  合一）、C03 文字布局、C04 表格表单、C05 样式缓存。
+  合一）、C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、
+  C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续
+  缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize 的 Tk 实测需有显示
   环境执行；本批回归覆盖纯逻辑与协议公式。
 - 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
@@ -88,7 +127,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **999/999 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32） |
+| `py -3 test.py` | **1019/1019 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20） |
 
 ## 关键实现说明
 
