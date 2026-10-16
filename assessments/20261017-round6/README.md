@@ -188,6 +188,38 @@
   各阶段行 + 合计行 + 缓存/fallback 摘要行），"导出诊断信息按钮"可直接
   消费（与 `DiagnosticsLog.export` 的原始事件流互补）。
 
+## 批次 11 完成的工作项（C05 样式缓存键 + 失效范围 + 命中率统计，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C05 缓存键 + 失效范围 | ✅ | `toy_browser/app/style_cache.py` `StyleCacheKey`（stylesheet_revision + media + interaction，节点级不进全局键）/ `invalidate_scope` / `widen_scope` / `apply_invalidation` | `tests/test_style_cache.py`（18 条） |
+| C05 各阶段命中率统计 | ✅ | `style_cache.py` `HitRateStats`（parse/match/cascade/property 命中 / 未命中计数 + rate + summary） | 同上 |
+| C05 按 Document 管理 | ✅ | `style_cache.py` `document_cache_budget`（上限 4096 + document_destroy 清理约定） | 同上 |
+
+### C05 样式缓存键 + 失效范围 + 命中率统计（`style_cache.py`）
+- **不叠无失效条件的全局缓存**（C05 证据：css.py 已有 P34.1 规则表
+  记忆化 + P34.5 candidate-rule cache）：本模块只是把现有散点缓存的
+  键语义 / 失效条件 / 命中统计抽成可独立测试的纯逻辑决策层，css.py
+  仍持有实际缓存实例。
+- `StyleCacheKey`（C05 步骤 2）：明确缓存键 = `stylesheet_revision` +
+  `media`（媒体条件快照）+ `interaction`（hover/focus 快照）；DOM 结构 /
+  继承输入是**节点级**，不进全局键（步骤 3 "避免把一个节点的状态写到
+  其他节点"）。frozen dataclass，hashable 可作 dict key。
+- `invalidate_scope(change)`（C05 步骤 4）：改动类型 → 失效范围。
+  stylesheet/font → `all`（全量）；class/id/style → `node`（仅节点）；
+  hover/focus → `interaction`（仅交互）；media/resize → `media`；未知
+  保守返回 `all`（正确性优先）。`widen_scope` 取并集（影响面最大者胜）。
+- `HitRateStats`（C05 步骤 1）：各阶段（parse/match/cascade/property）
+  命中 / 未命中计数 + `rate`（无样本返回 1.0 = 无重复工作）+
+  `summary`（人类可读，诊断区 / 性能追踪消费，C05 交付"记录真实
+  命中率和分段耗时"）。
+- `apply_invalidation`：stylesheet/font 改动 bump revision；其余 scope
+  键不变（节点级失效在节点维度处理）。
+- `document_cache_budget`（C05 步骤 5）：按 Document 管理的缓存预算
+  字典（上限 4096，与 css.py `_CANDIDATE_RULES_CACHE_MAX` 一致）+
+  "document_destroy 时清"约定（节点释放后不依赖可复用的 Python id
+  识别身份）。
+
 ## 本批未完成 / 阻塞项
 
 - **G11 Tk 绑定**：真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
@@ -206,7 +238,7 @@
   G09 step 2+4 Tk 侧路由、C01 公共 API 包装层 GUI 接入、
   G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
 - C03 文字布局（需先冻结 Edge 几何对照）、C04 表单提交端到端、
-  C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
+  C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
   与协议公式。
@@ -217,7 +249,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1155/1155 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27） |
+| `py -3 test.py` | **1173/1173 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18） |
 
 ## 批次 2 关键实现说明
 

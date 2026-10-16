@@ -2851,11 +2851,36 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   诊断区展开收起的画布实测需活显示环境。
 
 ---
+### R6.20 C05 样式缓存键 + 失效范围 + 命中率统计（纯逻辑核心，批次 11）
+
+- [x] **C05 明确缓存键 + 失效范围**（`toy_browser/app/style_cache.py`
+  `StyleCacheKey` / `invalidate_scope` / `widen_scope` /
+  `apply_invalidation`）：缓存键 = `stylesheet_revision` + `media`（媒体
+  条件快照）+ `interaction`（hover/focus 快照）；DOM 结构 / 继承输入是
+  **节点级**，不进全局键（C05 步骤 3 "避免把一个节点的状态写到其他
+  节点"）。`invalidate_scope` 把改动类型映射到失效范围（stylesheet/font
+  → all；class/id/style → node；hover/focus → interaction；media/resize
+  → media；未知保守 → all）；`widen_scope` 取并集（影响面最大者胜）。
+- [x] **C05 各阶段命中率统计**（同模块 `HitRateStats`）：parse/match/
+  cascade/property 各阶段的命中 / 未命中计数 + `rate`（无样本返回 1.0
+  = 无重复工作）+ `summary`（人类可读，诊断区 / 性能追踪消费，C05 交付
+  "记录真实命中率和分段耗时"）。
+- [x] **C05 按 Document 管理**（同模块 `document_cache_budget`）：缓存
+  预算字典（上限 4096，与 css.py `_CANDIDATE_RULES_CACHE_MAX` 一致）+
+  "document_destroy 时清"约定（节点释放后不依赖可复用的 Python id
+  识别身份）。
+- 回归：`tests/test_style_cache.py`（18 条）。
+- 说明：css.py 已有 P34.1 规则表记忆化 + P34.5 candidate-rule cache；
+  本批**不叠**无失效条件的全局缓存，只把现有散点缓存的键语义 / 失效
+  条件 / 命中统计抽成可独立测试的纯逻辑决策层，css.py 仍持有实际缓存
+  实例。
+
+---
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起）已完成（**1155/1155** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计）已完成（**1173/1173** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）与批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）已完成；批次 11（G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C05–C10 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）与批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）已完成；批次 12（G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C06–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
