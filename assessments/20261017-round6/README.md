@@ -61,6 +61,28 @@
 | C01 完整 DocumentState 抽取 | ✅ | `toy_browser/app/document_state_full.py` `DocumentState`（DOM + Host + 策略 + 资源 + 稳定 node_id + 生命周期入口） | `tests/test_document_state_full.py`（8 条） |
 | G11 键盘全流程纯逻辑 | ✅ | `toy_browser/app/accessibility.py` `FocusViewport` / `mouseless_tasks` / `focus_action` / `KeyboardSession` | `tests/test_accessibility.py`（24 条） |
 
+## 批次 8 完成的工作项（G09 step 3 统一历史提交入口，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G09 step 3 统一历史提交入口 | ✅ | `toy_browser/app/history_entry.py` `HistoryCommitter` / `HistoryEntry` | `tests/test_history_entry.py`（12 条） |
+
+### G09 step 3 统一历史提交入口（`history_entry.py`）
+- `HistoryCommitter.commit(url, source, final_url, dedup)` 是**唯一**的
+  历史提交入口（地址栏 Go / 链接 / 书签 / 文件打开都接同一入口，
+  来源用 `SRC_ADDRESS`/`SRC_LINK`/`SRC_BOOKMARK`/`SRC_FILE` 标签区分）。
+- **一次导航 = 恰好一个历史项**：携带 *最终* URL（重定向链走完落到的
+  地址）+ `start_url`（发起 URL，诊断用），中间 3xx 跳转**不**建独立
+  历史项（G09 step 3 "明确重定向只形成哪一个历史项"）。
+- **前进/后退是游标移动**（`back`/`forward` 不新增项）；新导航清空
+  cursor 之后的前进栈（标准浏览器语义，无历史分叉）。
+- 同址去重：cursor 指向项 URL == 最终 URL 时不新增，原地更新 source。
+- `can_back`/`can_forward`/`current` 供工具栏按钮启停 + 状态栏（G10
+  的 `toolbar_state` 消费这里）。
+- **纯逻辑核心**：GUI/CLI/测试都接同一入口；Tk 侧把
+  `PageInstance.back_stack/fwd_stack` 迁移到 `HistoryCommitter`（保留
+  旧调用兼容）属批次 8 的 Tk 路由改造，留后续批次（需活显示验收）。
+
 ### C01 完整 DocumentState（`document_state_full.py`）
 - `DocumentState` 持有 C01 骨架的 `DocumentVersion`（四计数器唯一持有者）
   + 文档策略 `policy` + 源 `base_url` + DOM/Host + 子资源注册表 +
@@ -273,24 +295,26 @@
 - **G07 文档进程方案**：可取消网络工作单元 + 线程初版（网络
   I/O 移出 UI 调用点 + 取消语义）；把 CPU 工作（DOM / 布局）移入
   文档进程是后续（纯 Python 线程无多核收益）。
-- **G09 step 3 统一历史提交入口**：稳定身份（step 1）与会话
-  持久化（step 5）；把地址栏 / 链接 / 书签 / 文件打开的导航历史提交
-  收敛到单一入口并明确重定向只形成一个历史项，属 Tk 侧路由改造，
-  需活显示环境验收，留作后续批次。
+- **G09 step 3 Tk 侧路由改造**：本批（批次 8）落统一历史提交入口的
+  纯逻辑核心（`history_entry.py` `HistoryCommitter`，唯一入口 +
+  重定向只形成一个历史项 + 游标移动不清前进栈）；把 GUI/CLI/测试
+  接到同一入口、迁移 `PageInstance.back_stack/fwd_stack` 到
+  `HistoryCommitter`（保留旧调用兼容）属 Tk 侧路由改造，需活显示
+  环境验收，留作后续批次。
 - **G10 Tk 布局 / 控件绑定**：本批落诊断记录 + 工具栏 / 状态栏 /
   标题 / 安全摘要的纯函数映射；Tk 可展开诊断区布局与"导出诊断
   信息"按钮的 GUI 绑定需活显示环境，留作后续批次。
 
 ## 剩余限制（下一批次）
 
-- G11 可访问性、G09 step 3 统一历史提交入口、G10 Tk 诊断区布局 /
-  控件绑定、G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
-- C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
-  合一）、C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、
-  C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续
-  缓冲区。
-- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区的 Tk 实测
-  需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
+- G09 step 3 Tk 侧路由改造（历史提交入口接入 GUI/CLI/测试）、
+  G10 Tk 诊断区布局 / 控件绑定、G11 Tk 键盘绑定 / 焦点画布滚动、
+  G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
+- C01 公共 API 包装层接入（GUI/CLI/测试接同一入口，保留旧调用兼容）、
+  C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、C05 样式
+  缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
+- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
+  键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
 - 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
   语义、错误分类），不在本批范围。
 
@@ -298,7 +322,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1064/1064 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19） |
+| `py -3 test.py` | **1108/1108 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12） |
 
 ## 关键实现说明
 
