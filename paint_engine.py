@@ -219,8 +219,48 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     tx_off = bx.transform_tx
     ty_off = bx.transform_ty
     r = bx.rect
-    eff_x = r.x + tx_off
-    eff_y = r.y + ty_off
+    # R4 stage 5 — the *paint* surface of a box (its background fill and
+    # border ring) is its border-box, not the content box the layout
+    # engine stores in ``bx.rect`` (the content-box origin, used by 235+
+    # content-space consumers).  The legacy code emitted both the
+    # background rect and the border ring at (eff_x, eff_y, r.w, r.h) =
+    # content-box, so a box with ``padding:5px;border:2px`` painted its
+    # background 7px inside where a browser paints it (the report's
+    # flex_padding_border case: Edge red group [63,6,237,36] vs toy
+    # [67,10,229,28] — exactly the border-box-minus-content-box inset on
+    # every side).  CSS's default background-clip is border-box: the
+    # background fills the whole border-box and the border ring is drawn
+    # ON TOP of it, so the visible background only shows through past
+    # the border.  The origin below matches the layout engine's
+    # ``border_rect()`` contract (content origin minus padding — what
+    # getBoundingClientRect reports); text is painted at the content-box
+    # origin (``r.x``/``r.y`` + transform offset), and the scroll-clip
+    # post-pass still anchors on the content rect + padding insets.
+    _pad_l, _pad_t = bx.padding.left, bx.padding.top
+    _pad_r, _pad_b = bx.padding.right, bx.padding.bottom
+    _bdr_l, _bdr_t = bx.border.left, bx.border.top
+    _bdr_r, _bdr_b = bx.border.right, bx.border.bottom
+    # R4 stage 5 — the border-box paint surface: the origin is the
+    # content-box origin minus the padding (matching the layout
+    # engine's ``border_rect()`` contract, which is what the
+    # geometry probes report and what the browser's
+    # getBoundingClientRect returns).  The size spans content +
+    # padding + border on both axes.  Integer alignment: snap the
+    # origin DOWN and grow the size to cover the box's right/bottom
+    # edge on whole pixels, so the 1px-thick raster border ring
+    # lands on a pixel boundary instead of straddling two pixels
+    # (a sub-pixel flex centre otherwise reads as a 2.5px-visible
+    # ring on a 2px CSS border, putting the visible background 1px
+    # off per side vs the GPU reference).
+    import math as _math
+    _bb_x0 = r.x + tx_off - _pad_l
+    _bb_y0 = r.y + ty_off - _pad_t
+    _bb_wf = r.w + _pad_l + _pad_r + _bdr_l + _bdr_r
+    _bb_hf = r.h + _pad_t + _pad_b + _bdr_t + _bdr_b
+    eff_x = int(_math.floor(_bb_x0))
+    eff_y = int(_math.floor(_bb_y0))
+    bb_w = int(_math.ceil(_bb_x0 + _bb_wf - eff_x))
+    bb_h = int(_math.ceil(_bb_y0 + _bb_hf - eff_y))
     # P1.1 — apply opacity to the box's own background colour.
     op = bx.opacity
 
@@ -345,14 +385,15 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     # P5.1 — box-shadow: emit a "shadow" command BEFORE the background.
     # The shadow is drawn at (eff_x + shadow_offset_x, eff_y + shadow_offset_y)
     # with the box's own dimensions; the rasterizer dilates by shadow_radius.
+    # R4 stage 5 — the shadow silhouette is the box's border-box.
     if shadow_enabled and shadow_color is not None:
         _emit_one(
             _dc(
                 "shadow",
                 eff_x,
                 eff_y,
-                r.w,
-                r.h,
+                bb_w,
+                bb_h,
                 color=shadow_color,
                 radius=border_radius,
                 shadow_offset_x=shadow_ox,
@@ -363,10 +404,14 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
 
     # P3.1 — embedded image: emit a dedicated "img" command so the
     # rasterizer can paint the decoded pixels with nearest-neighbour scaling.
+    # The img pixels scale into the box's content area; with the R4
+    # stage 5 border-box paint origin the content top-left is the
+    # border-box origin advanced by the border + padding insets.
     if is_img and img_pixels is not None:
         _emit_one(
             _dc(
-                "img", eff_x, eff_y, r.w, r.h,
+                "img", eff_x + _bdr_l + _pad_l, eff_y + _bdr_t + _pad_t,
+                r.w, r.h,
                 img_pixels=img_pixels,
                 img_src_w=img_pixel_w,
                 img_src_h=img_pixel_h,
@@ -378,10 +423,15 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             bc = border_color
             if op < 1.0:
                 bc = Color(bc.r, bc.g, bc.b, int(bc.a * op))
-            _emit_one(_dc("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
+            _emit_one(_dc("border", eff_x, eff_y, bb_w, bb_h, color=bc, radius=border_radius))
     else:
         # Background fill — use "rounded" when border_radius > 0.
         # P9.4 — linear-gradient: emit a dedicated "gradient" command.
+        # R4 stage 5 — the fill spans the box's border-box (bb_w ×
+        # bb_h at the eff_x/eff_y border-box origin), not the
+        # content box: CSS's default background-clip is border-box,
+        # and the border ring below is drawn ON TOP of the fill, so
+        # the visible fill shows through only past the border.
         if eff_bg is not None and not gradient_enabled:
             kind = "rounded" if border_radius > 0 else "rect"
             # P9.4 — clip-path + text-shadow on regular rect/rounded fill.
@@ -395,7 +445,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             ts_c = text_shadow_color if text_shadow_enabled else None
             _emit_one(
                 _dc(
-                    kind, eff_x, eff_y, r.w, r.h,
+                    kind, eff_x, eff_y, bb_w, bb_h,
                     color=eff_bg,
                     radius=border_radius,
                     clip_top=clip_t, clip_right=clip_r,
@@ -412,7 +462,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             # P9.4 — linear-gradient: emit a "gradient" command with clip-path.
             _emit_one(
                 _dc(
-                    "gradient", eff_x, eff_y, r.w, r.h,
+                    "gradient", eff_x, eff_y, bb_w, bb_h,
                     color=gradient_c1,
                     radius=border_radius,
                     grad_c1=gradient_c1,
@@ -433,10 +483,11 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             )
         elif eff_bg is None and is_img:
             # Default grey placeholder fill for <img> (no embedded data).
+            # R4 stage 5 — img placeholder fill spans the border-box.
             _emit_one(
                 _dc(
                     "rounded" if border_radius > 0 else "rect",
-                    eff_x, eff_y, r.w, r.h,
+                    eff_x, eff_y, bb_w, bb_h,
                     color=Color(200, 200, 200),
                     radius=border_radius,
                 )
@@ -446,19 +497,21 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             # transparent-canvas-on-white-page look in the toy bitmap
             # pipeline).  A CSS background-color on the canvas element
             # overrides this (eff_bg would not be None in that case).
+            # R4 stage 5 — the canvas surface is its border-box.
             _emit_one(
                 _dc(
                     "rect",
-                    eff_x, eff_y, r.w, r.h,
+                    eff_x, eff_y, bb_w, bb_h,
                     color=Color(255, 255, 255),
                 )
             )
         elif eff_bg is None and (is_svg or is_video):
             # P33.P3 — SVG / video / audio placeholder: a light-grey
             # rounded rectangle with a 1px border, sized from the
-            # element's rect (default 300×150 when no CSS size is set).
-            ph_w = max(1.0, r.w)
-            ph_h = max(1.0, r.h)
+            # element's border-box (default 300×150 when no CSS size
+            # is set).  R4 stage 5 — placeholder surface = border-box.
+            ph_w = max(1.0, bb_w)
+            ph_h = max(1.0, bb_h)
             _emit_one(
                 _dc(
                     "rect",
@@ -474,18 +527,23 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 )
             )
 
-    # Border (toy: 1px outline using border_color when border-width > 0)
+    # R4 stage 5 — the CSS border is the outermost ring of the
+    # border-box; the toy's raster ring is 1px thick, so it sits on
+    # the border-box's outer pixel boundary (a 2px CSS border reads
+    # as a 1px ring here — the box's visible background shows
+    # through 1px past the ring, matching the GPU reference's inset
+    # to within 1px on every side).
     if not (is_img and img_pixels is not None):
         if border_left > 0 and border_color is not None:
             bc = border_color
             if op < 1.0:
                 bc = Color(bc.r, bc.g, bc.b, int(bc.a * op))
-            _emit_one(_dc("border", eff_x, eff_y, r.w, r.h, color=bc, radius=border_radius))
+            _emit_one(_dc("border", eff_x, eff_y, bb_w, bb_h, color=bc, radius=border_radius))
         elif is_img or is_iframe:
             # Default 1px grey border for img / iframe placeholders.
             _emit_one(
                 _dc(
-                    "border", eff_x, eff_y, r.w, r.h,
+                    "border", eff_x, eff_y, bb_w, bb_h,
                     color=Color(128, 128, 128),
                     radius=border_radius,
                 )
@@ -496,8 +554,10 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     # focused control.
     _is_control = control_type != "" or tag in ("input", "select", "textarea", "button")
     if control_type in ("checkbox", "radio"):
-        cx = eff_x + r.w / 2.0
-        cy = eff_y + r.h / 2.0
+        # R4 stage 5 — the control mark is centred on the border-box
+        # (a checkbox's tick fills the whole control, border included).
+        cx = eff_x + bb_w / 2.0
+        cy = eff_y + bb_h / 2.0
         if control_type == "checkbox" and control_checked:
             # Check mark: a filled 6×6 square in the center.
             _emit_one(
@@ -518,14 +578,15 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             )
     elif control_type == "select" or tag == "select":
         # <select> combobox: draw a down-arrow glyph (toy: "v" text).
+        # R4 stage 5 — the select's visible surface is its border-box.
         opt_label = bx.control_options[bx.control_option_index] if bx.control_options else ""
         _emit_one(
             _dc(
                 "text",
                 eff_x + 4.0,
-                eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
-                r.w - 16.0,
-                r.h,
+                eff_y + max(0.0, bb_h / 2.0 - font_px / 2.0),
+                bb_w - 16.0,
+                bb_h,
                 text=opt_label,
                 text_color=bx.text_color or Color(0, 0, 0),
                 font_px=font_px,
@@ -536,8 +597,8 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         _emit_one(
             _dc(
                 "rect",
-                eff_x + r.w - 12.0,
-                eff_y + r.h / 2.0 - 1.5,
+                eff_x + bb_w - 12.0,
+                eff_y + bb_h / 2.0 - 1.5,
                 8.0, 3.0,
                 color=Color(80, 80, 80),
                 control_type="select",
@@ -545,14 +606,15 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         )
     elif control_type == "file":
         # <input type="file">: show the file name (or "No file selected").
+        # R4 stage 5 — the file input's surface is its border-box.
         file_label = bx.control_file_name or "No file selected"
         _emit_one(
             _dc(
                 "text",
                 eff_x + 4.0,
-                eff_y + max(0.0, r.h / 2.0 - font_px / 2.0),
-                r.w - 16.0,
-                r.h,
+                eff_y + max(0.0, bb_h / 2.0 - font_px / 2.0),
+                bb_w - 16.0,
+                bb_h,
                 text=file_label,
                 text_color=bx.text_color or Color(0, 0, 0),
                 font_px=font_px,
@@ -560,17 +622,17 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
             )
         )
     # P28.3 — focus ring for any focused form control.
+    # R4 stage 5 — the focus ring sits 1px outside the border-box.
     if control_focus and _is_control:
         _emit_one(
             _dc(
-                "border", eff_x - 1.0, eff_y - 1.0, r.w + 2.0, r.h + 2.0,
+                "border", eff_x - 1.0, eff_y - 1.0, bb_w + 2.0, bb_h + 2.0,
                 color=Color(0, 100, 255),
                 control_type=control_type,
             )
         )
-    # P10.3 — CSS outline: draw a ring OUTSIDE the border.
-    # offset = (outline_width / 2); the outline is drawn as a hollow rect
-    # around (eff_x - off, eff_y - off, r.w + 2*off, r.h + 2*off).
+    # P10.3 — CSS outline: draw a ring OUTSIDE the border-box.
+    # R4 stage 5 — offset computed from the border-box dimensions.
     if outline_width > 0 and outline_color is not None:
         ow = int(outline_width)
         oc = outline_color
@@ -579,8 +641,8 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         off = max(0, ow - 1)  # ring just outside the border
         ox0 = int(eff_x - off)
         oy0 = int(eff_y - off)
-        ow_full = int(r.w) + 2 * off
-        oh_full = int(r.h) + 2 * off
+        ow_full = int(bb_w) + 2 * off
+        oh_full = int(bb_h) + 2 * off
         # Hollow rect: four strips.
         _emit_one(
             _dc(
@@ -604,12 +666,22 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         )
 
     # Text content — shift by transform offset.
+    # R4 stage 5 — eff_x/eff_y are the *border-box* origin
+    # (content-box origin minus padding).  The text's content-box
+    # origin is therefore the layout-stored content rect itself
+    # (``r.x``/``r.y`` + the transform offset), NOT eff_x + padding:
+    # that legacy formula double-counted the padding and pushed the
+    # text one padding-width too far right/down on every padded box.
     if text_content:
-        tx = eff_x + bx.padding.left
-        ty = eff_y + bx.padding.top
+        tx = r.x + tx_off
+        ty = r.y + ty_off
         # P14.3 — text-indent shifts the first line right (positive) or left.
         if text_indent:
             tx += text_indent
+        # R4 stage 5 — the text wrap width is the content box width
+        # (r.w): the layout engine already resolved `available` to the
+        # content width, so the text site keeps r.w (NOT bb_w, which
+        # would let the text run into the padding/border ring).
         max_w = explicit_width - bx.padding.left - bx.padding.right if explicit_width else r.w
         tc = bx.text_color if bx.text_color is not None else Color(0, 0, 0)
         if op < 1.0:

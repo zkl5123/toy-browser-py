@@ -2567,10 +2567,35 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                         t = grandchild.text_content or ""
                         tw += text_mod.measure(t, grandchild.font_px)
                     inline_text_w = tw + cb.padding.left + cb.padding.right
+                # R4 stage 5 — C9 inline-run geometry: a bare TEXT box in
+                # the run is laid out at its *measured* content width
+                # (clamped to the run width so a long paragraph still
+                # wraps), not the full container width.  The legacy code
+                # passed ``max(run_w, avail)`` so every text fragment's
+                # ``cb.rect.w`` read the container width and the run
+                # advanced by it — the next inline element landed 200+
+                # px past its real position (粗体 span 横飞 / 文字重叠).
+                elif ck == BoxType.TEXT:
+                    text_run_w = text_mod.measure(
+                        cb.text_content or "", cb.font_px, cb.font_family)
+                    inline_text_w = min(text_run_w, run_w) if run_w > 0 else text_run_w
                 if inline_text_w is not None:
                     layout_block(cb, cx, run_y, inline_text_w)
                 else:
                     layout_block(cb, cx, run_y, max(run_w, avail))
+                # R4 stage 5 — C9 inline run geometry: the advance for an
+                # inline element is the box's *content* width — the layout
+                # engine already resolved that to the text advance when
+                # the box was laid out with the explicit content width
+                # above (or the text run width below) — plus its own
+                # left/right padding (an inline box with padding still
+                # occupies the padding area between adjacent runs).
+                # The legacy code added a whole extra character cell
+                # (``text_mod.char_advance``) on top of that, which is
+                # how a ``<b>bold</b>`` in flowing text overshot its
+                # neighbours by one advance and ended up "flying" right
+                # past the next word in the render (the report's
+                # render_basic symptom: 粗体 span 横飞).
                 w = cb.rect.w + cb.padding.left + cb.padding.right
                 # P18.3 — vertical-align shift (toy: baseline / top / middle).
                 # The line box baseline is approximated as run_y + line_height_px * 0.75
@@ -2585,8 +2610,6 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
                     cb.rect.y = mid - cb.rect.h / 2.0
                 # "baseline" (default): no shift — the box is already at run_y.
                 cx += w
-                if ck == BoxType.INLINE:
-                    cx += text_mod.char_advance(cb.font_px)
                 run_h = max(run_h, cb.rect.h)
                 run_top_y = min(run_top_y, cb.rect.y)
                 run_bottom_y = max(run_bottom_y, cb.rect.y + cb.rect.h)

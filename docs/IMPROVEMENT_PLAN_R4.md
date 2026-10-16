@@ -136,7 +136,8 @@
 ## 执行顺序与门禁
 
 > **进度（2026-10-16 起）**：阶段 0/1/2 已提交（commit 305163d 之后）；
-> 阶段 3（真实 fetch/XHR 注入式传输）本轮完成。
+> 阶段 3（commit d971bb5）、阶段 4（commit d8320e0）已完成并提交；
+> 阶段 5（内联排版 + 绘制盒模型统一 C9）本轮完成并提交。
 
 1. 第 0 → 1 → 2 轮（P0：统一策略上下文 + 脚本模型 + CSP/nonce），每轮后跑 `test.py` + 对应 functional_summary 场景回归。 **[已完成]**
 2. 第 3 轮（P1 真实 fetch/XHR，注入 transport 模式，离线可测）。**[已完成]**
@@ -164,7 +165,23 @@
      `['mutated','checkpoint']`、`functional_resize_observer` 翻转 `['resized']`）；
      `test.py` 925/925；network_e2e 10/10 仍匹配 Edge；net 8/8；geometry 15/17
      （2 项既有浮点差，非回归）。
-4. 第 5 轮（P1 绘制盒模型），改 `layout`/`paint_engine` 几何契约，跑 4 色块 + render_* 像素。
+4. 第 5 轮（P1 绘制盒模型 + 内联排版统一 C9）。**[已完成]**
+    - 实现（`paint_engine.py`）：`_emit` 的背景填充/渐变/阴影/边框环/
+      svg-video 占位/控件/焦点环/outline 全部改到 **border-box** 坐标
+      （origin = 内容盒原点对 `border_rect()` 契约减去 padding，size = 内容+padding+border），
+      并做整数对齐（floor origin + ceil 尺寸）使 1px 栅格边框环落在像素边界；
+      文字仍画在内容盒原点（`r.x`/`r.y` + transform 偏移，不再二次加 padding），
+      滚动裁剪后处理仍锚定内容 rect + padding insets。
+    - 实现（`layout.py` 内联行）：C9 行内排版修复——裸 TEXT 片段按**实测文本宽度**
+      （而非容器全宽 `max(run_w, avail)`）排版，inline 元素不再额外叠加
+      `char_advance` 整格（消除粗体 span 横飞 / 文字重叠）；
+      `w = cb.rect.w + padding` 统一为内容宽 + padding 的几何契约。
+    - 结果：`test.py` **931/931**（925 基线 + 6 个 C9 回归探针）；
+      4 色块绘制像素边界匹配 Edge（flex_padding_border [62,5,238,37] vs Edge
+      [63,6,237,36]，1px 容差内；其余 3 项精确）；
+      17 项几何探针 **45/48**（3 项既有浮点差：table collapse / grid 1fr2fr，
+      非回归）；render_* 前景占比贴近 Edge（render_basic 几何对齐后无重叠/横飞）；
+      compare_js 51/51；network_e2e 10/10 CLI+GUI 匹配 Edge；GUI 交互/滚动/历史全绿。
 5. 第 6 轮（回归固化），把探针写进 `tests/`。
 6. 第 7 轮（P2 剖析）收尾。
 
