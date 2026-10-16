@@ -151,19 +151,50 @@
   Tab 从 chrome 进 document 首位，Shift+Tab 首位回 chrome，
   循环移动不越界。
 
+## 批次 10 完成的工作项（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C04 步骤 3 表单控件统一呈现模型 | ✅ | `toy_browser/app/form_control.py` `ControlModel` / `display_text` / `paint_geometry`（text/password/checkbox/radio/file/select/button/textarea 的当前值 vs 初始值区分、统一控件几何） | `tests/test_form_control.py`（20 条） |
+| C04 步骤 1/2 表格列宽/行高纯逻辑求解 | ✅ | `form_control.py` `TableColumn` / `solve_table_widths` / `solve_row_heights` / `table_total_height`（显式列固定、auto 列 max-content、超宽按比例缩、border-collapse 共享边框减半、行高取最大单元格 border-box） | 同上 |
+| G10 step 4/5 诊断区展开/收起 + 计时展示投影 | ✅ | `toy_browser/app/diag_panel.py` `DiagPanel`（默认收起状态机）/ `timing_table`（各阶段有序耗时行）/ `panel_lines`（人类可读面板行） | `tests/test_diag_panel.py`（7 条） |
+
+### C04 表单控件统一呈现模型（`form_control.py`）
+- `ControlModel.from_dom(node)` 从 DOM 节点读初始值：`initial_value` /
+  `initial_checked` / `initial_selected`（DOM 属性，初始态）与 `value` /
+  `checked` / `selected_index`（当前 DOM property，交互后更新）区分
+  （C04 步骤 3 "初始 value/selected/checked 与当前 DOM property 区分"）。
+  checkbox/radio 无 value 默认 "on"；select 收集 option 值 + 当前选中项；
+  file input 带 file_name；button 带 label；textarea 多行 value。
+- `display_text(m)` 读**当前值**呈现（不读初始值）：password 掩码（G03
+  显示分离）、checkbox/radio 勾选标记、file 文件名、select 当前项、
+  空 text 显示 placeholder。
+- `paint_geometry(m)` 统一控件几何（内容盒 + padding + border + 文本
+  位置 + 状态位），各控件分支不再重复（单一呈现数据源，C04 步骤 3）。
+- 表格 `solve_table_widths`：显式列固定、auto 列 max-content（shrink-to-
+  fit 不拉伸）、超宽按 max-content 比例缩回（min_content 下限）、
+  border-collapse 共享边框减半（与 `layout.py` `_layout_table` 同规则）。
+  `solve_row_heights` 行高取最大单元格 border-box；`table_total_height`
+  collapse 模式下相邻共享行边框各加一次。
+
+### G10 step 4/5 诊断区展示投影（`diag_panel.py`）
+- `DiagPanel`：可展开诊断区状态机（默认收起，"普通使用不堆放内核实现
+  信息"）；`toggle` / `show` / `hide`；展开时 `render(doc_id)` 返回展示
+  行，收起时返回空。
+- `timing_table`：把 `DiagnosticsLog.duration_ms` 的扁平键投影成有序展示
+  行（phase/label/first_ms/last_ms/duration_ms），按渲染顺序（网络→缓存
+  →解析→脚本→布局→光栅化）+ 合计行；单事件阶段耗时 0。
+- `panel_lines`：人类可读文本投影（`[doc=…] backend=… 阶段计时` 首行 +
+  各阶段行 + 合计行 + 缓存/fallback 摘要行），"导出诊断信息按钮"可直接
+  消费（与 `DiagnosticsLog.export` 的原始事件流互补）。
+
 ## 本批未完成 / 阻塞项
 
-- **G11 Tk 绑定**：本批落焦点滚动公式 + 无鼠标任务清单 + 键盘状态机
-  的纯逻辑核心；真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
+- **G11 Tk 绑定**：真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
   可见性的画布滚动需活显示环境验收，留作后续批次。
-- **C01 公共 API 包装层 GUI 接入**：本批（批次 9）落地渲染管线包装层
-  `document_renderer.py`（CLI/测试接同一 `DocumentState` 生命周期入口，
-  旧 `browser.render_document` 保持兼容）；把 GUI 的 `PageInstance`
-  也接到同一入口属活显示环境批次，留后续。
-- **G09 step 2+4 Tk 侧路由**：本批（批次 9）落地标签生命周期纯逻辑
-  核心（`tab_lifecycle.py`：切换只改前台呈现不重建文档、关闭取消任务
-  + 释放资源 + 失效 tab_id、后台降重绘 + 定时器节流）；Tk widget 重绑
-  / 画布降重绘 / 定时器实测需活显示环境验收，留后续。
+- **C04 表单提交端到端**（C04 步骤 4/5）：提交复用现有
+  `browser.py` serialize/validate/form_submit，端到端 GET/POST 任务
+  需活显示环境，留后续。
 - **C03 行内格式化与文字布局**：需先冻结 Edge 几何与截图
   （C03 step 1），本批未执行该冻结步骤。
 - **G07 文档进程方案**：可取消网络工作单元 + 线程初版；把 CPU
@@ -174,8 +205,8 @@
 - G10 Tk 诊断区布局 / 控件绑定、G11 Tk 键盘绑定 / 焦点画布滚动、
   G09 step 2+4 Tk 侧路由、C01 公共 API 包装层 GUI 接入、
   G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
-- C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、C05 样式
-  缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
+- C03 文字布局（需先冻结 Edge 几何对照）、C04 表单提交端到端、
+  C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
   与协议公式。
@@ -186,7 +217,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1128/1128 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20） |
+| `py -3 test.py` | **1155/1155 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27） |
 
 ## 批次 2 关键实现说明
 

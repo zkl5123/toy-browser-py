@@ -1,4 +1,4 @@
-# toy-browser-py — 改进路线图
+﻿# toy-browser-py — 改进路线图
 
 基于 [Web Browser Engineering](http://browser.engineering/) 的 16 阶段教学模型，
 对照当前实现差距，列出可落地的改进项。每项标注优先级与验收标准。
@@ -2822,11 +2822,40 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   与把 GUI `PageInstance` 接入 `document_renderer` 包装层（C01 step 4）
   属活显示环境批次。
 
+### R6.19 C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起（纯逻辑核心，批次 10）
+
+- [x] **C04 步骤 3 表单控件统一呈现模型**（`toy_browser/app/form_control.py`
+  `ControlModel` / `display_text` / `paint_geometry`）：text/password/checkbox/
+  radio/file/select/button/textarea 的**当前值 vs 初始值**区分
+  （`initial_value`/`initial_checked`/`initial_selected` 读 DOM 属性；
+  `value`/`checked`/`selected_index` 是当前 DOM property，呈现读当前值）。
+  checkbox/radio 无 value 默认 "on"；password 掩码；select 当前选中项；
+  file 文件名；button label；空 text 占位。`paint_geometry` 统一控件几何
+  （内容盒 + padding + border + 文本位置 + 状态位），各控件分支不重复。
+- [x] **C04 步骤 1/2 表格列宽/行高纯逻辑求解**（同模块 `TableColumn` /
+  `solve_table_widths` / `solve_row_heights` / `table_total_height`，与
+  `layout.py` `_layout_table` 同规则）：显式列固定；auto 列 max-content
+  （shrink-to-fit 不拉伸）；超宽按 max-content 比例缩回（min_content 下限）；
+  border-collapse 共享边框减半；行高取最大单元格 border-box；collapse
+  模式相邻共享行边框各加一次。
+- [x] **G10 step 4/5 诊断区展开/收起 + 计时展示投影**（`toy_browser/app/diag_panel.py`
+  `DiagPanel` / `timing_table` / `panel_lines`）：`DiagPanel` 可展开状态机
+  （默认收起，"普通使用不堆放内核实现信息"；`toggle`/`show`/`hide`）；
+  `timing_table` 把 `DiagnosticsLog.duration_ms` 扁平键投影成有序展示行
+  （phase/label/first_ms/last_ms/duration_ms，按渲染顺序 + 合计行）；
+  `panel_lines` 人类可读文本投影（首行 doc/backend + 各阶段行 + 合计行 +
+  缓存/fallback 摘要行），"导出诊断信息按钮"可直接消费。
+- 回归：`tests/test_form_control.py`（20 条）+ `tests/test_diag_panel.py`（7 条）。
+- 未实施：C04 步骤 4/5 表单提交端到端（GET/POST、复用 browser.py
+  serialize/validate/form_submit）需活显示环境；G10 Tk 诊断区控件布局 /
+  诊断区展开收起的画布实测需活显示环境。
+
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层）已完成（**1128/1128** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）与批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）已完成；批次 10（G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03–C10 / B 系列）按实施文档依赖顺序继续。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起）已完成（**1155/1155** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）与批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）已完成；批次 11（G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C05–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
