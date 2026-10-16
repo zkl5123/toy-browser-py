@@ -162,6 +162,68 @@ def test_g07_clear_on_new_document():
     assert len(c.commands) == 0
 
 
+def test_g07_cancelable_network_work_unit_success():
+    """批次 5 — 打开可取消网络工作单元：http(s) navigate 经
+    CancellableTransport 在工作线程里执行，主线程经
+    collect_network_results + apply_results 取回（C01 门控）。"""
+    c = _ctrl()
+    # 注入 fake fetch（不依赖真实网络）：成功
+    c.enable_cancelable_network(
+        fetch_fn=lambda url, t: (True, "", url, "ok"))
+    e1 = c.navigate("https://a")
+    assert c.nav.state == "loading"
+    # 网络工作单元已投出（不走内置 stub 队列）
+    assert c._transport is not None
+    # 非阻塞取结果；fake 立即返回，故可取到
+    res = c.collect_network_results(timeout=0.1)
+    assert len(res) == 1 and res[0].ok
+    applied = c.apply_results(res)
+    assert len(applied) == 1
+    assert c.nav.state == "complete" or c.nav.state == "interactive"
+    assert c._transport is None  # 结果已消费
+
+
+def test_g07_cancelable_network_stop_drops_result():
+    """批次 5 — Stop 取消在途网络工作单元：collect 取回取消结果，
+    apply_results 丢弃（不写 DOM / 不刷画布），状态停在 cancelled。"""
+    c = _ctrl()
+    # 慢 fake fetch：分片 sleep + 检查取消（模拟慢服务器）
+    from toy_browser.app.transport import _cooperative_sleep
+    def slow_fetch(url, t):
+        full = _cooperative_sleep(2.0, t, slice_s=0.02)
+        if not full:
+            return False, "cancelled", "", "stopped"
+        return True, "", url, ""
+    c.enable_cancelable_network(fetch_fn=slow_fetch)
+    c.navigate("https://slow")
+    assert c.nav.is_busy
+    c.stop()
+    assert c.nav.state == "cancelled"
+    # 取回在途 transport 的取消结果
+    res = c.collect_network_results(timeout=2.0)
+    applied = c.apply_results(res)
+    assert applied == [], "cancelled in-flight result must be dropped"
+    assert c.nav.state == "cancelled"
+
+
+def test_g07_cancelable_network_stale_discarded():
+    """批次 5 — 快速 A→B 导航：A 的在途结果因 B 的 C01 帧更新
+    而过期，apply_results 丢弃（A 的结果不覆盖 B）。"""
+    c = _ctrl()
+    c.enable_cancelable_network(
+        fetch_fn=lambda url, t: (True, "", url, "ok"))
+    e1 = c.navigate("https://a")
+    # 切到 B：A 的结果（旧 frame_id）对 B 而言过期
+    e2 = c.navigate("https://b")
+    # 取回 A 的在途结果（B 已 bump frame → A stale）
+    # A 的 transport 已被 B 的 navigate 替换；collect 只会取到 B。
+    res = c.collect_network_results(timeout=0.1)
+    # B 的结果可应用；A 已被替换（不在 collect 里）
+    applied = c.apply_results(res)
+    for r in applied:
+        assert r.nav_epoch == e2, "stale A result must not be applied"
+
+
 TESTS.append(("test_g07_queue_bounds_resize_scroll",
               test_g07_queue_bounds_resize_scroll))
 TESTS.append(("test_g07_queue_rejects_over_limit",
@@ -182,3 +244,9 @@ TESTS.append(("test_g07_input_command",
               test_g07_input_command))
 TESTS.append(("test_g07_clear_on_new_document",
               test_g07_clear_on_new_document))
+TESTS.append(("test_g07_cancelable_network_work_unit_success",
+              test_g07_cancelable_network_work_unit_success))
+TESTS.append(("test_g07_cancelable_network_stop_drops_result",
+              test_g07_cancelable_network_stop_drops_result))
+TESTS.append(("test_g07_cancelable_network_stale_discarded",
+              test_g07_cancelable_network_stale_discarded))

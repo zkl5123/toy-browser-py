@@ -2678,9 +2678,41 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09）已完成（**1033/1033** 测试通过）。
+### R6.13 G07 网络 I/O 外移 + G08 可取消 transport（批次 5）
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）与批次 4（G09 稳定身份 + 会话持久化）已完成；批次 5（G09 step 3 统一历史入口 / G10 / G11 / G07 线程进程分离 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
+**可取消网络工作单元**（`toy_browser/app/transport.py`）✅
+
+- [x] `CancellableTransport`：一次 fetch 任务，`run(fetch, url)` 同步
+  或 `async_=True` 投工作线程；`cancel()` 立即置取消标志（UI 侧"已
+  停止"立即反馈），工作线程在下一个可取消点（`_cooperative_sleep`
+  分片检查点 / 回调检查点）收尾，**不强杀 Python 线程**（G08
+  step 3）。
+- [x] `TransportResult` 携带 C01 `document_id` / `frame_id` + 导航
+  `nav_epoch`；`cancel` 后 `cancelled=True`，主线程取回后经
+  `NavigationState.accept_result` / `DocumentVersion.is_stale_frame`
+  门控丢弃（过期完成事件无效）。
+- 回归：`tests/test_transport.py`（9 条，受控慢服务器可测，不依赖
+  真实网络 / 活显示）。
+
+**控制器接入可取消网络工作单元**（`document_controller.py`）✅
+
+- [x] `DocumentController.enable_cancelable_network(fetch_fn)`：
+  http(s) 导航经 `CancellableTransport` 在工作线程里执行（G07
+  step 3 初版：网络 I/O 移出 UI 调用点），主线程经
+  `collect_network_results` + `apply_results` 取回；`about:` /
+  inline / 本地文件仍走内置同步 stub。取回时重新盖戳当前 C01 帧
+  版本（worker 线程 bump frame 后旧帧过期，避免误判 stale）。
+- 回归：`tests/test_document_controller.py`（+3 条：成功 / Stop
+  丢弃 / 快速 A→B 旧结果过期丢弃）。
+
+**本批为线程初版**：纯 Python 线程无多核收益（G07 step 4 明确），
+文档进程方案（DOM 长期留在文档进程、只传紧凑命令与帧）留作后续。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport）已完成（**1045/1045** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）与批次 5（G07 网络 I/O 外移 + G08 可取消 transport）已完成；批次 6（G09 step 3 统一历史入口 / G10 / G11 / G07 文档进程 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

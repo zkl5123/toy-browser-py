@@ -112,7 +112,6 @@ class NavigationState:
             return  # 无进行中导航可取消
         self.cancel_requested = True
         self._transition(CANCELLED, self.current_url)
-
     # ------------------------------------------------------------------
     # UI 状态映射（G08 step 2）
     # ------------------------------------------------------------------

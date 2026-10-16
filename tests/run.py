@@ -67,6 +67,7 @@ from test_cpu_image import TESTS as _CPU_IMAGE_TESTS
 from test_navigation_state import TESTS as _NAVIGATION_STATE_TESTS
 from test_document_controller import TESTS as _DOCUMENT_CONTROLLER_TESTS
 from test_tab_identity import TESTS as _TAB_IDENTITY_TESTS
+from test_transport import TESTS as _TRANSPORT_TESTS
 
 def main():
     tests = []
@@ -106,6 +107,7 @@ def main():
     tests.extend(_NAVIGATION_STATE_TESTS)
     tests.extend(_DOCUMENT_CONTROLLER_TESTS)
     tests.extend(_TAB_IDENTITY_TESTS)
+    tests.extend(_TRANSPORT_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

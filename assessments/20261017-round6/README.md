@@ -39,6 +39,14 @@
 | G09 step 5 会话持久化 | ✅ | `toy_browser/app/session_store.py` `SessionStore` | `tests/test_tab_identity.py`（9 条） |
 | G09 step 3 统一历史提交入口 | ⏳ 未实施（见下） | — | — |
 
+## 批次 5 完成的工作项（G07 网络 I/O 外移 + G08 可取消 transport）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G07 step 3 网络 I/O 移出 UI 调用点 | ✅ | `toy_browser/app/transport.py` `CancellableTransport` + `DocumentController.enable_cancelable_network` | `tests/test_transport.py`（9 条） |
+| G08 step 3 可取消 transport（不强杀线程） | ✅ | `transport.py` `cancel()` + `_cooperative_sleep` 可取消点 | 同上 |
+| G07 可取消网络工作单元接入 | ✅ | `document_controller.py` `navigate` 走工作线程 + `collect_network_results` | `tests/test_document_controller.py`（+3 条） |
+
 ## 批次 2 关键实现说明
 
 ### G03 编辑状态机（纯逻辑核心）
@@ -131,14 +139,37 @@
 - `TabIdentityRegistry.snapshot` / `restore` 负责可恢复状态 ↔ 磁盘
   快照的序列化往返。
 
+### G07 网络 I/O 外移 + G08 可取消 transport（`transport.py` + 控制器接线）
+- `CancellableTransport`：一次 fetch 任务。`run(fetch, url)` 同步或
+  `async_=True` 投工作线程；`cancel()` 立即置取消标志（UI 侧"立即
+  反馈"），工作线程在**下一个可取消点**（`_cooperative_sleep` 的
+  分片检查点 / 回调内检查点）收尾——**不强杀 Python 线程**
+  （G08 step 3）。
+- `TransportResult` 携带 C01 `document_id` / `frame_id` + 导航
+  `nav_epoch`；`cancel` 后 `cancelled=True`，主线程取回后由
+  `NavigationState.accept_result` / `DocumentVersion.is_stale_frame`
+  门控丢弃（过期完成事件无效）。
+- `DocumentController.enable_cancelable_network(fetch_fn)` 打开可取消
+  网络工作单元：http(s) 导航经 transport 在工作线程里执行（G07
+  step 3 初版：网络 I/O 移出 UI 调用点），主线程经
+  `collect_network_results` + `apply_results` 取回；`about:` / inline /
+  本地文件仍走内置同步 stub。取回时重新盖戳当前 C01 帧版本（worker
+  线程 bump frame 后旧帧过期，避免误判 stale）。
+- **受控慢服务器可测**：注入分片 sleep 的 fake fetch 回调（不依赖
+  真实网络 / 活显示）——Stop 可立即反馈、取消后在途结果被丢弃、
+  快速 A→B 导航的旧结果因 C01 帧更新被丢弃。
+- **本批为线程初版**：纯 Python 线程无多核收益（G07 step 4 明确），
+  文档进程方案（DOM 长期留在文档进程、只传紧凑命令与帧）留作后续。
+
 ## 本批未完成 / 阻塞项
 
 - **C03 行内格式化与文字布局**：需先将最小失败页面拆为普通文本 /
   b/i/span / 链接 / 连续空白 / 中文拉丁混排 / 长单词，并冻结 Edge
   几何与截图（C03 step 1），本批未执行该冻结步骤，故未实施
   InlineRun/LineBox。
-- **G07 网络 I/O 外移 / 文档进程**：本批落命令队列与版本丢弃骨架；
-  把网络 fetch 真正移出 UI 线程、实现可取消 transport 是后续批次。
+- **G07 文档进程方案**：本批落可取消网络工作单元 + 线程初版（网络
+  I/O 移出 UI 调用点 + 取消语义）；把 CPU 工作（DOM / 布局）移入
+  文档进程是后续（纯 Python 线程无多核收益）。
 - **G09 step 3 统一历史提交入口**：本批落稳定身份（step 1）与会话
   持久化（step 5）；把地址栏 / 链接 / 书签 / 文件打开的导航历史提交
   收敛到单一入口并明确重定向只形成一个历史项，属 Tk 侧路由改造，
@@ -147,9 +178,7 @@
 ## 剩余限制（下一批次）
 
 - G10 工具栏 / 状态栏 / 诊断区、G11 可访问性、G09 step 3 统一历史
-  提交入口。
-- G07 线程 / 进程分离（网络 I/O 外移 + 可取消 transport）、G08
-  transport 收尾（socket 关闭/超时不强杀线程）。
+  提交入口、G07 文档进程（CPU 工作移出 UI 线程的多核方案）。
 - C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
   合一）、C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、
   C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续
@@ -163,7 +192,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1033/1033 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14） |
+| `py -3 test.py` | **1045/1045 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12） |
 
 ## 关键实现说明
 

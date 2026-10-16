@@ -31,6 +31,7 @@ from toy_browser.app.document_state import DocumentVersion
 from toy_browser.app.navigation_state import (
     NavigationState, IDLE, LOADING, COMPLETE, FAILED, CANCELLED,
 )
+from toy_browser.app.transport import CancellableTransport
 
 
 # ----------------------------------------------------------------------
@@ -158,24 +159,63 @@ class DocumentController:
         # 本骨架默认用内置同步处理（``_process``），批次 3 换成
         # 线程 / 进程实现时，UI 侧只改这里。
         self._process = process
+        # 批次 5 — 可取消网络工作单元（G07 step 3 初版：网络 I/O
+        # 移出 UI 调用点；G08 step 3 取消语义）。默认关闭（用内置
+        # 同步 stub），GUI 侧经 ``enable_cancelable_network`` 打开后，
+        # navigate 经 :class:`CancellableTransport` 在工作线程里拉取，
+        # 主线程经 drain + apply_results 取回（C01 门控）。
+        self._use_cancelable_network = False
+        self._transport: Optional[CancellableTransport] = None
+
+    # ------------------------------------------------------------------
+    # 命令投递（UI → 工作单元）
+    # ------------------------------------------------------------------
+        # 在途 transport（navigate 经可取消网络工作单元执行时）
+        self._transport: Optional[CancellableTransport] = None
+        self._network_fetch_fn = None
 
     # ------------------------------------------------------------------
     # 命令投递（UI → 工作单元）
     # ------------------------------------------------------------------
     def navigate(self, url: str) -> int:
         """G08/G07 — 一次导航请求：分配 epoch，进入 LOADING，
-        投递 navigate 命令。返回 epoch（结果携带它做丢弃门控）。"""
+        投递 navigate 命令。返回 epoch（结果携带它做丢弃门控）。
+
+        批次 5 — 若可取消网络工作单元已打开（:meth:`enable_cancelable_network`），
+        http(s) 导航经 :class:`CancellableTransport` 在工作线程里执行
+        （G07 step 3 初版：网络 I/O 移出 UI 调用点；G08 step 3 取消
+        语义）；about: / inline / 本地文件仍走内置同步 stub。"""
         self._epoch += 1
         epoch = self._epoch
         self.version.new_navigation()
         self.nav.start_navigation(url, epoch)
         self.version.new_document()  # 新文档身份（旧帧 / 旧结果全 stale）
-        ok = self.commands.post(Command(
-            CMD_NAVIGATE, {"url": url},
-            nav_epoch=epoch, document_id=self.version.document_id))
-        if not ok:
-            # 队列满：导航被拒，回退到 idle 并标记失败
-            self.nav.fail("queue_full")
+        doc_id = self.version.document_id
+        lowered = url.lower()
+        is_network = (lowered.startswith("http://")
+                      or lowered.startswith("https://"))
+        if self._use_cancelable_network and is_network and \
+                self._network_fetch_fn is not None:
+            # G07 step 3 + G08 step 3 — 可取消网络工作单元：在工作
+            # 线程里拉取；主线程经 drain + apply_results 取回。
+            # fetch 回调返回 (ok, err_cat, final_url, detail)。
+            fetch = self._network_fetch_fn
+            transport = CancellableTransport(
+                document_id=doc_id, frame_id=self.version.frame_id,
+                nav_epoch=epoch,
+                thread_name=f"toy-fetch-{doc_id}")
+            self._transport = transport
+            # 包装 fetch：在可取消点检查 transport.cancelled，收尾时
+            # bump 帧版本（让过期结果被 C01 门控丢弃）。
+            def _wrapped_fetch(u, t):
+                ok, err_cat, final_url, detail = fetch(u, t)
+                self.version.bump_frame()
+                return ok, err_cat, final_url, detail
+            transport.run(_wrapped_fetch, url, async_=True)
+        else:
+            self.commands.post(Command(
+                CMD_NAVIGATE, {"url": url},
+                nav_epoch=epoch, document_id=doc_id))
         return epoch
 
     def stop(self) -> None:
@@ -184,9 +224,71 @@ class DocumentController:
         if not self.nav.is_busy:
             return
         self.nav.cancel_request()
+        # 取消在途 transport（工作线程在下一个可取消点收尾，不强杀）
+        if self._transport is not None:
+            self._transport.cancel()
         self.commands.post(Command(
             CMD_STOP, {},
             nav_epoch=self._epoch, document_id=self.version.document_id))
+
+    def enable_cancelable_network(self, fetch_fn=None) -> None:
+        """G07 step 3 初版 / G08 step 3 — 打开可取消网络工作单元。
+
+        *fetch_fn* 是注入的取数回调 ``(url, transport) ->
+        (ok, err_cat, final_url, detail)``（让测试不依赖真实网络 /
+        活显示）；默认 None 时 navigate 走内置同步 stub（不拉真实
+        网络）。打开后 :meth:`navigate` 对 http(s) URL 经
+        :class:`CancellableTransport` 在工作线程里执行，主线程经
+        :meth:`drain` + :meth:`apply_results` 取回（C01 门控）。"""
+        self._use_cancelable_network = True
+        self._network_fetch_fn = fetch_fn
+
+    # ------------------------------------------------------------------
+    # 命令投递（UI → 工作单元）
+    # ------------------------------------------------------------------
+    def navigate(self, url: str) -> int:
+        """G08/G07 — 一次导航请求：分配 epoch，进入 LOADING，
+        投递 navigate 命令。返回 epoch（结果携带它做丢弃门控）。
+
+        批次 5 — 若可取消网络工作单元已打开（:meth:`enable_cancelable_network`），
+        http(s) 导航经 :class:`CancellableTransport` 在工作线程里执行
+        （G07 step 3 初版：网络 I/O 移出 UI 调用点；G08 step 3 取消
+        语义）；about: / inline / 本地文件仍走内置同步 stub。"""
+        self._epoch += 1
+        epoch = self._epoch
+        self.version.new_navigation()
+        self.nav.start_navigation(url, epoch)
+        self.version.new_document()  # 新文档身份（旧帧 / 旧结果全 stale）
+        doc_id = self.version.document_id
+        lowered = url.lower()
+        is_network = (lowered.startswith("http://")
+                      or lowered.startswith("https://"))
+        if self._use_cancelable_network and is_network and \
+                self._network_fetch_fn is not None:
+            # G07 step 3 + G08 step 3 — 可取消网络工作单元：在工作
+            # 线程里拉取；主线程经 collect_network_results +
+            # apply_results 取回（C01 门控）。
+            fetch = self._network_fetch_fn
+            transport = CancellableTransport(
+                document_id=doc_id, frame_id=self.version.frame_id,
+                nav_epoch=epoch,
+                thread_name=f"toy-fetch-{doc_id}")
+            # 先取消上一个在途 transport（快速 A→B 时 A 被 B 取代）
+            if self._transport is not None:
+                self._transport.cancel()
+            self._transport = transport
+
+            def _wrapped_fetch(u, t):
+                ok, err_cat, final_url, detail = fetch(u, t)
+                self.version.bump_frame()  # 新帧（让旧帧结果过期）
+                return ok, err_cat, final_url, detail
+
+            transport.run(_wrapped_fetch, url, async_=True)
+        else:
+            self.commands.post(Command(
+                CMD_NAVIGATE, {"url": url},
+                nav_epoch=epoch, document_id=doc_id))
+        return epoch
 
     def scroll(self, offset: int) -> None:
         """G01 — 滚动请求（合并：队列里只保留最新）。"""
@@ -238,9 +340,39 @@ class DocumentController:
                 _gui.os.path.isfile(url):
             return True, ""
         # 网络 URL：骨架不实际拉取（G07 step 3 初版先移出网络 I/O 的
-        # 占位）；返回成功 stub 让 UI 走 complete，批次 3 换成真实
-        # 工作单元 + 可取消 transport。
+        # 占位）；返回成功 stub 让 UI 走 complete，批次 5 换成可取消
+        # 网络工作单元 + 可取消 transport。
         return True, ""
+
+    def collect_network_results(self, timeout: float = 0.0) -> list[Result]:
+        """G07 step 3 + 批次 5 — 取回在途可取消网络工作单元的结果。
+
+        若 ``navigate`` 经 :class:`CancellableTransport` 投了工作线程，
+        这里非阻塞（``timeout=0``）或在 *timeout* 秒内取回 :class:`Result`
+        （携带 C01 ``frame_id`` + 导航 epoch）；无在途 transport 时
+        返回空列表。调用方把它并入 :meth:`drain` 的结果再经
+        :meth:`apply_results` 门控（过期 / 取消丢弃）。"""
+        out: list[Result] = []
+        if self._transport is None:
+            return out
+        res = self._transport.wait(timeout=timeout if timeout > 0 else None)
+        if res is None:
+            return out  # 尚未完成（主线程继续，后续再取）
+        self._transport = None  # 已消费
+        # 取回时重新盖戳当前文档版本：worker 线程里 fetch 完成时
+        # bump 了 frame（让旧帧过期），transport 结果携带的是 bump
+        # 前构造的版本。这里用当前 version 重新盖戳，使 C01 的
+        # is_stale_frame 判定与"当前帧"对齐（本结果即最新帧）。
+        out.append(Result(
+            ok=res.ok and not res.cancelled,
+            nav_epoch=res.nav_epoch,
+            document_id=self.version.document_id,
+            frame_id=self.version.frame_id,
+            payload={"url": res.final_url, "detail": res.detail},
+            error_category=res.error_category,
+            final_url=res.final_url,
+        ))
+        return out
 
     def drain(self) -> list[Result]:
         """G07 step 3 — 处理队列里所有命令，返回待 UI 应用的
