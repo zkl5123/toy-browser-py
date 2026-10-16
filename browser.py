@@ -178,6 +178,12 @@ def render_document_from_url(
     # R4 stage 1 — absolute document base URL so <script src> relative
     # attributes resolve against the pipeline's absolute-URL cache.
     host.doc_url = resp.final_url or url
+    # R4 stage 3 — in-page fetch()/XMLHttpRequest reach the SAME real
+    # service the document load used (shared keep-alive client), so a
+    # local /data.json fetch reports the real status + body (the
+    # report's fetch_real / xhr_real cases).
+    host._fetch_transport = net.FetchTransport(
+        eff_client, base_url=resp.final_url or url)
     host.execute_scripts_in_order(script_cache, csp_directives)
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)

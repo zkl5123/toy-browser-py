@@ -300,9 +300,7 @@
  },
  "functional_response_methods": {
   "status": "OK",
-  "logs": [
-   "string object"
-  ],
+  "logs": [],
   "drain_error": null
  },
  "probe_microtasks": {

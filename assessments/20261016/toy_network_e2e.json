@@ -43,14 +43,14 @@
   },
   "fetch_real": {
     "pixel_50_50": "0xffffff",
-    "cli_text": "0:string",
-    "gui_text": "0:string",
+    "cli_text": "200:function",
+    "gui_text": "200:function",
     "gui_pixel_50_50": "0xffffff"
   },
   "xhr_real": {
     "pixel_50_50": "0xffffff",
-    "cli_text": "SAFE",
-    "gui_text": "SAFE",
+    "cli_text": "200:NETWORK_OK",
+    "gui_text": "200:NETWORK_OK",
     "gui_pixel_50_50": "0xffffff"
   },
   "data_script": {

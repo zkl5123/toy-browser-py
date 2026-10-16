@@ -2436,7 +2436,18 @@ class Interpreter:
             gobj = self.host.globals.get(cls_name)
             if callable(gobj):
                 try:
-                    return gobj(*args)
+                    result = gobj(*args)
+                    # R4 stage 3 — a built-in constructor that is a plain
+                    # Python CLASS (XMLHttpRequest / MutationObserver /
+                    # ResizeObserver are exposed as classes, not as
+                    # factory functions): `new XMLHttpRequest()` must
+                    # INVOKE the class (instantiating it), not return the
+                    # class itself.  When gobj is a class, construct an
+                    # instance explicitly (the generic call path may have
+                    # returned the class object when args were empty).
+                    if isinstance(result, type):
+                        result = gobj()
+                    return result
                 except Exception as e:
                     self.host.log(f"constructor error: {e}")
                     return None
@@ -3065,8 +3076,23 @@ class Interpreter:
                     self.host.set_style_prop(el, prop, rhs)
                 else:
                     obj[prop] = rhs
-            else:
+            elif isinstance(obj, (list, str, int, float, bool)):
+                # Immutable / built-in primitives: assignment is a no-op
+                # (JS would throw a TypeError; the toy silently drops).
                 pass
+            else:
+                # R4 stage 3 — a plain Python object (XMLHttpRequest
+                # instance, custom class instance, etc.): store the
+                # value as a direct attribute so that method
+                # callbacks set via property assignment (xhr.onload =
+                # fn, xhr.onerror = fn, xhr.onreadystatechange = fn)
+                # are visible to the host's _fire() / call_method
+                # dispatch.  The legacy path silently dropped these
+                # assignments (else: pass), so callbacks never fired.
+                try:
+                    setattr(obj, prop, rhs)
+                except Exception:
+                    pass
             return rhs
         if isinstance(target, Ident):
             rhs = value
@@ -3811,6 +3837,13 @@ class Host:
         # resolve relative <script src> attributes against the cache
         # the URL pipeline returns (which is keyed by absolute URL).
         self.doc_url: str = ""
+        # R4 stage 3 — optional network transport: an object with a
+        # ``fetch(url) -> net.HttpResponse | None`` method (the URL
+        # pipelines wrap a shared keep-alive ``net.HttpClient`` in a
+        # small adapter).  When None (offline default), fetch/XHR
+        # degrade to the legacy no-network mocks so unit tests never
+        # touch the wire.
+        self._fetch_transport: object | None = None
         self._cancelling: bool = False
         self.globals: dict = {
             "document": self._document_obj(),
@@ -4381,26 +4414,6 @@ class Host:
     # callbacks, microtask scheduling) is out of scope for the
     # kernel.  Each stub is a Python callable so the interpreter's
     # ``typeof`` reports "function".
-    def _xhr_ctor(self):
-        """XMLHttpRequest constructor stub (P2): ``typeof`` is
-        ``function``; ``new XMLHttpRequest()`` returns an object
-        whose ``open``/``send`` record state but do not touch the
-        network."""
-        class _Xhr:
-            def __init__(self):
-                self.readyState = 0
-                self.status = 0
-                self.responseText = ""
-
-            def open(self, method, url, *a):
-                self.readyState = 1
-
-            def send(self, *a):
-                self.readyState = 4
-
-        _Xhr.__name__ = "XMLHttpRequest"
-        return _Xhr
-
     def _mutation_observer_ctor(self):
         """MutationObserver constructor stub (P2): records the
         callback, but ``observe`` / ``disconnect`` are no-ops (the
@@ -5036,28 +5049,256 @@ class Host:
             return self._make_promise(executor)
         return {"resolve": resolve, "reject": reject, "__construct__": construct}
 
+    def _fetch_response(self, status: int, ok: bool, body_text: str,
+                        url: str, content_type: str = "") -> dict:
+        """R4 stage 3 — a toy Response object (the Fetch spec surface
+        the report's functional_response_methods case checks:
+        ``typeof r.text`` / ``typeof r.json`` must both be
+        ``function`` — they are *methods* on the response, not string
+        attributes).  The legacy flat dict (``text`` as a string
+        property) is kept only when no network transport is
+        attached, so the probe still degrades gracefully offline."""
+        import json as _json
+
+        _body_bytes = body_text.encode("utf-8", "replace")
+
+        def _text_method():
+            # V8: Response.text() returns a *Promise* that resolves to
+            # the body string.  The toy resolves synchronously.
+            return self._make_promise(
+                lambda rj, rs: rs(body_text))
+
+        def _json_method():
+            try:
+                parsed = _json.loads(_body_bytes.decode("utf-8", "replace"))
+            except Exception:
+                parsed = None
+            return self._make_promise(
+                lambda rj, rs: rs(parsed))
+
+        def _array_buffer_method():
+            return self._make_promise(
+                lambda rj, rs: rs(_body_bytes))
+
+        return {
+            "__response__": True,
+            "ok": ok,
+            "status": status,
+            "url": url,
+            "type": "basic",
+            "statusText": "",
+            "content_type": content_type,
+            "text": _text_method,
+            "json": _json_method,
+            "arrayBuffer": _array_buffer_method,
+            # Legacy flat field, kept so pre-stage-3 code that read
+            # ``r.text`` as a string still works offline.
+            "_text_value": body_text,
+        }
+
     def _fetch(self, url: str) -> "dict":
-        """P1 (assessment report) — ``fetch(url)`` returns a *settled
-        Promise* (not a plain string), matching the browser contract the
-        assessment's probe checks: ``typeof fetch('…').then`` must be
-        ``function``.  The Promise resolves to a toy Response object
-        (a dict carrying ``ok`` / ``status`` / ``text``); network I/O
-        is still stubbed (the sandbox keeps fetches non-networked, so
-        the Response reports ``ok=False, status=0``).
+        """P1 (assessment report) + R4 stage 3 — ``fetch(url)``
+        returns a *settled Promise* (not a plain string), matching the
+        browser contract the assessment's probe checks:
+        ``typeof fetch('…').then`` must be ``function``.
+
+        R4 stage 3 — when the host carries a *network transport*
+        (``self._fetch_transport``, injected by the URL pipelines so
+        the toy can reach real local/remote services exactly like a
+        real browser does), the request is actually issued through
+        the shared keep-alive ``net.HttpClient``:
+
+        * success → the Promise resolves to a :meth:`_fetch_response`
+          object (``status``/``ok``/``text()``/``json()`` are
+          callable methods, V8 Response surface).
+        * network failure / HTTP error status → the Promise REJECTS
+          with an ``{name:'TypeError'}`` error (the spec's opaque
+          network-error shape), so ``.then`` handlers do NOT run on
+          failure — the report's "failed fetch must not enter the
+          success branch" requirement.
+
+        Without a transport (the offline default, including the
+        ``probe_fetch_contract`` / ``functional_response_methods``
+        unit cases), the legacy already-settled mock is returned
+        (``ok=False, status=0``) so tests never touch the wire.
         """
         u = (url or "").lower()
+        transport = getattr(self, "_fetch_transport", None)
         if not (u.startswith("http://") or u.startswith("https://")):
-            self.log(f"fetch blocked: {url!r} (sandbox: http/https only)")
-        response = {
-            "__response__": True,
-            "ok": False,
-            "status": 0,
-            "url": url,
-            "text": "",
-        }
+            # R4 stage 3 — a relative fetch target ("/data.json" or
+            # "data.json") is resolved against the DOCUMENT URL first
+            # (exactly like the browser's URL resolver — the request
+            # URL is resolved against the document's base).  Only when
+            # it is still not an http(s) URL after resolution (or there
+            # is no document URL to resolve against) is the legacy
+            # sandbox block applied.
+            if transport is not None:
+                import net as _net
+                base = getattr(self, "doc_url", "") or ""
+                if base:
+                    try:
+                        _resolved = _net.parse_url(url,
+                                                   base=_net.parse_url(base))
+                        _absu = _resolved.to_string()
+                        if (_absu.startswith("http://")
+                                or _absu.startswith("https://")):
+                            url = _absu
+                            u = _absu.lower()
+                    except Exception:
+                        pass
+            if not (u.startswith("http://") or u.startswith("https://")):
+                self.log(f"fetch blocked: {url!r} (sandbox: http/https only)")
+                p = self._make_promise()
+                p["__reject__"]({"name": "TypeError", "message":
+                                 "fetch blocked (non-http url)"})
+                return p
+        if transport is None:
+            # R4 stage 3 - offline mock: mirror a real network
+            # failure by REJECTING the promise (TypeError), so a
+            # .then success handler does NOT run.  This matches the
+            # Edge reference for functional_response_methods
+            # (fetch to a closed port -> TypeError reject -> empty
+            # console logs).  probe_fetch_contract checks
+            # typeof fetch(...).then which is a property of the
+            # promise object, so rejecting is correct.
+            p = self._make_promise()
+            p["__reject__"]({"name": "TypeError",
+                             "message": "fetch failed (offline)"})
+            return p
+        # R4 stage 3 — real request through the shared transport.
         p = self._make_promise()
-        p["__resolve__"](response)
+        try:
+            import net as _net
+            resp = transport.fetch(url)
+            if resp is None:
+                raise _net.FetchError(url)
+            body_text = (resp.body or b"").decode("utf-8", "replace") \
+                if isinstance(resp.body, (bytes, bytearray)) else str(resp.body)
+            response = self._fetch_response(
+                resp.status, getattr(resp, "ok", False), body_text,
+                url, getattr(resp, "content_type", ""))
+            p["__resolve__"](response)
+        except Exception as e:
+            # Opaque network error (spec: TypeError with no detail
+            # for CORS-crossed failures; the toy keeps the message
+            # for debuggability).
+            p["__reject__"]({
+                "name": "TypeError",
+                "message": f"Failed to fetch: {type(e).__name__}: {e}",
+            })
         return p
+
+    def _xhr_ctor(self):
+        """XMLHttpRequest constructor (R4 stage 3): ``typeof`` is
+        ``function``.  With a network transport attached (the URL
+        pipelines inject one), ``open``/``send`` issue the real
+        request through the shared keep-alive client and fire the
+        ``onload`` / ``onerror`` / ``onreadystatechange`` callbacks
+        on completion — the report's xhr_real case (Edge shows
+        ``200:NETWORK_OK``).  Without a transport (offline unit
+        tests) the legacy no-network state machine is preserved."""
+        host = self
+
+        class _Xhr:
+            def __init__(self, *args, **kwargs):
+                # The interpreter's `new` operator may invoke the class
+                # itself rather than calling __init__ with no args
+                # (R4 stage 3: `new XMLHttpRequest()` — the legacy
+                # zero-arg __init__ broke under the `new` retry
+                # path at js.py:2326, which calls gobj(*args) with
+                # args=[] → __init__(self) is fine, but the call_method
+                # retry at :2349 passes (*args) through to the dict
+                # constructor when the callee is a dict global — the
+                # XHR global is a class, so the retry path is what
+                # fires).  Accept + swallow any extra constructor args
+                # the interpreter might forward.
+                self.readyState = 0
+                self.status = 0
+                self.statusText = ""
+                self.responseText = ""
+                self.response = ""
+                self.onload = None
+                self.onerror = None
+                self.onreadystatechange = None
+                self._method = "GET"
+                self._url = ""
+
+            def _fire(self, event):
+                cb = getattr(self, event, None)
+                if callable(cb):
+                    try:
+                        cb()
+                    except _Throw as t:
+                        host.log(f"XHR {event} uncaught: {t.value}")
+                    except Exception as e:
+                        host.log(f"XHR {event} error: {event}: {e}")
+
+            def open(self, method, url, *a):
+                self.readyState = 1
+                self._method = method or "GET"
+                self._url = url or ""
+
+            def send(self, *a):
+                transport = getattr(host, "_fetch_transport", None)
+                target_url = self._url
+                if transport is None or not target_url:
+                    # Offline stub: complete with the empty legacy
+                    # contract so unit tests never hit the wire.
+                    self.readyState = 4
+                    self._fire("onreadystatechange")
+                    return
+                # R4 stage 3 — a relative XHR URL ("/data.json") is
+                # resolved against the document URL first (exactly
+                # like the browser's URL resolver).
+                import net as _net
+                if not (target_url.lower().startswith("http://")
+                         or target_url.lower().startswith("https://")):
+                    _base = getattr(host, "doc_url", "") or ""
+                    if _base:
+                        try:
+                            _resolved = _net.parse_url(
+                                target_url, base=_net.parse_url(_base))
+                            target_url = _resolved.to_string()
+                        except Exception:
+                            pass
+                try:
+                    resp = transport.fetch(target_url)
+                    if resp is None:
+                        raise _net.FetchError(self._url)
+                    self.status = resp.status
+                    self.readyState = 4
+                    self.responseText = (
+                        resp.body or b"").decode("utf-8", "replace") \
+                        if isinstance(resp.body, (bytes, bytearray)) \
+                        else str(resp.body or "")
+                    self.response = self.responseText
+                    self._fire("onreadystatechange")
+                    if getattr(resp, "ok", False):
+                        self._fire("onload")
+                    else:
+                        self._fire("onerror")
+                except Exception as _e:
+                    # R4 stage 3 — surface the failure in the host log
+                    # stream so the GUI console / test harness can see
+                    # why the XHR did not complete (the legacy silent
+                    # except swallowed every error, making the GUI
+                    # xhr_real case impossible to debug).
+                    host.log(f"XHR send error: {_e}")
+                    self.status = 0
+                    self.readyState = 4
+                    self._fire("onreadystatechange")
+                    self._fire("onerror")
+
+        _Xhr.__name__ = "XMLHttpRequest"
+        # R4 stage 3 — the interpreter's `new XMLHttpRequest()` routes
+        # through the host's constructor table (js.py:2436) and calls
+        # gobj(*args).  When gobj is the class itself, calling it with
+        # no args returns an instance (good).  When the NewExpr path
+        # gets the class object (gobj(*args) returned the class for
+        # some reason), we must still return a fresh instance.  The
+        # _Xhr class is the correct callable to store in globals:
+        # `new XMLHttpRequest()` → gobj() → _Xhr() → instance.
+        return _Xhr
 
     def eval_doc_method(self, doc, method: str):
         if method == "getElementById":
@@ -6283,7 +6524,12 @@ class Host:
         # script_order case).  A <script src> whose fetch failed (or
         # whose body is policy-blocked) still maps to None and is
         # skipped without blocking the rest.
+        # R4 stage 3 — in-page fetch()/XHR issue real requests; their
+        # .then / onload handlers run as microtasks, so drain the
+        # microtask queue AFTER the timers (V8 order: sync script →
+        # timers → microtasks) before the page renders.
         self.flush_timers()
+        self.flush_microtasks()
         self.flush_raf()  # P1.2
 
     def execute_event(self, element_id: str, event_name: str = "onclick"):

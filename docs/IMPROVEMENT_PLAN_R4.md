@@ -135,11 +135,25 @@
 
 ## 执行顺序与门禁
 
-1. 第 0 → 1 → 2 轮（P0：统一策略上下文 + 脚本模型 + CSP/nonce），每轮后跑 `test.py` + 对应 functional_summary 场景回归。
-2. 第 3 → 4 轮（P1 真实 API + Observer），注入 transport 模式，离线夹具可测。
-3. 第 5 轮（P1 绘制盒模型），改 `layout`/`paint_engine` 几何契约，跑 4 色块 + render_* 像素。
-4. 第 6 轮（回归固化），把探针写进 `tests/`。
-5. 第 7 轮（P2 剖析）收尾。
+> **进度（2026-10-16 起）**：阶段 0/1/2 已提交（commit 305163d 之后）；
+> 阶段 3（真实 fetch/XHR 注入式传输）本轮完成。
+
+1. 第 0 → 1 → 2 轮（P0：统一策略上下文 + 脚本模型 + CSP/nonce），每轮后跑 `test.py` + 对应 functional_summary 场景回归。 **[已完成]**
+2. 第 3 轮（P1 真实 fetch/XHR，注入 transport 模式，离线可测）。**[已完成]**
+   - 实现：`net.FetchTransport`（包装共享 keep-alive HttpClient，相对 URL 经文档 base 解析，网络失败→None/HTTP 错误→ok=False 响应）；
+     `js._fetch` 真实请求 + `Response{text()/json()/arrayBuffer()}` 方法、失败 reject `TypeError`；
+     `_xhr_ctor` 真实 open/send（onreadystatechange/onload/onerror + status/responseText/readyState）；
+     `eval_assign` 对普通 Python 对象实例用 `setattr` 落地属性赋值（修复 `xhr.onload=fn` 被 `else: pass` 静默丢弃）；
+     `NewExpr` 内置类构造器正确实例化；browser.py/gui.py 注入 transport；
+     GUI 补 `eff_client`（load_url 未传 client 时自建，避免 `FetchTransport(None)` 抛 AttributeError 被静默吞掉）；
+     `execute_scripts_in_order` 尾部补 `flush_microtasks()`（V8 序：同步→计时器→微任务）使 fetch().then 落地后再渲染。
+   - 结果：e2e `fetch_real`→`200:function`、`xhr_real`→`200:NETWORK_OK`，**CLI 与 GUI 均与 Edge 一致**；
+     `compare_js` 49/51（`functional_response_methods` 翻转匹配，离线 fetch 改 reject 以镜像真实网络失败）；
+     `test.py` 925/925；geometry 15/17（2 项既有浮点差，非回归）；net 全 ok。
+3. 第 4 轮（P1 MutationObserver/ResizeObserver 真实回调 + 离线夹具）。
+4. 第 5 轮（P1 绘制盒模型），改 `layout`/`paint_engine` 几何契约，跑 4 色块 + render_* 像素。
+5. 第 6 轮（回归固化），把探针写进 `tests/`。
+6. 第 7 轮（P2 剖析）收尾。
 
 **每轮门禁**：
 - `python test.py` 全绿（新增探针后 >925）；

@@ -573,7 +573,15 @@ class PageInstance:
             self.url = url
             self.title = url
             try:
-                html, resp = net.fetch_html(url, timeout=10.0, client=client)
+                # R4 stage 3 — ensure a real HttpClient exists so the
+                # in-page fetch()/XHR transport can issue requests.
+                # The legacy path created a throwaway client inside
+                # fetch_html when *client* was None, but that client
+                # was discarded; the GUI now keeps it for the
+                # subresource loader AND the JS transport.
+                eff_client = client or net.HttpClient(timeout=10.0)
+                html, resp = net.fetch_html(
+                    url, timeout=10.0, client=eff_client)
                 # P33.R2 — fetch subresources (stylesheets / images /
                 # scripts) against the document DOM, using the shared
                 # keep-alive client (the parallel loader when *parallel*).
@@ -608,7 +616,7 @@ class PageInstance:
                 _policy = net.DocumentPolicy.from_response(resp)
                 _enforce_policy = _policy.enforce
                 sub = loader(
-                    tree, base_url=url, client=client,
+                    tree, base_url=url, client=eff_client,
                     enforce_policy=_enforce_policy,
                     policy=_policy,
                 )
@@ -637,6 +645,11 @@ class PageInstance:
                 # src> relative attributes resolve against the
                 # pipeline's absolute-URL cache.
                 _host.doc_url = url
+                # R4 stage 3 — in-page fetch()/XMLHttpRequest reach the
+                # SAME real service the document load used (shared
+                # keep-alive client), mirroring the CLI pipeline.
+                _host._fetch_transport = net.FetchTransport(
+                    eff_client, base_url=url)
                 _script_cache: dict = {}
                 for url_key, r in sub.get("script", {}).items():
                     if r is not None and getattr(r, "ok", True):
@@ -646,6 +659,14 @@ class PageInstance:
                         _script_cache[url_key] = None
                 _host.execute_scripts_in_order(_script_cache,
                                                _csp_directives)
+                # R4 stage 3 — the fetch/XHR callbacks fire as
+                # microtasks (fetch .then) or synchronously (XHR
+                # onload); execute_scripts_in_order already flushes
+                # timers + microtasks at its tail, but the GUI's
+                # PageInstance reads the DOM tree via _dom_tree
+                # (the same Node object the script host mutated), so
+                # no extra flush is needed here — the flush inside
+                # execute_scripts_in_order covers it.
                 # P0 (assessment report) — render the *script-mutated*
                 # tree (run_scripts=False skips the legacy re-parse;
                 # _reuse_doc routes load_html to the stored

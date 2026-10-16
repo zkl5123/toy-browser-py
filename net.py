@@ -1584,6 +1584,62 @@ class RedirectLoop(FetchError):
         self.chain = list(chain or [])
 
 
+class FetchTransport:
+    """R4 stage 3 — a JS-side network transport adapter.
+
+    Wraps a shared :class:`HttpClient` (typically the same keep-alive
+    client the URL pipeline already uses for document + subresource
+    loads, so connections are pooled across fetch/XHR and the rest of
+    the page) and exposes the single-method surface the toy JS engine
+    consumes: ``fetch(url) -> HttpResponse | None``.
+
+    * ``None`` is returned when the request fails at the network
+      layer (DNS / connect / timeout) so the caller can distinguish
+      "failed" from an HTTP error status carried on a real
+      :class:`HttpResponse`.
+    * An HTTP 4xx/5xx is NOT a failure of the transport: it returns
+      the :class:`HttpResponse` (with ``ok=False``) so the engine can
+      mirror the spec's "failed fetch" semantics on ``r.ok`` / status.
+
+    This is the object ``browser.py`` / ``gui.py`` inject into
+    ``js.Host._fetch_transport`` so that in-page ``fetch()`` /
+    ``XMLHttpRequest`` reach the same real service the rest of the
+    page does (the report's ``fetch_real`` / ``xhr_real`` cases).
+    """
+
+    def __init__(self, client: "HttpClient | None", base_url: str = ""):
+        # R4 stage 3 — *client* may be None when the GUI's load_url was
+        # called without a shared HttpClient (the legacy path created a
+        # throwaway client inside fetch_html and discarded it).  Build
+        # a fresh one so the JS transport always has a working client.
+        self._client = client or HttpClient()
+        # R4 stage 3 — the document base URL (absolute) so a relative
+        # fetch/XHR target ("/data.json") resolves against the page's
+        # own origin exactly like the browser's URL resolver does.
+        self._base_url = base_url
+
+    def fetch(self, url: str) -> "HttpResponse | None":
+        if not isinstance(url, URL):
+            # Relative resolution needs the document base; an empty
+            # base makes a relative path unresolvable → fail the fetch
+            # (None) rather than guess.
+            base = self._base_url or None
+            url = parse_url(url, base=base) if base else parse_url(url)
+        try:
+            # follow_redirects=True mirrors the spec's default fetch
+            # behaviour (a 3xx chain yields the final resource, not a
+            # 3xx body).  Network-layer errors → None; HTTP error
+            # statuses are returned as real responses (the engine
+            # rejects the promise / fires onerror on !ok).
+            return self._client.get(url, follow_redirects=True)
+        except (OSError, socket.timeout, socket.error,
+                http.client.HTTPException):
+            return None
+        except FetchError:
+            # RedirectLoop etc. — treat as a failed fetch (None).
+            return None
+
+
 def decode_chunked(raw: bytes) -> bytes:
     """P22.3 — decode a raw HTTP chunked transfer-encoding body.
 

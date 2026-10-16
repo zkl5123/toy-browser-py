@@ -47,6 +47,8 @@ try:
   original=js.Host.execute_scripts_in_order
   def record(host,*args,**kwargs):
    result=original(host,*args,**kwargs)
+   host.flush_timers()
+   host.flush_microtasks()
    el=host.root.find_by_id('probe')
    if el is not None:captured.append(el.text_content())
    return result
@@ -55,6 +57,8 @@ try:
   browser.write_png(bmp,str(D/f'toy_{name}.png'))
   import gui
   page=gui.PageInstance();page.load_url(base+'/'+name,w=400,h=200)
+  sh=getattr(page,"_script_host",None)
+  if sh is not None:sh.flush_timers();sh.flush_microtasks()
   node=getattr(page,'_dom_tree',None)
   probe=node.find_by_id('probe') if node is not None else None
   browser.write_png(page.bitmap,str(D/f'gui_{name}.png'))
