@@ -2732,9 +2732,49 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑）已完成（**1064/1064** 测试通过）。
+### R6.15 C01 完整 DocumentState 抽取（批次 7）
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）与批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）已完成；批次 7（G11 可访问性 / G09 step 3 统一历史入口 / G10 Tk 诊断区绑定 / G07 文档进程 / C01 完整抽取 / C03–C10 / B 系列）按实施文档依赖顺序继续。
+- [x] **DocumentState**（`toy_browser/app/document_state_full.py`）：
+  持有 C01 骨架 `DocumentVersion`（四计数器唯一持有者）+ 文档策略
+  `policy` + 源 `base_url` + DOM/Host + 子资源注册表 + 稳定 node_id。
+  生命周期入口固化阶段失效规则：
+  - `new_document` — 解析 + 脚本初始化（`script_init_count` +1）；
+  - `mark_restate` — hover/focus/scroll/resize 只 bump
+    `layout_revision`，**不重建 Host、不重跑脚本**；
+  - `mark_render` — 光栅化只 bump `frame_id`；
+  - `new_context` — 新导航创建**新**上下文，旧对象 `disposed=True`，
+    策略 / JS 全局 / 资源**不跨源复用**。
+- [x] **CLI / GUI 一致性**：`assert_same_dom` 比对两棵树的标签 / 属性
+  / 文本指纹（相同输入同一 DOM 验收）。
+- 回归：`tests/test_document_state_full.py`（8 条）。
+- 未实施：公共 API 包装层接入（GUI/CLI/测试接同一入口，保留旧调用
+  兼容）属 Tk 侧路由改造，留后续批次。
+
+### R6.16 G11 可访问性键盘全流程（纯逻辑核心，批次 7）
+
+- [x] **焦点滚入可见区域**（`accessibility.py` `FocusViewport`）：
+  `scroll_for_focus` 纯公式——已可见不跳、顶部越上对齐顶部、底部
+  越下对齐底部、clamp 到 scroll_max、留 8px padding。
+- [x] **无鼠标任务清单**（`mouseless_tasks`）：复用现有
+  `browser.collect_accessibility_tree` + `browser.tab_order`，生成
+  每个 focusable 元素 `{id, role, name, action}`（键盘全流程回归 /
+  无障碍审计）。
+- [x] **键盘默认动作**（`focus_action`）：link/button → activate，
+  textbox/combobox → commit，escape → dismiss（键盘可独立完成与鼠标
+  点击等价的默认动作）。
+- [x] **键盘状态机**（`KeyboardSession`）：chrome / document /
+  editor / dialog 四焦点域，tab / shift_tab / enter / escape / 域
+  切换（Tab 从 chrome 进 document 首位，Shift+Tab 首位回 chrome，
+  循环移动不越界）。
+- 回归：`tests/test_accessibility.py`（24 条）。
+- 未实施：Tk 真实 Entry/Text 覆盖层键盘绑定 + 焦点可见性画布滚动
+  （需活显示环境验收）。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程）已完成（**1096/1096** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）与批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）已完成；批次 8（G09 step 3 统一历史入口 / G10 Tk 诊断区绑定 / G11 Tk 键盘绑定 / G07 文档进程 / C01 公共 API 包装层 / C03–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

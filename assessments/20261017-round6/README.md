@@ -54,6 +54,75 @@
 | G10 step 4/5 诊断区（记录 + 导出） | ✅ | `toy_browser/app/diagnostics.py` `DiagnosticsLog` / `DiagEvent` | `tests/test_diagnostics.py`（19 条） |
 | G10 step 1/2/3 工具栏 / 状态栏 / 标题映射 | ✅ | `diagnostics.py` `toolbar_state` / `status_text` / `tab_title` / `security_note` | 同上 |
 
+## 批次 7 完成的工作项（C01 完整 DocumentState + G11 键盘全流程，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C01 完整 DocumentState 抽取 | ✅ | `toy_browser/app/document_state_full.py` `DocumentState`（DOM + Host + 策略 + 资源 + 稳定 node_id + 生命周期入口） | `tests/test_document_state_full.py`（8 条） |
+| G11 键盘全流程纯逻辑 | ✅ | `toy_browser/app/accessibility.py` `FocusViewport` / `mouseless_tasks` / `focus_action` / `KeyboardSession` | `tests/test_accessibility.py`（24 条） |
+
+### C01 完整 DocumentState（`document_state_full.py`）
+- `DocumentState` 持有 C01 骨架的 `DocumentVersion`（四计数器唯一持有者）
+  + 文档策略 `policy` + 源 `base_url` + DOM/Host + 子资源注册表 +
+  稳定 node_id。生命周期入口固化阶段失效规则：
+  - `new_document` — 解析 + 脚本初始化（`script_init_count` +1）；
+  - `mark_restate` — hover/focus/scroll/resize 只 bump `layout_revision`，
+    **不重建 Host、不重跑脚本**（验收"脚本初始化只增加一次、重排后
+    点击监听仍在"：node_id 跨重排不变 + Host 对象不变）；
+  - `mark_render` — 光栅化只 bump `frame_id`；
+  - `new_context` — 新导航创建**新**上下文，旧对象 `disposed=True`，
+    策略 / JS 全局 / 资源**不跨源复用**（A 的帧对 B 全 stale）。
+- `assert_same_dom` — CLI / GUI 相同输入同一 DOM 验收：比对两棵树的
+  标签 / 属性 / 文本指纹（不含 node_id 实现细节）。
+
+### G11 键盘全流程（`accessibility.py`）
+- `FocusViewport.scroll_for_focus` — 焦点滚入可见区域纯公式（已可见
+  不跳、顶部越上对齐顶部、底部越下对齐底部、clamp 到 scroll_max、
+  留 8px padding）。
+- `mouseless_tasks(a11y_tree, tab_order)` — 复用现有
+  `browser.collect_accessibility_tree` + `browser.tab_order`，生成
+  "无鼠标任务"清单（每个 focusable 元素 `{id, role, name, action}`，
+  供键盘全流程回归 / 无障碍审计）。
+- `focus_action(role, key)` — 焦点元素上 Enter/Space/Escape 默认动作
+  （link/button → activate，textbox/combobox → commit，escape →
+  dismiss）：键盘可独立完成与鼠标点击等价的默认动作。
+- `KeyboardSession` — chrome / document / editor / dialog 四焦点域
+  键盘状态机（tab / shift_tab / enter / escape / 域切换），
+  Tab 从 chrome 进 document 首位，Shift+Tab 首位回 chrome，
+  循环移动不越界。
+
+## 本批未完成 / 阻塞项
+
+- **G11 Tk 绑定**：本批落焦点滚动公式 + 无鼠标任务清单 + 键盘状态机
+  的纯逻辑核心；真实 :class:`tk.Text`/Entry 覆盖层的键盘绑定、焦点
+  可见性的画布滚动需活显示环境验收，留作后续批次。
+- **C01 公共 API 包装层接入**：本批落纯逻辑 DocumentState + 版本回归；
+  把 GUI / CLI / 测试接到同一入口（保留公共 API 包装层兼容旧调用）
+  属批次 7 的 Tk 侧路由改造，留作后续批次。
+- **C03 行内格式化与文字布局**：需先冻结 Edge 几何与截图
+  （C03 step 1），本批未执行该冻结步骤。
+- **G07 文档进程方案**：可取消网络工作单元 + 线程初版；把 CPU
+  工作（DOM / 布局）移入文档进程是后续（纯 Python 线程无多核收益）。
+- **G09 step 3 统一历史提交入口**：Tk 侧路由改造，需活显示环境验收。
+
+## 剩余限制（下一批次）
+
+- G09 step 3 统一历史提交入口、G10 Tk 诊断区布局 / 控件绑定、
+  G11 Tk 键盘绑定 / 焦点画布滚动、G07 文档进程（CPU 工作移出 UI
+  线程的多核方案）、C01 公共 API 包装层接入。
+- C03 文字布局（需先冻结 Edge 几何对照）、C04 表格表单、C05 样式
+  缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
+- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
+  键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
+- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
+  语义、错误分类），不在本批范围。
+
+## 回归数字
+
+| 验证项 | 结果 |
+|---|---|
+| `py -3 test.py` | **1096/1096 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32） |
+
 ## 批次 2 关键实现说明
 
 ### G03 编辑状态机（纯逻辑核心）
