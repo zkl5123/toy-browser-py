@@ -1,0 +1,60 @@
+{
+  "python": "3.11.9",
+  "platform": "win32",
+  "stage": "R4 stage 7 — performance + memory profiling",
+  "note": "Segmented wall-clock (min of 3 samples) + peak RSS. The plan's 1000-element <600ms (aggressive <500ms) target is the render+png figure below; the C/raster decision point is deferred to a fixed-load machine with expanded samples (out of scope for stdlib).",
+  "workloads": {
+    "100": {
+      "parse_ms": 0.7384999917121604,
+      "css_ms": 2.601700005470775,
+      "layout_ms": 116.88240000512451,
+      "paint_ms": 217.83290000166744,
+      "png_ms": 814.7062000061851,
+      "render_ms": 338.0555000039749,
+      "render_plus_png_ms": 1152.76170001016,
+      "peak_rss_mb": 45.359375
+    },
+    "1000": {
+      "parse_ms": 67.9457999940496,
+      "css_ms": 400.8424999919953,
+      "layout_ms": 1157.1919999987585,
+      "paint_ms": 678.4588000009535,
+      "png_ms": 815.1926999998977,
+      "render_ms": 2304.439099985757,
+      "render_plus_png_ms": 3119.6317999856547,
+      "peak_rss_mb": 97.31640625
+    },
+    "5000": {
+      "parse_ms": 350.95939999155235,
+      "css_ms": 2013.1261999922572,
+      "layout_ms": 6062.558299992816,
+      "paint_ms": 2780.6038000126136,
+      "png_ms": 827.8995000000577,
+      "render_ms": 11207.247699989239,
+      "render_plus_png_ms": 12035.147199989296,
+      "peak_rss_mb": 236.515625
+    },
+    "10000": {
+      "parse_ms": 696.5332999970997,
+      "css_ms": 4072.5047000014456,
+      "layout_ms": 12273.517099994933,
+      "paint_ms": 5414.798800004064,
+      "png_ms": 815.5877000099281,
+      "render_ms": 22457.353899997543,
+      "render_plus_png_ms": 23272.94160000747,
+      "peak_rss_mb": 574.640625
+    }
+  },
+  "changed_region_scroll": {
+    "diff_bbox": [
+      10,
+      2,
+      100,
+      598
+    ],
+    "diff_px": 36069,
+    "total_px": 480000,
+    "diff_fraction": 0.07514375,
+    "localized": true
+  }
+}

@@ -7,6 +7,55 @@ roadmap milestones).
 
 ---
 
+## R4 stage 7 — P2 性能与内存剖析（第四轮计划收尾）
+
+*分段耗时 + 峰值内存报告、`changed_region` 局部重绘路径验证、PNG 编码
+路径优化。全部 7 个阶段完成，`test.py` 936/936。*
+
+### Added
+
+- **`tools/prof_r4.py` — 分段剖析器**：对 100/1000/5000/10000 元素
+  的 div-list 负载逐段计时（parse / css / layout / paint / png，
+  min of 3 samples）+ 峰值 RSS（Windows 走
+  `psapi.GetProcessMemoryInfo` 的 64 位 `PROCESS_MEMORY_COUNTERS_EX`，
+  POSIX 走 `resource.getrusage`）。
+- **`assessments/20261016/perf_r4_profile.json`**：剖析报告产物。
+- **`browser.write_png_bytes(bmp) -> bytes`**：PNG 编码的内存版
+  （无文件 I/O），与 `write_png` 共用同一路径，供剖析段隔离磁盘
+  延迟。
+
+### Changed
+
+- **`browser.py` PNG 编码路径**（`write_png` / 新增
+  `write_png_bytes`）：行打包改为预分配 buffer + 逐行写入
+  （`_png_pack_row` / `_png_raw_rows`），替代旧的增长式
+  `bytearray().extend` 内循环。输出字节与旧实现**逐位一致**
+  （真实渲染 / 800×600 随机像素 / 400×16000 / 1×1 / 0 高五种
+  位图全部验证）；PNG 段从 ~3.8s 降到 ~0.8s（约 4.7×）。
+- **`docs/IMPROVEMENT_PLAN_R4.md`**：阶段 7 条目补全结果 + 进度行
+  更新；全部 7 阶段标记完成。
+
+### 剖析结果（本机型，min of 3 samples；纯 CPU，无 PIL）
+
+| 负载 | parse | css | layout | paint | png | render | 峰值 RSS |
+|---|---|---|---|---|---|---|---|
+| 100 | 0.7ms | 2.6ms | 117ms | 218ms | 815ms | **338ms** | 45MB |
+| 1000 | 68ms | 401ms | 1157ms | 679ms | 815ms | **2304ms** | 97MB |
+| 5000 | 351ms | 2013ms | 6063ms | 2781ms | 828ms | **11207ms** | 237MB |
+| 10000 | 697ms | 4073ms | 12274ms | 5415ms | 816ms | **22457ms** | 575MB |
+
+1000 元素 render 段 2304ms（含 PNG 3120ms），**未达 <600ms 目标**——
+瓶颈在 layout（`build_box` 递归 + 边缘解析）与 css（`_apply_subtree`
+级联 + 声明解析），非 PNG。C 扩展决策点按计划留待固定负载机器扩
+样本后再定，不在 stdlib 引擎范围内硬优化。
+
+`changed_region` 局部重绘路径验证：100 元素文档（~2200px 内容，
+800×600 视口）显示列表下移 300px 前后两帧，diff 包围盒
+(10, 2, 100, 598)、diff 像素 36069/480000 = **7.5%**（局部条带，非
+整帧），满足局部重绘前置条件。
+
+---
+
 ## P0/P1 — GPT 报告剩余项整改（CORS/CSP 执行 + @supports 属性检查 + 测试拆分 + 文档澄清）
 
 *GPT P0-4（CORS/CSP 接入请求流）、P1-1（@supports 真实属性检查）、

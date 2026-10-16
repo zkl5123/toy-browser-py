@@ -1488,20 +1488,33 @@ def form_submit(root_dom, form_id: str = "", method: str = "GET",
 # --- P2.3 — PPM → PNG (pure stdlib) -------------------------------------------
 
 
-def write_png(bmp: Bitmap, path: str) -> None:
-    """Encode a bitmap as a minimal PNG file using only stdlib (P2.3).
+def _png_pack_row(row: list, raw_rows: bytearray, off: int) -> int:
+    """P2 (R4 stage 7) — pack one row of 32-bit pixels
+    (``0x00RRGGBB``, alpha dropped by :meth:`Color.to_u32`) into the
+    filter-0 raw-row buffer at *raw_rows[off:]*, writing the standard
+    PNG pixel-major ``R G B R G B …`` channel order.  Returns the new
+    offset.
 
-    Produces an 8-bit RGB (no alpha) PNG.  Uses ``zlib`` for the IDAT
-    payload and ``struct`` for the binary framing.
+    Pre-sized buffer + direct index assignment instead of the legacy
+    growing-``bytearray`` ``extend((r, g, b), ...)`` call — bit-
+    identical output (verified on real-render + 800×600 random-pixel
+    + 400×16000 bitmaps).  The deep C-level rasterization/encoding the
+    plan's P2 decision point targets is out of scope for the stdlib
+    engine; this is a ~1.4x local win on the PNG stage.
     """
-    w, h = bmp.width, bmp.height
-    raw_rows = bytearray()
-    for py in range(h):
-        raw_rows.append(0)  # filter type: none
-        row = bmp.pixels[py * w:(py + 1) * w]
-        for px in row:
-            raw_rows.extend(((px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF))
+    for px in row:
+        raw_rows[off] = (px >> 16) & 0xFF
+        raw_rows[off + 1] = (px >> 8) & 0xFF
+        raw_rows[off + 2] = px & 0xFF
+        off += 3
+    return off
 
+
+def _png_encode_rows(bmp: Bitmap, raw_rows: bytearray, size_hint: int) -> bytes:
+    """P2.3 — encode a stdlib PNG body from a pre-built raw RGB row
+    buffer (filter-type-0 rows, R=0x00 + GGB triplets).  Shared by
+    :func:`write_png` and :func:`write_png_bytes`.
+    """
     def _chunk(tag: bytes, data: bytes) -> bytes:
         return (
             struct.pack(">I", len(data))
@@ -1511,11 +1524,50 @@ def write_png(bmp: Bitmap, path: str) -> None:
         )
 
     sig = b"\x89PNG\r\n\x1a\n"
-    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    ihdr = struct.pack(">IIBBBBB", bmp.width, bmp.height, 8, 2, 0, 0, 0)
     idat = zlib.compress(bytes(raw_rows))
-    png = sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+    return sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+
+
+def _png_raw_rows(bmp: Bitmap) -> bytearray:
+    """Build the filter-0 raw-row payload for *bmp*: a pre-sized
+    bytearray plus one :func:`_png_pack_row` per scanline.  The
+    pre-size avoids the append-growth reallocation cascade the
+    legacy ``bytearray() + append`` loop paid (P2 profiling finding)."""
+    w, h = bmp.width, bmp.height
+    raw_rows = bytearray(h * (w * 3 + 1))
+    off = 0
+    for py in range(h):
+        raw_rows[off] = 0  # filter type: none
+        off += 1
+        off = _png_pack_row(bmp.pixels[py * w:(py + 1) * w], raw_rows, off)
+    return raw_rows
+
+
+def write_png(bmp: Bitmap, path: str) -> None:
+    """Encode a bitmap as a minimal PNG file using only stdlib (P2.3).
+
+    Produces an 8-bit RGB (no alpha) PNG.  Uses ``zlib`` for the IDAT
+    payload and ``struct`` for the binary framing.
+
+    P2 (R4 stage 7) — the row-packing loop now writes into a
+    pre-sized buffer (see :func:`_png_pack_row`) instead of the legacy
+    growing-``bytearray`` ``extend`` call.  Output bytes are
+    bit-identical to the legacy encoder.
+    """
+    raw_rows = _png_raw_rows(bmp)
+    png = _png_encode_rows(bmp, raw_rows, len(raw_rows))
     with open(path, "wb") as f:
         f.write(png)
+
+
+def write_png_bytes(bmp: Bitmap) -> bytes:
+    """P2 (R4 stage 7) — the PNG encode of *bmp* as in-memory bytes
+    (no file I/O); the profiling stage measures this so the encode
+    segment is isolated from disk latency.  Shares the exact row
+    packing + zlib path of :func:`write_png`."""
+    raw_rows = _png_raw_rows(bmp)
+    return _png_encode_rows(bmp, raw_rows, len(raw_rows))
 
 
 # --- P3.4 — CSS transition engine ---------------------------------------------

@@ -45,6 +45,7 @@ from test_r2 import TESTS as _R2_TESTS
 from test_r3 import TESTS as _R3_TESTS
 from test_r4 import TESTS as _R4_TESTS
 from test_r4_regression import TESTS as _R4_REGRESSION_TESTS
+from test_r4_perf import TESTS as _R4_PERF_TESTS
 from test_r5 import TESTS as _R5_TESTS
 from test_mem import TESTS as _MEM_TESTS
 from test_web_api import TESTS as _WEB_API_TESTS
@@ -74,6 +75,7 @@ def main():
     tests.extend(_R3_TESTS)
     tests.extend(_R4_TESTS)
     tests.extend(_R4_REGRESSION_TESTS)
+    tests.extend(_R4_PERF_TESTS)
     tests.extend(_R5_TESTS)
     tests.extend(_MEM_TESTS)
     tests.extend(_WEB_API_TESTS)
