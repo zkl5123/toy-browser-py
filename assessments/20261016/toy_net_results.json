@@ -3,7 +3,7 @@
   "ok": true,
   "final_url": "http://127.0.0.1:8977/two.html",
   "has_body": true,
-  "ms": 4
+  "ms": 2
  },
  "redirect_loop_detected": {
   "ok": true,

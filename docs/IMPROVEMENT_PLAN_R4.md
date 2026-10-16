@@ -150,7 +150,20 @@
    - 结果：e2e `fetch_real`→`200:function`、`xhr_real`→`200:NETWORK_OK`，**CLI 与 GUI 均与 Edge 一致**；
      `compare_js` 49/51（`functional_response_methods` 翻转匹配，离线 fetch 改 reject 以镜像真实网络失败）；
      `test.py` 925/925；geometry 15/17（2 项既有浮点差，非回归）；net 全 ok。
-3. 第 4 轮（P1 MutationObserver/ResizeObserver 真实回调 + 离线夹具）。
+3. 第 4 轮（P1 MutationObserver/ResizeObserver 真实回调 + 离线夹具）。**[已完成]**
+   - 实现：`js._mutation_observer_ctor` 改为真实 `observe`/`unobserve`/`disconnect`，
+     注册到 `Host._mutation_observers`（按目标节点键控）；
+     `js._resize_observer_ctor` 改为 `observe` 时向微任务队列投递初始回调
+     （V8 ResizeObserver 异步首次回调契约）；
+     新增 `Host._queue_mutation` 分发器：在 `set_element_prop`（textContent/innerHTML/
+     属性写）与 `DomElement.append_child`/`insert_before`/`remove_child`/`remove`/
+     `replace_child`/`set_attribute` 每个变更入口调用，将回调入队为微任务
+     （与 Promise `.then` 同队列，保证 `mutated` 先于 `checkpoint` 落地）；
+     去重哨兵（`_mo_pending`）防止同一 flush 批次内多次入队。
+   - 结果：`compare_js` **51/51** 全匹配（`functional_mutation_observer` 翻转
+     `['mutated','checkpoint']`、`functional_resize_observer` 翻转 `['resized']`）；
+     `test.py` 925/925；network_e2e 10/10 仍匹配 Edge；net 8/8；geometry 15/17
+     （2 项既有浮点差，非回归）。
 4. 第 5 轮（P1 绘制盒模型），改 `layout`/`paint_engine` 几何契约，跑 4 色块 + render_* 像素。
 5. 第 6 轮（回归固化），把探针写进 `tests/`。
 6. 第 7 轮（P2 剖析）收尾。

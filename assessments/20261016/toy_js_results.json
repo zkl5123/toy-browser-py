@@ -289,13 +289,16 @@
  "functional_mutation_observer": {
   "status": "OK",
   "logs": [
+   "mutated",
    "checkpoint"
   ],
   "drain_error": null
  },
  "functional_resize_observer": {
   "status": "OK",
-  "logs": [],
+  "logs": [
+   "resized"
+  ],
   "drain_error": null
  },
  "functional_response_methods": {
