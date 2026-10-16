@@ -597,11 +597,20 @@ class PageInstance:
                 self._reuse_doc = True
                 loader = (net.load_subresources_parallel
                           if parallel else net.load_subresources)
-                _enforce_policy = True
-                _doc_csp = getattr(resp, "content_security_policy", "") or ""
+                # R4 stage 0 — unified document policy context: the
+                # document's *own* response headers are the single
+                # source of truth.  The legacy
+                # ``getattr(resp, "content_security_policy", "")``
+                # read a non-existent attribute and always yielded ""
+                # (the 4th report's csp_self/csp_inline GUI
+                # divergence); the context is built once and shared by
+                # subresource loading and script execution below.
+                _policy = net.DocumentPolicy.from_response(resp)
+                _enforce_policy = _policy.enforce
                 sub = loader(
                     tree, base_url=url, client=client,
-                    enforce_policy=_enforce_policy, doc_csp=_doc_csp,
+                    enforce_policy=_enforce_policy,
+                    policy=_policy,
                 )
                 extra_css = "".join(
                     (r.body or b"").decode("utf-8", "replace")
@@ -619,8 +628,15 @@ class PageInstance:
                 # twice, mirroring the HTML spec).
                 _host = _js_mod.Host(tree, lambda _s: None)
                 self._script_host = _host
-                _csp_directives = net.parse_csp_directives(_doc_csp) if _doc_csp else []
-                _host.doc_origin = net._origin_str(url)
+                # R4 stage 0 — script execution sees the SAME policy
+                # context as subresource loading (one source of truth
+                # from the document response headers).
+                _csp_directives = _policy.csp_directives
+                _host.doc_origin = _policy.doc_origin
+                # R4 stage 1 — absolute document base URL so <script
+                # src> relative attributes resolve against the
+                # pipeline's absolute-URL cache.
+                _host.doc_url = url
                 _script_cache: dict = {}
                 for url_key, r in sub.get("script", {}).items():
                     if r is not None and getattr(r, "ok", True):

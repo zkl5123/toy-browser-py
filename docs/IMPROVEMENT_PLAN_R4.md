@@ -1,0 +1,147 @@
+# toy-browser-py 改进计划（基于第四轮实测评估报告 2026-10-16）
+
+> **依据报告**：`assessments/20261016/实测评估报告.md`（第四轮，提交 `305163d`，对照 Edge 155.0.4283.45）
+> **执行方式**：**一轮一个阶段**（7 个阶段，外加第 0 轮统一策略上下文）。每轮完成并验收后，再开下一轮。
+> **基线（计划制定时已核实）**：`test.py` 925/925 全绿；性能哨兵 3000 节点 7.09s（阈值 12s）、10k 节点 22.0s（阈值 ~29.4s）**均通过**——第二轮报告所记"哨兵持续 FAIL"已在 P34.x 轮次消除，**不在本计划范围**。
+> **验收总原则**：按真实浏览器语义实现（用户决策）；真实网络走注入式 transport（用户决策）；第四轮探针固化为离线回归（用户决策）。每轮验收 = ① `test.py` 全绿（新增探针后 >925）② 受影响场景的 `assessments/20261016/functional_summary` 判定翻转为目标值 ③ 不破坏已对齐项（48 几何探针 / 47 原始 JS 例 / 网络 8/8 / GUI 点击与导航）。
+
+---
+
+## 现状核实（计划依据）
+
+报告与代码逐行核对后，遗留缺陷清单（均经代码定位确认）：
+
+| 编号 | 缺陷 | 代码定位 | 报告证据 |
+|---|---|---|---|
+| C1 | GUI 文档 CSP 未生效：GUI 取 `getattr(resp, "content_security_policy", "")` 恒空串；`HttpResponse` 无该属性（但已有 `csp_directives` property） | `gui.py:601`、`net.py:276` | `csp_self`/`csp_inline` GUI 误放行 |
+| C2 | 脚本顺序错：外部脚本被延后到内联之后 | `js.py:6208–6232`（"未声明 src 兜底补充执行"段） | `script_order` 期望 `SAFE\|EXTERNAL\|INLINE`，实际 `SAFE\|INLINE\|EXTERNAL` |
+| C3 | 重复 src 只执行一次 | `js.py:6218`（`_declared` 去重） | `repeat_external` 期望 `EXTERNAL\|EXTERNAL`，实际 `EXTERNAL` |
+| C4 | `type=application/json` 数据块被当 JS 执行 | `js.py:6178` 循环不查 `type` | `data_script` 期望 `SAFE`，实际 `EXECUTED` |
+| C5 | CSP nonce 匹配未通（CLI 合法 nonce 被挡） | `js.py._csp_inline_allowed` | `csp_nonce` CLI 判 `SAFE`（Edge `EXECUTED`） |
+| C6 | fetch 为"已兑现假 Response"（status=0, text 字符串） | `js.py:5035` `_fetch` | `fetch_real` 期望 `200:function` |
+| C7 | XHR 纯占位，不触发 onload | `js.py:4380` `_xhr_ctor` | `xhr_real` 期望 `200:NETWORK_OK` |
+| C8 | Mutation/ResizeObserver 仅记录不回调 | `js.py:4400/4417` | `mutation` 期望 `[mutated,checkpoint]`、`resize` 期望 `[resized]` |
+| C9 | 行内排版/绘制盒模型：flex 含 padding/border 色块边界偏移（Edge `63,6,237,36` vs 项目 `67,10,229,28`）；基础页文字重叠、粗体 span 横飞、表格拆词 | `layout.py` flex cross 轴 + `paint_engine.py` 背景/边框填充 | 报告"几何已对齐但像素仍有错误"表 |
+| C10 | 功能行为未进持续回归（`typeof` 通过 ≠ 功能可用） | `test.py` 缺探针 | 报告 P1 末两条 |
+
+> C2/C3 根因同为 `execute_scripts_in_order` 尾段（6208–6232），按一个修复单元处理。
+
+---
+
+## 阶段划分（一轮一阶段）
+
+### 第 0 轮 · P0 — 统一文档策略上下文（C1 根因 + 地基）
+
+**目标**：GUI/CLI/刷新/历史返回/子资源加载共用同一份"文档策略上下文"，杜绝"CLI 测过策略、GUI 没接"的分叉。按真实浏览器语义：文档的 `Content-Security-Policy` 响应头由文档来源提供，子资源加载也用它门控。
+
+**改动**：
+1. 抽 `DocumentPolicy` 数据类（`net.py`）：`doc_origin` + `csp_directives`（已解析 dict）+ CORS 上下文，供 CLI/GUI/历史返回构造并传递。
+2. `gui.py:601` 由 `getattr(resp, "content_security_policy", "")` 改为走 `DocumentPolicy`（内部用 `resp.csp_directives` property，`net.py:331` 已实现响应头解析）；`gui.py:622` 的 `net.parse_csp_directives(_doc_csp)` 同步改为读该上下文。
+3. CLI（`browser.py` / `main.py` 的脚本执行入口）改为构造同一 `DocumentPolicy` 传入 `execute_scripts_in_order` 与 `load_subresources`。
+4. 历史返回（`go_back`/`go_forward`）与刷新路径复用同一上下文，不重新取空串。
+
+**验收**：`csp_self`、`csp_inline`、`cross_css`、`csp_nonce` 四场景 **CLI 与 GUI 同判**（Edge 阻止的二者都阻止，Edge 放行的都放行）。`test.py` 全绿。
+
+---
+
+### 第 1 轮 · P0 — 脚本执行模型（C2 + C3 + C4）
+
+**目标**：相对/绝对 src 按文档顺序执行；相同 src 两次执行两次；JSON 数据块不执行。按 HTML spec 的"collect scripts → run each in document order"。
+
+**改动（`js.py:execute_scripts_in_order`）**：
+1. **删除 6208–6232 "未声明 src 兜底补充执行"段**——它是顺序错乱（C2）与去重（C3）的共同根因。
+2. 文档序遍历每个 `<script>` 元素：外部元素 `code = cache[resolve(src, base)]`，`code` 为 None（拉取失败/被策略挡）则跳过不阻塞后续。
+3. **src 用文档最终 URL + base 解析**：`net.parse_url(src, base=eff_base)` 归一绝对 URL 再查 cache（cache key 同步改绝对 URL），消除"相对 src 查不到"。
+4. **类型过滤**：读 `el.attr("type")`，非 `text/javascript`/`application/javascript`/`text/ecmascript`/`module`（空或 JS 类型）的（如 `application/json`）视为数据块**不执行**；`module`/`nomodule` 按规范记录为"module 暂不执行"，但不得把 JSON 块当 JS 跑。
+
+**验收**：`script_order` → `SAFE|EXTERNAL|INLINE`；`repeat_external` → `SAFE|EXTERNAL|EXTERNAL`；`data_script` → `SAFE`。三者 CLI/GUI 一致。`test.py` 全绿。
+
+---
+
+### 第 2 轮 · P0/P1 — CSP 统一执行 + nonce（C5）
+
+**目标**：`'self'` 正确匹配文档 origin；nonce 带引号/大小写敏感正确匹配；GUI/CLI 一致。
+
+**改动**：
+1. 核实并修 `js.py._csp_inline_allowed` 的 nonce 比较：`el.attr("nonce")` 与 directive 中 `nonce-…` token **精确相等**（CSP3 区分大小写，token 可带引号需剥引号）。
+2. `net.py` 的 `'self'` 展开：`doc_origin` 非空时 `'self'` → 文档 origin，匹配同源资源；directive 收集 `'self'`/`nonce-…`/带引号 token 时统一处理。
+3. 配合第 0 轮 `DocumentPolicy`，把 nonce 上下文带进 CLI/GUI 两入口。
+
+**验收**：`csp_nonce` 合法 nonce → `EXECUTED`（CLI 与 GUI 同判）；不匹配 nonce → 阻止；`'self'` 禁止的跨源样式 CLI/GUI 都白底。
+
+---
+
+### 第 3 轮 · P1 — 真实 fetch / XHR / Response（C6 + C7）
+
+**目标**：本机服务可读到状态与正文；网络失败走 reject；`text()/json()` 是可调用方法；XHR 触发 onload。按真实浏览器语义，真实网络通过**注入式 transport** 实现（离线默认安全）。
+
+**改动**：
+1. `js.Host` 增加可选 `fetch_transport`（默认 `None` 保持离线安全；CLI/GUI 网络页注入真实 `net.HttpClient`，与 `load_subresources` 共用同一 keep-alive client，连接池复用）。
+2. `_fetch(url)`（`js.py:5035`）：transport 为 None 时维持现状（已兑现 ok=False）；transport 可用时真发请求，**失败走 reject**（不再 resolve 假对象），成功 resolve 到带 `status`/`ok`/`text()`/`json()` **方法**的 Response 对象（报告明确 `text` 应为 function）。
+3. `XMLHttpRequest`（`js.py:4380`）：注入 transport 后 `open/send` 真发，响应到达时回调 `onload`；无 transport 维持占位（教学模拟标注"未完成"）。
+
+**验收**：`fetch_real` → `200:function`；`xhr_real` → `200:NETWORK_OK`；断网/404 → 不进成功 then。离线默认路径（transport=None）不回归 925。
+
+---
+
+### 第 4 轮 · P1 — Observer 实际回调（C8）
+
+**目标**：DOM 变更生成 MutationRecord 并回调；ResizeObserver 首次观察回调。
+
+**改动**：
+1. `MutationObserver`（`js.py:4400`）：Host 在 DOM 变更入口（`append_child`/`remove_child`/`insert_before`/`replace_child`/`set_attribute`，`js.py:5108+`）打补丁，变更入队后在微任务队列（与 `queueMicrotask` 同队列）里派发 MutationRecord 给已 observe 的节点。`functional_mutation_observer` 期望先 `mutated` 后 `checkpoint` → 回调须先于 promise 队列。
+2. `ResizeObserver`（`js.py:4417`）：观察元素时立即（首次观察）输出 `resized`；后续布局尺寸变化再触发。
+
+**验收**：两功能案例日志与 Edge 一致（`[mutated,checkpoint]`、`[resized]`）。
+
+---
+
+### 第 5 轮 · P1 — 行内排版与绘制盒模型（C9）
+
+**目标**：基础页不再重叠/粗体 span 横飞/表格异常拆词；flex 含 padding/border 色块边界 1px 内。把"布局矩形、背景、边框、文字、命中测试"统一在**同一套几何契约**上，不能只调对外返回的矩形。
+
+**改动**：
+1. `layout.py` flex 子项：cross 轴 margin/padding/border 的盒坐标与 `border_rect`/paint 一致（报告 `67,10,229,28` vs Edge `63,6,237,36` 说明绘制阶段再次扣了 padding/border）。
+2. `paint_engine.py`：背景/边框填充用 border_box 坐标，不再二次减 padding。
+3. 行内排版（`text.py` 断行 + `layout.py` inline 段拼接）：消除重叠、粗体 span 横飞、表格拆词。
+
+**验收**：4 色块 PNG 联合边界 1px 内；`render_basic` 前景并集差异显著下降（当前 81%）。
+
+---
+
+### 第 6 轮 · P1 — 功能行为纳入持续回归（C10）
+
+**目标**：把第四轮探针固化为离线回归，"不以 typeof 通过代替功能完成"。
+
+**改动**：
+- 将 `assessments/20261016/` 的 `layout_cases.json` / `js_cases.json` / `render_cases.json` 抽成 `tests/test_functional_*.py`（离线版：网络 API 用第 3 轮注入的假 transport，几何/JS 用本地夹具）；`test.py` 新增 TESTS 组接入。
+- 48 几何探针保留并扩展；HTTP 策略、真实 API、交互任务（点击/导航/滚动）各加可离线复现的哨兵。
+
+**验收**：`test.py` 全绿且包含上述功能探针；新缺陷可被回归哨兵捕获。
+
+---
+
+### 第 7 轮 · P2 — 性能与内存剖析（报告 P2，非阻断）
+
+**目标**：产出分段耗时 + 峰值内存报告，验证滚动局部重绘（`changed_region`）；固定负载机器扩样本后再决定是否上 C 扩展光栅化。**剖析而非硬优化**。
+
+**改动**：
+- 对 style/layout/paint/PNG 编码分段计时；短页面交互位图生成目标 <500ms（1000 元素当前 1318ms，作下轮优化目标）。
+- 验证 `changed_region` 驱动的局部重绘路径。
+
+**验收**：产出分段耗时 + 峰值内存报告；1000 元素位图生成较当前下降（目标 <600ms，激进 <500ms）。
+
+---
+
+## 执行顺序与门禁
+
+1. 第 0 → 1 → 2 轮（P0：统一策略上下文 + 脚本模型 + CSP/nonce），每轮后跑 `test.py` + 对应 functional_summary 场景回归。
+2. 第 3 → 4 轮（P1 真实 API + Observer），注入 transport 模式，离线夹具可测。
+3. 第 5 轮（P1 绘制盒模型），改 `layout`/`paint_engine` 几何契约，跑 4 色块 + render_* 像素。
+4. 第 6 轮（回归固化），把探针写进 `tests/`。
+5. 第 7 轮（P2 剖析）收尾。
+
+**每轮门禁**：
+- `python test.py` 全绿（新增探针后 >925）；
+- 受影响场景判定翻转为目标值：`csp_self`/`csp_inline`/`script_order`/`repeat_external`/`data_script`/`csp_nonce`/`fetch_real`/`xhr_real` 的 CLI 与 GUI 同时匹配 Edge；
+- 不破坏已对齐项（48 几何探针、47 原始 JS 例、网络 8/8、GUI 点击与导航历史、17000px 滚动）。

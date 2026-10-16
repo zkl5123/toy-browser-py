@@ -591,6 +591,118 @@ def parse_csp_directives(csp_header: str) -> dict[str, list[str]]:
     return directives
 
 
+# ---------------------------------------------------------------------------
+# R4 stage 0 — unified document policy context (P0-1 of the 4th
+# assessment report: GUI/CLI/refresh/history must share ONE policy
+# context, so the document's CSP gates subresources identically in both
+# entry points)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DocumentPolicy:
+    """R4 stage 0 — the document-level policy context.
+
+    Built ONCE from the document's actual response headers
+    (``Content-Security-Policy`` + its origin, per real-browser
+    semantics: the *document's* CSP gates subresources, not each
+    subresource's own header) and shared by the CLI render pipeline,
+    the GUI page loader, refresh, history back/forward and subresource
+    loading — so no path can silently fall back to a blank policy.
+
+    * ``doc_origin`` — the document's origin string
+      (``scheme://host[:port]``, default ports stripped), used to
+      expand CSP ``'self'`` tokens against the document origin.
+    * ``csp_directives`` — the parsed directive → [values] map from
+      the ``Content-Security-Policy`` response header (``{}`` when
+      the header is absent).
+    * ``cors`` — the response's parsed CORS policy
+      (``Access-Control-Allow-*`` headers); a cross-origin subresource
+      fetch is additionally permitted only when this policy permits
+      the requesting origin.
+    * ``enforce`` — master switch (default True); when False the
+      context still carries the parsed values but callers skip
+      enforcement (legacy behaviour for bare fixtures).
+
+    The raw ``Content-Security-Policy`` header string is deliberately
+    NOT a field: a single ``HttpResponse`` produces this context, and
+    re-parsing the raw string at the call site is exactly the legacy
+    divergence the 4th report flagged.
+
+    R4 stage 2 — the legacy *doc_csp* strings of
+    :func:`load_subresources` / :func:`load_subresources_parallel`
+    are still accepted for unmigrated callers; when both *policy* and
+    *doc_csp* are supplied the context wins.  Nonce- and hash-token
+    handling lives in the JS engine's inline-script gate
+    (:meth:`js.Host._csp_inline_allowed`), not here: this context
+    gates *URL sources* against the document's source-list directives.
+    """
+
+    doc_origin: str = ""
+    csp_directives: dict = field(default_factory=dict)
+    cors: "CorsPolicy | None" = None
+    enforce: bool = True
+
+    @classmethod
+    def from_response(cls, resp: "HttpResponse",
+                      doc_origin: str = "") -> "DocumentPolicy":
+        """Build the context from a real :class:`HttpResponse`.
+
+        ``doc_origin`` may be blank for opaque sources (``file://`` /
+        ``about:``) — the origin is normalised to a scheme-only string
+        so ``'self'`` matching stays well-defined.
+        """
+        origin = doc_origin or cls._origin_from_response(resp)
+        directives = dict(resp.csp_directives)  # case-insensitive parse
+        cors = resp.cors_policy
+        return cls(doc_origin=origin, csp_directives=directives, cors=cors)
+
+    @staticmethod
+    def _origin_from_response(resp: "HttpResponse") -> str:
+        src = getattr(resp, "final_url", "") or ""
+        if src:
+            return _origin_str(src)
+        ct = getattr(resp, "content_type", "") or ""
+        return f"{ct}://" if ct else "about:"
+
+    def csp_header(self) -> str:
+        """Re-serialise the parsed directives to the exact header
+        string the legacy ``doc_csp=`` parameters of
+        :func:`load_subresources` / ``execute_scripts_in_order``
+        expect (``; `` between directives, single space between
+        tokens).  A no-op round-trip through
+        :func:`parse_csp_directives` for a well-formed header."""
+        parts: list[str] = []
+        for name, values in self.csp_directives.items():
+            parts.append(" ".join([name, *values]))
+        return "; ".join(parts)
+
+    def csp_allowed(self, source_kind: str, source_value: str) -> bool:
+        """Return True when *source_value* is permitted by this
+        document policy's CSP *source_kind* directive (falling back to
+        ``default-src``), evaluated against :attr:`doc_origin`.
+        Blank directive map (no CSP header) permits everything.
+
+        A bare ``'none'`` token list blocks unconditionally (an empty
+        value list means "no constraint"; ``['none']`` means "no
+        source may be used").  ``'nonce-…'`` / hash tokens are left to
+        the JS-engine's inline gate (R4 stage 2); they never match a
+        URL here.
+        """
+        if not self.csp_directives:
+            return True
+        # The directive name for a resource kind is ``<kind>-src``
+        # ("script" → "script-src", "style" → "style-src", …); fall
+        # back to default-src when the specific directive is absent.
+        values = (self.csp_directives.get(f"{source_kind}-src")
+                   or self.csp_directives.get("default-src")
+                   or [])
+        if not values:
+            return True
+        if [v.strip("'").lower() for v in values] == ["none"]:
+            return False  # script-src 'none' et al.
+        return not _csp_blocks(values, source_value, self.doc_origin)
+
+
 def is_origin_match(a: str, b: str) -> bool:
     """P33.P2 — compare two origin strings (``scheme://host[:port]``)
     for equality, ignoring case on the host portion.
@@ -617,6 +729,70 @@ def is_origin_match(a: str, b: str) -> bool:
             h = h[:-(len(str(default)) + 1)]
         return f"{s}://{h}"
     return _norm(a, pa) == _norm(b, pb)
+
+
+# ---------------------------------------------------------------------------
+# R4 stage 2 — CSP nonce / hash token matching (CSP3 §4.1.3, §3.1)
+# ---------------------------------------------------------------------------
+
+def csp_nonce_allowed(values: list, element_nonce: str = "") -> bool:
+    """R4 stage 2 — return True when an *inline* script/style source is
+    permitted by the source-list *values* for a document element that
+    carries ``nonce=<element_nonce>``.
+
+    Real-browser semantics (CSP3):
+
+    * ``'self'`` / URL / ``data:`` tokens are URL-source tokens and
+      never match an inline source — only a nonce (or hash) or
+      ``'unsafe-inline'`` does.  They are ignored here.
+    * A ``'nonce-<value>'`` token matches when ``<value>`` equals
+      *element_nonce* EXACTLY (case-sensitive; token values are the
+      base64 string as it appeared in the header, with any surrounding
+      quotes stripped).  An element without a nonce never matches a
+      nonce-gated list (an implicit nonce is never generated).
+    * ``'unsafe-inline'`` matches any inline source (it may also be
+      combined with a nonce in the same list, in which case either
+      token permitting is enough — handled by the caller's per-token
+      loop; this helper returns True on the first match).
+    * ``'none'`` is a block token: when it is the only token it blocks
+      unconditionally (handled by the caller / :meth:`DocumentPolicy.
+      csp_allowed`).
+    """
+    if not values:
+        return True  # no constraint
+    for tok in values:
+        bare = tok.strip().strip("'")
+        low = bare.lower()
+        if low == "unsafe-inline":
+            return True
+        if low.startswith("nonce-"):
+            nonce_val = bare[len("nonce-"):]
+            # Case-sensitive exact match (CSP3 §4.1.3).
+            if element_nonce and nonce_val == element_nonce:
+                return True
+            continue
+        # URL / 'self' / data: tokens do not match inline sources.
+    return False
+
+
+def csp_hash_allowed(values: list, element_hash: str = "") -> bool:
+    """R4 stage 2 — True when the element's source hash
+    ``'sha256-…'`` matches a hash token in *values* (exact,
+    case-sensitive).  Symmetric to :func:`csp_nonce_allowed` for hash
+    sources; an element without a hash never matches a hash-gated
+    list."""
+    if not values:
+        return True
+    for tok in values:
+        bare = tok.strip().strip("'")
+        low = bare.lower()
+        if low.startswith("sha256-") or low.startswith("sha384-") or low.startswith("sha512-"):
+            if element_hash and bare == element_hash:
+                return True
+            continue
+        if low == "unsafe-inline":
+            return True
+    return False
 
 
 class HttpClient:
@@ -1649,7 +1825,8 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
                       timeout: float | None = None,
                       progress: LoadEventSink | None = None,
                       enforce_policy: bool = True,
-                      doc_csp: str = "") -> dict:
+                      doc_csp: str = "",
+                      policy: DocumentPolicy | None = None) -> dict:
     """P22.4 — load every subresource in *dom_root* against *base_url*.
 
     1. Resolve a document-level base: ``<base href>`` wins over
@@ -1672,6 +1849,18 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     restore the legacy behaviour (no policy check) for tests that
     use bare HTTP fixtures.
 
+    R4 stage 0 — *policy* is the preferred unified
+    :class:`DocumentPolicy` context (built once from the document's
+    actual response headers via
+    :meth:`DocumentPolicy.from_response` and shared by the CLI,
+    GUI, refresh and history paths).  When supplied, the context's
+    ``csp_directives`` / ``doc_origin`` / ``cors`` govern every
+    subresource fetch, and its ``enforce`` flag is authoritative —
+    the legacy *enforce_policy* / *doc_csp* arguments are read only
+    as a fallback for callers that have not migrated yet.  A legacy
+    *doc_csp* string (non-blank, no *policy*) still builds an
+    equivalent view, so existing fixtures keep working.
+
     *doc_csp* (GPT P0-4) is the document response's
     ``Content-Security-Policy`` header; when non-empty it is
     applied to every subresource fetch (the real browser uses the
@@ -1683,6 +1872,17 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     so the caller can, e.g., parse a successfully fetched stylesheet
     and feed it to ``css``.  Failed fetches map to ``None``.
     """
+    # R4 stage 0 — unify on the DocumentPolicy context when supplied.
+    if policy is None and doc_csp:
+        _legacy_base = base_url_from_dom(dom_root) or base_url
+        _legacy_origin = (_origin_str(_legacy_base.to_string())
+                          if isinstance(_legacy_base, URL)
+                          else _origin_str(str(_legacy_base)))
+        policy = DocumentPolicy(doc_origin=_legacy_origin,
+                                csp_directives=parse_csp_directives(doc_csp))
+    if policy is not None:
+        doc_csp = policy.csp_header()
+        enforce_policy = enforce_policy and policy.enforce
     eff_base = base_url_from_dom(dom_root) or base_url
     if not isinstance(eff_base, URL):
         eff_base = parse_url(str(eff_base))
@@ -1776,6 +1976,7 @@ def load_subresources_parallel(dom_root, base_url,
                                progress: "LoadEventSink | None" = None,
                                enforce_policy: bool = True,
                                doc_csp: str = "",
+                               policy: DocumentPolicy | None = None,
                                ) -> dict:
     """P33.R2 — :func:`load_subresources` with a bounded thread pool.
 
@@ -1791,11 +1992,28 @@ def load_subresources_parallel(dom_root, base_url,
     Progress events are emitted on the main thread as futures
     complete, so the sink sees a monotone 0→1 fraction.
 
+    R4 stage 0 — *policy* (a unified :class:`DocumentPolicy` context
+    built from the document's response headers) governs enforcement
+    exactly as in :func:`load_subresources`; the legacy
+    *enforce_policy* / *doc_csp* arguments remain as fallback for
+    unmigrated callers.
+
     GPT P0-4 — *enforce_policy* (default True) routes each fetched
     subresource through :meth:`HttpResponse.is_policy_allowed` with
     the document origin and the subresource kind; a policy-blocked
     resource maps to ``None`` (same failure contract as a 404).
     """
+    # R4 stage 0 — unify on the DocumentPolicy context when supplied.
+    if policy is None and doc_csp:
+        _legacy_base = base_url_from_dom(dom_root) or base_url
+        _legacy_origin = (_origin_str(_legacy_base.to_string())
+                          if isinstance(_legacy_base, URL)
+                          else _origin_str(str(_legacy_base)))
+        policy = DocumentPolicy(doc_origin=_legacy_origin,
+                                csp_directives=parse_csp_directives(doc_csp))
+    if policy is not None:
+        doc_csp = policy.csp_header()
+        enforce_policy = enforce_policy and policy.enforce
     eff_base = base_url_from_dom(dom_root) or base_url
     if not isinstance(eff_base, URL):
         eff_base = parse_url(str(eff_base))

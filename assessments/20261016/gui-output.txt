@@ -1,0 +1,1 @@
+{'gui_inline_script_text': 'AFTER', 'expected': 'AFTER', 'long_scroll': {'content_height': 17020, 'max_offset': 16920, 'actual_offset': 16920, 'expected_content_at_least': 17000}, 'tabs_initial': 1, 'tabs_after_new': 2, 'tabs_after_close': 1, 'back_url': 'about:bookmarks', 'forward_url': 'about:bookmarks'}

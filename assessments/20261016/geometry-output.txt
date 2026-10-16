@@ -1,0 +1,74 @@
+{
+  "flex_reverse_center": {
+    "edge": {
+      "red_bounds": [
+        82,
+        4,
+        218,
+        24
+      ]
+    },
+    "toy": {
+      "red_bounds": [
+        82,
+        4,
+        218,
+        24
+      ]
+    }
+  },
+  "flex_gap": {
+    "edge": {
+      "red_bounds": [
+        4,
+        4,
+        160,
+        24
+      ]
+    },
+    "toy": {
+      "red_bounds": [
+        4,
+        4,
+        160,
+        24
+      ]
+    }
+  },
+  "grid_unequal": {
+    "edge": {
+      "red_bounds": [
+        0,
+        0,
+        300,
+        20
+      ]
+    },
+    "toy": {
+      "red_bounds": [
+        0,
+        0,
+        300,
+        20
+      ]
+    }
+  },
+  "flex_padding_border": {
+    "edge": {
+      "red_bounds": [
+        63,
+        6,
+        237,
+        36
+      ]
+    },
+    "toy": {
+      "red_bounds": [
+        67,
+        10,
+        229,
+        28
+      ]
+    }
+  }
+}

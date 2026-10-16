@@ -1,0 +1,7 @@
+C:\Users\Administrator\Desktop\llm\toy-browser-py\assessments\20261016\toy_render_runner.py:14: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  pixels = list(im.getdata())
+render_basic: diff 6.26% (edge non-white 1.67%)
+render_cjk: diff 3.42% (edge non-white 1.43%)
+render_emoji_symbols: diff 0.74% (edge non-white 0.27%)
+render_forms: diff 2.38% (edge non-white 0.83%)
+render_diffs.json written

@@ -3807,6 +3807,10 @@ class Host:
         # P0 — JS execution budget knobs (overridable by tests).
         self._js_step_budget: int = 2_000_000
         self._js_max_recursion: int = 256
+        # R4 stage 1 — the document base URL (absolute), used to
+        # resolve relative <script src> attributes against the cache
+        # the URL pipeline returns (which is keyed by absolute URL).
+        self.doc_url: str = ""
         self._cancelling: bool = False
         self.globals: dict = {
             "document": self._document_obj(),
@@ -5982,15 +5986,18 @@ class Host:
 
     def _csp_inline_allowed(self, csp_directives: dict | None,
                             nonce: str | None) -> bool:
-        """P1 (assessment report) — CSP3 §3.3 script-element gate for an
-        INLINE script.  An inline script runs when the resolved
-        ``script-src`` source list permits it:
+        """P1 (assessment report) + R4 stage 2 — CSP3 §3.3/§4.1.3
+        script-element gate for an INLINE script.  Delegates to
+        :func:`net.csp_nonce_allowed` so the GUI and CLI paths share
+        the exact same token semantics (case-sensitive nonce value
+        match, ``'unsafe-inline'`` keyword, URL tokens never match an
+        inline source):
 
         * ``'none'`` as the sole value → blocked.
         * ``'unsafe-inline'`` in the list → allowed.
         * a ``'nonce-<value>'`` entry equal to the script element's
-          ``nonce`` attribute → allowed (CSP3 §4.1.3 nonce match); a
-          script without a matching nonce is still blocked.
+          ``nonce`` attribute → allowed; a script without a matching
+          nonce is still blocked.
         * anything else (bare domains, 'self', …) → inline blocked.
         """
         if not csp_directives:
@@ -5998,21 +6005,10 @@ class Host:
         values = self._csp_source_values(csp_directives, "script-src")
         if not values:
             return True
-        bare = [v.lower().strip("'") for v in values]
-        if bare == ["none"]:
+        if [v.lower().strip("'") for v in values] == ["none"]:
             return False
-        if "unsafe-inline" in bare:
-            return True
-        # nonce matching (CSP3 §4.1.3): 'nonce-<val>' tokens permit
-        # inline scripts carrying the matching nonce attribute.
-        if nonce:
-            for tok in values:
-                t = tok.strip().lower()
-                if t.startswith("nonce-"):
-                    if t[6:] == nonce.lower():
-                        return True
-            return False
-        return False
+        import net as _net
+        return _net.csp_nonce_allowed(values, nonce or "")
 
     def _csp_script_allowed(self, csp_directives: dict | None,
                             src: str) -> bool:
@@ -6128,24 +6124,67 @@ class Host:
         self.flush_timers()
         self.flush_raf()  # P1.2
 
+    # R4 stage 1 — script types that are NOT executable JavaScript
+    # (HTML spec: a <script> with a type outside the JS set is treated
+    # as a data block and its contents are never run as a script; the
+    # browser only exposes it to JS via document.scripts[i].text
+    # once "fetched").  Empty / text/javascript / application/javascript
+    # / text/ecmascript are the executable JS types.
+    _SCRIPT_DATA_TYPES = frozenset({
+        "application/json",
+        "application/ld+json",
+        "application/xml",
+        "text/template",
+    })
+
+    def _script_is_js(self, el) -> bool:
+        """R4 stage 1 — True when the <script> element's ``type``
+        attribute names an executable JavaScript type (or is absent).
+        ``module``/``nomodule`` are not a separate toy engine path but
+        their *data* type still counts as JS; JSON and other data
+        block types never execute."""
+        t = (el.attr("type") or "").strip().lower()
+        if not t:
+            return True
+        if t in self._SCRIPT_DATA_TYPES:
+            return False
+        # text/javascript, application/javascript, text/ecmascript,
+        # module, nomodule → executable.
+        return True
+
     def execute_scripts_in_order(self, fetched: dict | list,
                                  csp_directives: dict | None = None) -> None:
-        """P0 (assessment report) — run the document's <script>
-        elements in *document order*, interleaving external and inline
-        scripts like the HTML spec's "collect a list of scripts to
-        execute, then run each":
+        """P0 (assessment report) + R4 stage 1 — run the document's
+        <script> elements in *document order*, interleaving external
+        and inline scripts like the HTML spec's "collect a list of
+        scripts to execute, then run each":
 
         * ``<script src=…>`` — the fetched body for that src (from
           *fetched*, a ``{url: code-or-None}`` map or a
-          ``[(url, code), …]`` list — a duplicated src keeps the
-          second occurrence's body, but the element list keeps both
-          occurrences, so a duplicated tag still runs the body once
-          per element).  A failed fetch (code None / missing) is
-          skipped, never blocking the later scripts.
+          ``[(url, code), …]`` list).  A duplicated ``<script src>``
+          tag executes the body **once per element occurrence**
+          (HTML scripting model: the download cache reuses the
+          response, but execution is per-element — the report's
+          ``repeat_external`` case expects ``EXTERNAL|EXTERNAL``).
+          A failed fetch (code None / missing) is skipped, never
+          blocking the later scripts.
         * inline ``<script>`` — gated per-element by the document
           CSP (``'none'`` blocks; ``'unsafe-inline'`` permits; a
           ``'nonce-…'`` token permits only the matching nonce
-          attribute, CSP3 §4.1.3).
+          attribute, CSP3 §4.1.3 — now case-sensitive via
+          :func:`net.csp_nonce_allowed`).
+        * **data-block types** (``type=application/json`` etc.) are
+          NOT executable JavaScript: the element is visited in document
+          order but its body is never run as a script (the report's
+          ``data_script`` case expects the page to stay ``SAFE``).
+
+        R4 stage 1 — the legacy "undeclared external scripts run
+        after all inline scripts" tail pass (the cause of
+        ``script_order`` reporting ``INLINE|EXTERNAL`` instead of
+        the spec's ``EXTERNAL|INLINE``) is removed: external and
+        inline elements now interleave strictly in document order,
+        each external element executing its own fetched body in
+        place.
 
         After every element, timers + rAF are drained once (legacy
         execute_all contract: the page's pending callback queue is
@@ -6176,14 +6215,47 @@ class Host:
         walk(self.root)
 
         for el in scripts:
+            if not self._script_is_js(el):
+                # R4 stage 1 — data block (e.g. type=application/json):
+                # the HTML spec treats it as inert data; record it and
+                # do NOT execute the body.
+                # No log line: a data block never writes to the page
+                # and the report's data_script case expects the page
+                # to stay exactly "SAFE" — an extra log would not
+                # match Edge's silent handling.
+                continue
             src = el.attr("src")
             if src:
+                # R4 stage 1 — the DOM attribute is the raw src value
+                # (possibly relative, e.g. "/append.js" or "../x.js");
+                # the fetch cache returned by the URL pipeline is keyed
+                # by the ABSOLUTE URL (load_subresources resolves
+                # relative src against the document base).  Resolve the
+                # element's src against the document base before the
+                # cache lookup — without this, relative src never
+                # matches the cache key and the external body is
+                # silently skipped (the report's external_script case
+                # regressed to SAFE).
+                if not src.startswith(("http://", "https://", "data:")):
+                    base = getattr(self, "doc_url", "") or ""
+                    if base:
+                        import net as _net
+                        absu = _net.parse_url(src, base=_net.parse_url(base))
+                        abs_src = absu.to_string()
+                    else:
+                        abs_src = src
+                else:
+                    abs_src = src
                 # P1 (assessment report) — CSP gate on external scripts
                 # (script-src must permit the URL; 'none' blocks all).
-                if not self._csp_script_allowed(csp_directives, src):
+                if not self._csp_script_allowed(csp_directives, abs_src):
                     self.log(f"CSP blocked external script: {src}")
                     continue
-                code = cache.get(src)
+                # R4 stage 1 — look up the cache by the ABSOLUTE URL
+                # (the pipeline keys responses by resolved absolute
+                # URL); fall back to the raw src for legacy caches that
+                # are already keyed by absolute URLs only.
+                code = cache.get(abs_src, cache.get(src))
                 if code is None:
                     continue  # failed / policy-blocked fetch: skip.
                 try:
@@ -6205,31 +6277,12 @@ class Host:
                 except JSUncaughtError as e:
                     self.log(f"uncaught throw: {e.value}")
 
-        # P0 (assessment report) — fetched bodies that are NOT
-        # referenced by any ``<script src>`` element (the external-
-        # script list may carry the page's external dependencies; the
-        # document may not declare them, or the caller may inject
-        # script bodies for test scaffolding).  Execute each one in
-        # the order it was provided so the script runs.  Skip sources
-        # already run above (a duplicated src would run the body
-        # twice — once per element, once here — breaking the "exactly
-        # once per element" contract the in-order path already
-        # honours for declared elements).
-        _declared = {el.attr("src") for el in scripts if el.attr("src")}
-        for src, code in (fetched.items() if isinstance(fetched, dict)
-                          else (fetched or [])):
-            if not code:
-                continue  # failed / policy-blocked fetch: skip.
-            if src in _declared:
-                continue  # already executed via the <script src> element.
-            # P1 — CSP gate on undeclared external scripts as well.
-            if not self._csp_script_allowed(csp_directives, str(src)):
-                self.log(f"CSP blocked external script: {src}")
-                continue
-            try:
-                self.execute(code)
-            except JSUncaughtError as e:
-                self.log(f"uncaught throw (external {src}): {e.value}")
+        # R4 stage 1 — the legacy "undeclared fetched bodies run last"
+        # tail pass is gone: external scripts now execute in document
+        # order inline with the other elements (the report's
+        # script_order case).  A <script src> whose fetch failed (or
+        # whose body is policy-blocked) still maps to None and is
+        # skipped without blocking the rest.
         self.flush_timers()
         self.flush_raf()  # P1.2
 

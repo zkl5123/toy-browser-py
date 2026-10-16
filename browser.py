@@ -116,24 +116,26 @@ def render_document_from_url(
     author_css, ua_css = _full_css(tree, css_text)
 
     # P22.4/P22.5 — load subresources against the document base.
+    # R4 stage 0 — unified DocumentPolicy context: the document's
+    # response headers (Content-Security-Policy + origin) are parsed
+    # ONCE and shared by subresource loading and script execution, so
+    # the CLI and GUI entry points gate subresources identically
+    # (legacy code re-derived doc_csp from resp.headers here, while
+    # the GUI read a non-existent attribute and silently dropped the
+    # policy — the 4th report's csp_self/csp_inline GUI divergence).
     doc_csp = ""
     loaded: dict = {}
+    doc_policy: object = None
     if load_subresources:
         base = net.parse_url(resp.final_url or url)
-        # GPT P0-4 — the document's CSP header gates subresource
-        # loading (the real browser uses the document's CSP, not
-        # each subresource's own header).  CORS is enforced via
-        # the subresource's ACAO header (is_policy_allowed).
-        for k, v in resp.headers.items():
-            if k.lower() == "content-security-policy":
-                doc_csp = v
-                break
+        doc_policy = net.DocumentPolicy.from_response(
+            resp, doc_origin=net._origin_str(resp.final_url or url))
         try:
             loaded = net.load_subresources(
                 tree, base,
                 client=eff_client, timeout=timeout,
                 progress=progress,
-                doc_csp=doc_csp,
+                policy=doc_policy,
             )
             # Append any successfully fetched stylesheets.
             for _u, r in (loaded.get("stylesheet") or {}).items():
@@ -146,7 +148,13 @@ def render_document_from_url(
 
     # P0 (retest report) — run scripts with CSP gating + external scripts.
     import js as _js_mod
-    csp_directives = net.parse_csp_directives(doc_csp) if doc_csp else None
+    csp_directives = None
+    # R4 stage 0 — the unified DocumentPolicy (built above from the
+    # document's actual response headers) is the single source of
+    # truth; legacy callers without a policy context keep the None
+    # (no CSP) behaviour.
+    if doc_policy is not None:
+        csp_directives = doc_policy.csp_directives
     # P0 (assessment report) — resource download cache: the fetched
     # response for a <script src> is reused when the same URL appears
     # more than once, but the *execution* of each script element is
@@ -163,7 +171,13 @@ def render_document_from_url(
     host = _js_mod.Host(tree, lambda _s: None)
     # P1 (assessment report) — carry the document origin so CSP 'self'
     # matches the document origin, not unconditionally.
-    host.doc_origin = net._origin_str(resp.final_url or url)
+    # R4 stage 0 — prefer the unified policy context's origin (it is
+    # the document's own origin, identical to the legacy value here).
+    host.doc_origin = (doc_policy.doc_origin if doc_policy is not None
+                       else net._origin_str(resp.final_url or url))
+    # R4 stage 1 — absolute document base URL so <script src> relative
+    # attributes resolve against the pipeline's absolute-URL cache.
+    host.doc_url = resp.final_url or url
     host.execute_scripts_in_order(script_cache, csp_directives)
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)

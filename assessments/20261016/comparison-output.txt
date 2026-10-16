@@ -1,0 +1,42 @@
+{
+  "js_current": {
+    "match": 47,
+    "total": 51,
+    "both_error": [
+      "js_object_methods"
+    ]
+  },
+  "js_same_47": {
+    "previous": 33,
+    "current": 46
+  },
+  "layout_current": {
+    "matched_cases": 17,
+    "cases": 17,
+    "matched_elements": 48,
+    "elements": 48,
+    "case_matches": {
+      "layout_blocks": true,
+      "layout_margin_collapse": true,
+      "layout_flex": true,
+      "layout_grid": true,
+      "layout_table": true,
+      "layout_abs": true,
+      "layout_text_wrap": true,
+      "flex_reverse": true,
+      "flex_reverse_center": true,
+      "flex_reverse_end": true,
+      "flex_gap": true,
+      "flex_single_around": true,
+      "flex_single_evenly": true,
+      "flex_padding_border": true,
+      "flex_column": true,
+      "grid_unequal": true,
+      "percent_height": true
+    }
+  },
+  "layout_same_17": {
+    "previous": 7,
+    "current": 17
+  }
+}
