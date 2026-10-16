@@ -677,7 +677,9 @@ JS 引擎在样式/布局/绘制之前运行内联 `<script>`，并支持：
   `about:blank`/`about:version`/`about:history`、内联 HTML
   （以 `<` 开头）直接渲染；P21 后 http/https 走 `net.fetch_html`
   真实加载，网络失败显示统一错误页（替换原「M2 前暂不支持」占位页）。
-- **运行**：`python gui.py demo.html`（或 `python gui.py` 打开空白页）。
+- **运行**：`python gui.py demo.html`（或 `python gui.py` 打开空白页）；
+  Windows 下也可双击根目录的 `start_gui.bat`（自动用项目自带的
+  Python 运行时，传入 HTML 文件 / URL 作为参数即可）。
 
 ### 渲染质量与字重体系（P20）
 
@@ -931,6 +933,7 @@ python main.py demo.html out.png --png --a11y a11y.json --links links.txt
 # 启动 tkinter GUI（零依赖，多标签页）
 python gui.py demo.html        # 打开指定 HTML
 python gui.py                  # 打开 about:blank
+rem / 或直接双击根目录 start_gui.bat（Windows，自动用项目自带 Python）
 ```
 
 PNG 输出也可用 `ffmpeg` / `ImageMagick` 生成（与 `--png` 标志等价）：
