@@ -1,0 +1,22 @@
+[
+  {
+    "mode": "cli",
+    "returncode": 0
+  },
+  {
+    "mode": "gui",
+    "returncode": 0
+  },
+  {
+    "mode": "fetch-http",
+    "returncode": 0
+  },
+  {
+    "mode": "fetch-ua",
+    "returncode": 0
+  },
+  {
+    "mode": "fetch-search",
+    "returncode": 0
+  }
+]

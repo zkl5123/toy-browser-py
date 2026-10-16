@@ -1,0 +1,18 @@
+{
+  "observedAt": "2026-10-16T10:59:40.058Z",
+  "tabs": [
+    {
+      "id": "1",
+      "providerTabId": "browser-use:e51cd8f6-d080-41dc-b97b-37a327da19b3",
+      "title": "Python 浏览器_百度搜索",
+      "url": "https://www.baidu.com/s?ie=utf-8&f=8&rsv_bp=1&rsv_idx=1&tn=baidu&wd=Python%20%E6%B5%8F%E8%A7%88%E5%99%A8&fenlei=256&rsv_pq=0x9f7c91ca00092984&rsv_t=10c7VPZExvD0Ug8ignPooUpSz0TPibvwdwWOM5nC5uS6NanVuFPNptq1hzyb&rqlang=en&rsv_enter=1&rsv_dl=tb_enter&rsv_sug3=1&rsv_btype=i"
+    },
+    {
+      "id": "2",
+      "providerTabId": "8c7f98af-b37b-4f2e-992e-3917e33f27be",
+      "title": "pyclbr --- Python 模块浏览器支持 — Python 3.15.0 文档",
+      "url": "https://docs.python.org/zh-cn/3/library/pyclbr.html"
+    }
+  ],
+  "scope": "Result click opened a new tab; inventory confirms Python documentation final URL and title. Detailed result-tab DOM capture timed out."
+}

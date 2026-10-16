@@ -1,0 +1,10 @@
+[
+  {
+    "mode": "gui-ua",
+    "returncode": 0
+  },
+  {
+    "mode": "cli-ua",
+    "returncode": 0
+  }
+]

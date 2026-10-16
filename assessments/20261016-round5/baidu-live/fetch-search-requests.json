@@ -1,0 +1,29 @@
+[
+  {
+    "url": "URL(scheme='https', host='www.baidu.com', port=0, path='/s', query='wd=Python%20%E6%B5%8F%E8%A7%88%E5%99%A8', fragment='', user='', password='')",
+    "status": 200,
+    "final_url": "https://www.baidu.com/s?wd=Python%20%E6%B5%8F%E8%A7%88%E5%99%A8",
+    "bytes": 227,
+    "headers": {
+      "accept-ranges": "bytes",
+      "bdpagetype": "3",
+      "bdqid": "0xdc3787c8000d8991",
+      "cache-control": "no-cache",
+      "connection": "keep-alive",
+      "content-length": "227",
+      "content-security-policy": "frame-ancestors 'self' https://chat.baidu.com http://mirror-chat.baidu.com https://fj-chat.baidu.com https://hba-chat.baidu.com https://hbe-chat.baidu.com https://njjs-chat.baidu.com https://nj-chat.baidu.com https://hna-chat.baidu.com https://hnb-chat.baidu.com http://debug.baidu-int.com https://sai.baidu.com https://mcpstore.baidu.com https://mcpserver.baidu.com https://www.mcpworld.com https://platform-openai.now.baidu.com;",
+      "content-type": "text/html; charset=utf-8",
+      "date": "Fri, 16 Oct 2026 10:55:18 GMT",
+      "pragma": "no-cache",
+      "server": "BWS/1.1",
+      "set-cookie": "BAIDUID_BFESS=5367B4BC6468F0603D906CE4184D7D1B:FG=1; Path=/; Domain=baidu.com; Max-Age=31536000; Secure; SameSite=None",
+      "strict-transport-security": "max-age=0",
+      "traceid": "1792148118046190823415868301105127328145",
+      "x-hit-search-bff": "1",
+      "x-ua-compatible": "IE=Edge,chrome=1",
+      "x-xss-protection": "1;mode=block"
+    },
+    "sha256": "08934b47d81ff4a2f66b104ab19de1d9904e3c5e64a5eda26585d5351937aefc",
+    "elapsed_ms": 149.64
+  }
+]

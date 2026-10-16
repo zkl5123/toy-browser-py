@@ -1,0 +1,25 @@
+[
+  {
+    "url": "URL(scheme='http', host='www.baidu.com', port=0, path='/', query='', fragment='', user='', password='')",
+    "status": 200,
+    "final_url": "http://www.baidu.com/",
+    "bytes": 736945,
+    "headers": {
+      "bdpagetype": "1",
+      "bdqid": "0xc824452e0006ec74",
+      "connection": "keep-alive",
+      "content-encoding": "gzip",
+      "content-type": "text/html; charset=utf-8",
+      "date": "Fri, 16 Oct 2026 10:55:17 GMT",
+      "server": "BWS/1.1",
+      "set-cookie": "BAIDUID_BFESS=3AA1D2544DD9D89CA7EA55694585FC78:FG=1; Path=/; Domain=baidu.com; Max-Age=31536000; Secure; SameSite=None",
+      "tr_id": "super_0xc824452e0006ec74",
+      "traceid": "1792148117146814797814421727970618436724",
+      "x-ua-compatible": "IE=Edge,chrome=1",
+      "x-xss-protection": "1;mode=block",
+      "transfer-encoding": "chunked"
+    },
+    "sha256": "45dbfa44f3312098c29d0d07995a9cfd21c48f6930ad2af18a42701c76424cc1",
+    "elapsed_ms": 147.08
+  }
+]

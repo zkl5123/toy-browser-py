@@ -1,0 +1,18 @@
+{
+  "window": {
+    "app": "process:C:\\Users\\Administrator\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+    "id": 10619562,
+    "title": "toy-browser-py"
+  },
+  "accessibility": {
+    "focused_element": "1 窗格",
+    "tree": "Window: \"toy-browser-py\", App: python.exe.\n\t0 窗口 toy-browser-py Secondary Actions: Raise\n\t\t1 窗格\n\t\t\t2 窗格\n\t\t\t3 窗格\n\t\t\t4 窗格\n\t\t\t\t5 窗格\n\t\t\t\t\t6 窗格\n\t\t\t\t\t\t7 窗格\n\t\t\t\t\t\t8 窗格\n\t\t\t\t\t\t\t9 图像\n\t\t\t10 窗格\n\t\t\t\t11 窗格\n\t\t\t\t12 窗格\n\t\t\t\t13 窗格\n\t\t\t\t14 窗格\n\t\t\t\t15 窗格\n\t\t16 标题栏 (settable, string) Value: toy-browser-py\n\t\t\t17 菜单栏 系统 ID: MenuBar\n\t\t\t\t26 菜单项 系统\n\t\t\t19 按钮 最小化\n\t\t\t20 按钮 最大化\n\t\t\t21 按钮 关闭\n\t\t22 菜单栏 应用程序 ID: MenuBar\n\t\t\t27 菜单项 File\n\t\t\t28 菜单项 View\n\t\t\t29 菜单项 Bookmarks\n\nThe focused UI element is 1 窗格."
+  },
+  "actions": [
+    "launched gui.py https://www.baidu.com/: remained about:blank",
+    "Ctrl+L",
+    "type https://www.baidu.com/",
+    "Return"
+  ],
+  "observed": "Address and tab show Baidu HTTPS URL; page white; status Loaded"
+}

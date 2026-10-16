@@ -1,0 +1,20 @@
+{
+  "mode": "gui-ua",
+  "url": "https://www.baidu.com/",
+  "viewport": [
+    800,
+    600
+  ],
+  "time": "2026-10-16 18:56:25",
+  "page_url": "https://www.baidu.com/",
+  "title": "https://www.baidu.com/",
+  "content_height": 600,
+  "rendered": true,
+  "nodes": [],
+  "text": "Connection errorLoading https://www.baidu.com/ failed: SyntaxError: unexpected token ',' at pos 210Loading https://www.baidu.com/ failed: SyntaxError: unexpected token ',' at pos 210toy-browser-py (P32)",
+  "source_characters": 277,
+  "focus_chain": [],
+  "outcome": "completed",
+  "elapsed_ms": 2263.73,
+  "request_count": 33
+}

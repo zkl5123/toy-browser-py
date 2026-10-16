@@ -1,0 +1,254 @@
+{
+  "elements": 399,
+  "tags": {
+    "document": 1,
+    "html": 1,
+    "head": 1,
+    "meta": 6,
+    "link": 13,
+    "title": 1,
+    "style": 9,
+    "script": 34,
+    "noscript": 1,
+    "body": 1,
+    "textarea": 4,
+    "div": 114,
+    "a": 62,
+    "i": 19,
+    "img": 19,
+    "span": 45,
+    "map": 1,
+    "area": 1,
+    "svg": 4,
+    "g": 1,
+    "path": 9,
+    "defs": 1,
+    "clippath": 1,
+    "rect": 1,
+    "button": 1,
+    "form": 1,
+    "input": 15,
+    "ul": 2,
+    "li": 14,
+    "p": 15,
+    "b": 1
+  },
+  "form_controls": [
+    {
+      "id": "s_is_result_css",
+      "name": null,
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "textarea"
+    },
+    {
+      "id": "s_index_off_css",
+      "name": null,
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "textarea"
+    },
+    {
+      "id": "chat-textarea",
+      "name": null,
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "textarea"
+    },
+    {
+      "id": "chat-submit-button",
+      "name": null,
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "button"
+    },
+    {
+      "id": "form",
+      "name": "f",
+      "type": null,
+      "action": "/s",
+      "method": null,
+      "tag": "form"
+    },
+    {
+      "id": null,
+      "name": "ie",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "f",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rsv_bp",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rsv_idx",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "ch",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "tn",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "bar",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": "kw",
+      "name": "wd",
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": "su",
+      "name": null,
+      "type": "submit",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rn",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "fenlei",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "oq",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rsv_pq",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rsv_t",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": null,
+      "name": "rqlang",
+      "type": "hidden",
+      "action": null,
+      "method": null,
+      "tag": "input"
+    },
+    {
+      "id": "hotsearch_data",
+      "name": null,
+      "type": null,
+      "action": null,
+      "method": null,
+      "tag": "textarea"
+    }
+  ],
+  "first_inline_parse_error": [
+    {
+      "script_index": 0,
+      "error": "unexpected token ',' at pos 210",
+      "characters": 917,
+      "position": 210,
+      "context": "h&&hashMatch[0]&&hashMatch[1]){\n            // 隐藏页面内容\n                var css='body {display: none}',\n                    head=document.head||document.getElementsByTagName('head')[0],\n                "
+    }
+  ],
+  "minimal_parser_cases": [
+    {
+      "code": "var a=1,b=2;",
+      "parsed": false,
+      "error": "unexpected token ',' at pos 7"
+    },
+    {
+      "code": "let a=1,b=2;",
+      "parsed": false,
+      "error": "unexpected token ',' at pos 7"
+    },
+    {
+      "code": "const a=1,b=2;",
+      "parsed": false,
+      "error": "unexpected token ',' at pos 9"
+    },
+    {
+      "code": "var a=1; var b=2;",
+      "parsed": true
+    },
+    {
+      "code": "(1,2);",
+      "parsed": false,
+      "error": "expected ')', got ',' at pos 2"
+    }
+  ],
+  "location_keys": [
+    "href",
+    "protocol",
+    "host",
+    "hostname",
+    "port",
+    "pathname",
+    "search",
+    "hash",
+    "origin"
+  ],
+  "location_replace_callable": false,
+  "scope": "Parser-only local checks; not a second online visit or an interaction completion."
+}

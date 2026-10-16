@@ -1,0 +1,23 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "baseline_commit": "fa910dba02d34513db621c9a1994ce36f766744e",
+  "source_sha256": {
+    "toy_browser/app/gui.py": "78486a28f6b8ba41d247261bc47beaddc6b6eebd63d0657b7e26aaaf0bb706c6",
+    "toy_browser/app/browser.py": "7e0b0d1fd918c104e86935f9b39bc4704c885e8b6af0b730c3e7bd7e710a0284",
+    "toy_browser/network/net.py": "4992b09a575cc5b1ec74043ce4982e9e142296e4fa467ba5e9955e2801232f0c",
+    "toy_browser/scripting/js.py": "8850489e506a01be95e1daaa756330e5db6cfd3961d353d77a36437f976ead3b",
+    "toy_browser/scripting/web_api.py": "0201146e8e020871bf48cc5c171b54befb19fc54e0611206b29551679842b5b9"
+  },
+  "product_sources_modified_for_this_assessment": false,
+  "reference_viewport_screenshot": [
+    937,
+    613
+  ],
+  "project_viewport": [
+    800,
+    600
+  ],
+  "query": "Python 浏览器",
+  "sampling": "single observations; no aggregate performance claim",
+  "ua_control_only": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+}

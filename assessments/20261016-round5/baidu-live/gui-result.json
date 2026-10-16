@@ -1,0 +1,31 @@
+{
+  "mode": "gui",
+  "url": "https://www.baidu.com/",
+  "viewport": [
+    800,
+    600
+  ],
+  "time": "2026-10-16 18:55:13",
+  "page_url": "https://www.baidu.com/",
+  "title": "https://www.baidu.com/",
+  "content_height": 600,
+  "rendered": true,
+  "nodes": [
+    {
+      "tag": "script",
+      "id": null,
+      "name": null,
+      "type": null,
+      "src": null,
+      "href": null,
+      "action": null,
+      "text": ""
+    }
+  ],
+  "text": "\r\n\t\tlocation.replace(location.href.replace(\"https://\",\"http://\"));\r\n\t",
+  "source_characters": 227,
+  "focus_chain": [],
+  "outcome": "completed",
+  "elapsed_ms": 269.26,
+  "request_count": 1
+}
