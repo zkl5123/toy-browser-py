@@ -2508,9 +2508,75 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 已完成（**925/925** 测试通过；P2 布局几何对照 Edge **48/48** 在 0.6px 内）。
+## R6 — 第五轮批次 1 P0 实施（GUI 基本操作 + Document 版本骨架）✅
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。后续按用户方向继续。
+> 依据 `assessments/20261016-round5/docs/逐项改进实施方案.md` 批次 1
+> （基本操作：G01 / G02 / G04 / G05 / C01）。回归 939 → **967**（28 条
+> 新 G01/G02/G04 测试）。实施记录见
+> [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。
+
+### R6.1 G01 滚动条协议与范围（`toy_browser/app/gui.py`）✅
+
+- [x] 匿名 Tk `command` 回调提取为可独立测试的
+  `handle_scroll_command(tab_id, operation, *args)`；
+  协议字符串修正为 Tk 实际的 `"moveto"` / `"scroll"` / `"set"` /
+  `"none"`（legacy 的 `"movements"` / `"units"` 永远不命中）。
+- [x] moveto 按 `fraction × content_height` 定位（legacy 误乘
+  `scroll_max`）；scroll 区分 units（40px/步）与 pages（0.9 × 视口高）。
+- [x] 拇指 `first = offset / content_height`、
+  `last = (offset + viewport_h) / content_height`（内容不溢出时 0..1）。
+- [x] 回归：`tests/test_gui_scroll.py`（14 条：空页 / 短页 / 2000px 长页 /
+  moveto 0 / 0.5 / 1 / 正负 units / pages / 内容缩短夹紧）。
+
+### R6.2 G02 鼠标与键盘统一激活（`toy_browser/app/gui.py`）✅
+
+- [x] `TabBrowser.activate_element(page, node, idx, source)`：先对共享
+  Host 执行 `execute_event_bubbled(el, "click")`（脚本 onclick 先于默认
+  动作），再按控件类型走默认动作表（a → 导航；checkbox/radio → toggle；
+  text / number / submit / button → 聚焦；select → 记录）。
+- [x] 鼠标（`_click_dispatch`）与键盘（`_activate_focused`）共用同一
+  入口，消除 legacy "Enter 不执行 onclick" 的 SAFE/CLICKED 失败。
+- [x] `_toggle_checkbox` 首次 toggle 时从 DOM 的 `checked` 属性播种
+  初始状态（预勾选框取消勾选、未勾选框勾选）。
+- [x] 无 Tk 路径 `PageInstance.activate_focused_keyboard()` 供评估探针
+  与单元测试驱动。回归：`tests/test_gui_activation.py`（4 条）。
+
+### R6.3 G04 焦点路由（`toy_browser/app/foci.py` + `gui.py`）✅
+
+- [x] `FocusManager` 把键盘事件按当前焦点归属（chrome / document /
+  editor / dialog）分流：地址栏 Return 只导航、不误激活页面按钮；
+  Tab / Shift+Tab 仅在 document 归属时进页面 focus_chain。
+- [x] `_build_focus_chain` 两级排序：显式正 tabindex 数值优先
+  （平局按文档顺序），隐式可聚焦（无 tabindex 的表单控件 /
+  a[href]）按文档顺序跟随其后；tabindex="-1" 排除出 Tab 链
+  （G03 预留脚本聚焦入口）。
+- [x] `FocusManager.clamp_focus`：节点从 focus_chain 移除后焦点复位。
+- [x] 回归：`tests/test_focus_routing.py`（10 条）。
+
+### R6.4 G05 滚轮统一输入（`toy_browser/app/gui.py`）✅
+
+- [x] `handle_wheel_event(tab_id, delta)`：`|delta| >= 120` 粗轮
+  （40px/档），`0 < |delta| < 120` 高精度触控板（10px/单位）；
+  绑定到 label 与 viewport 双层，鼠标在页面文字 / 空白 / 控件上均可
+  滚动。
+
+### R6.5 C01 Document 版本骨架（`toy_browser/app/document_state.py`）✅
+
+- [x] `DocumentVersion` 四个单调计数器：`document_id`（新文档
+  加载）、`navigation_epoch`（导航请求，含错误页）、`layout_revision`
+  （restate / scroll / resize）、`frame_id`（光栅化帧）。
+- [x] `is_stale_frame` / `is_stale_layout` 供 G07 / G08 任务队列丢弃
+  过期帧；`reset_version_sequences()` 测试钩子。
+- [x] `PageInstance` 接入：`__init__` / `load_html` bump 文档身份，
+  `_reapply_interaction` bump layout revision + frame id。
+- 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表合一）
+  为批次 2 重构，本批只落版本计数器骨架。
+
+---
+
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0）已完成（**967/967** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）已完成；批次 2（G03 / G06 / G07–G11 / C02–C10 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

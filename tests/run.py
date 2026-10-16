@@ -58,6 +58,9 @@ from test_p34_r6 import TESTS as _P34_R6_TESTS
 from test_p0_js_budget import TESTS as _P0_JS_BUDGET_TESTS
 from test_p0_policy import TESTS as _P0_POLICY_TESTS
 from test_p1_supports import TESTS as _P1_SUPPORTS_TESTS
+from test_gui_scroll import TESTS as _GUI_SCROLL_TESTS
+from test_gui_activation import TESTS as _GUI_ACTIVATION_TESTS
+from test_focus_routing import TESTS as _FOCUS_ROUTING_TESTS
 
 def main():
     tests = []
@@ -88,6 +91,9 @@ def main():
     tests.extend(_P0_JS_BUDGET_TESTS)
     tests.extend(_P0_POLICY_TESTS)
     tests.extend(_P1_SUPPORTS_TESTS)
+    tests.extend(_GUI_SCROLL_TESTS)
+    tests.extend(_GUI_ACTIVATION_TESTS)
+    tests.extend(_FOCUS_ROUTING_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

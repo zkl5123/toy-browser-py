@@ -10,6 +10,7 @@
 | 第三轮 | [20261015](20261015/README.md) | 实测报告、P2 布局几何改进记录 |
 | 第四轮 | [20261016](20261016/README.md) | 实测报告、第四轮改进计划 |
 | 第五轮 | [20261016-round5](20261016-round5/README.md) | 实测报告、GUI 建议、GPU 迁移方案、逐项实施方案 |
+| 第六轮 | [20261017-round6](20261017-round6/README.md) | 批次 1 P0 实施记录（G01 / G02 / G04 / G05 / C01） |
 | 目录迁移验证 | [structure-20261016](structure-20261016/README.md) | 本次目录整理的验证记录和运行证据 |
 
 通用架构、贡献指南、变更记录及长期路线图放在 [docs](../docs/PROJECT_STRUCTURE.md)，回归测试用例在 `tests/`，性能工具在 `tools/`。所有文档和源码位置均以 [项目结构](../docs/PROJECT_STRUCTURE.md) 为准。

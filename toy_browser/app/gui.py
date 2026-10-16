@@ -28,7 +28,7 @@ from tkinter import ttk, filedialog
 # supports PPM/PGM directly (P4 format).  We convert our Bitmap to
 # PGM text, which PhotoImage can load.
 from toy_browser.rendering import paint
-from toy_browser.app import session
+from toy_browser.app import foci, session
 
 
 def _esc(s: str) -> str:
@@ -61,6 +61,15 @@ class PageInstance:
         # P33.R2 — full-document height (the layout root's content
         # height, ≥ the viewport height when the page overflows).
         self.content_height: int = 0
+        # C01 — document / frame version counters (skeleton): every
+        # load_url / load_html bumps the identity; hover / focus
+        # restates and scroll re-clips bump the layout revision;
+        # rasterised frames carry their frame_id so the presenter
+        # can drop superseded work (the batch-1 guardrail that G07 /
+        # G08's task queues build on).
+        from toy_browser.app.document_state import DocumentVersion
+        self.doc_version = DocumentVersion()
+        self.doc_version.new_document()
         # P33.P1 — event model + focus management + interaction state.
         # ``hover_id`` / ``focus_id`` are the DOM element ids (or index
         # paths) of the currently hovered / focused element.  They feed
@@ -188,6 +197,9 @@ class PageInstance:
         from toy_browser.app import browser
         from toy_browser.document import dom as _dom_mod
         from toy_browser.scripting import js as _js_mod
+        # C01 — a new document load: bump the identity so any in-flight
+        # frame / task belonging to the previous document is dropped.
+        self.doc_version.new_document()
         self.width = w
         self.height = h
         if not full_page:
@@ -287,9 +299,23 @@ class PageInstance:
         (``tabindex >= 0``, or interactive form controls) in document
         order.  Stores the result in :attr:`focus_chain` (a list of
         DOM node indices, not ids — the id may be absent on form
-        controls)."""
+        controls).
+
+        G04 — explicit positive ``tabindex`` values are ordered
+        numerically (tabindex=1 before tabindex=2 …), and elements
+        without an explicit tabindex (implicit value 0) follow in
+        document order after all explicit ones — the HTML
+        §11.5.1.4 tabindex-including rule, simplified to the
+        two-level form the toy engine needs.  ``tabindex="-1`` remains
+        focusable via script / click but is excluded from the Tab
+        chain (collected in ``_implicit_focusable`` for G03)."""
         chain: list = []
+        # (tabindex, doc_pos, idx) for elements with an explicit
+        # positive tabindex; (doc_pos, idx) for implicit ones.
+        explicit: list = []
+        implicit: list = []
         counter = [0]
+        doc_pos = [0]
 
         def _walk(node):
             # P1 (assessment report) — element-only indexing: the counter
@@ -301,22 +327,37 @@ class PageInstance:
             if node.is_element():
                 counter[0] += 1
                 idx = counter[0]
+                doc_pos[0] += 1
                 tab = node.attr("tabindex")
                 is_form = node.tag in ("input", "select", "textarea", "button", "a")
                 has_href = node.tag == "a" and node.attr("href")
                 if tab is not None:
                     try:
-                        if int(tab) >= 0:
-                            chain.append(idx)
+                        tab_v = int(tab)
                     except (ValueError, TypeError):
-                        pass
+                        tab_v = None
+                    if tab_v is not None and tab_v > 0:
+                        # G04 — positive tabindex: explicit order tier.
+                        explicit.append((tab_v, doc_pos[0], idx))
+                        return
+                    elif tab_v is not None and tab_v == 0:
+                        # tabindex="0" participates in the implicit tier
+                        # (document order), not the positive tier.
+                        implicit.append((doc_pos[0], idx))
+                        return
+                    # tab_v < 0 or unparseable — excluded from Tab
+                    # order (still script-focusable).
                 elif is_form or has_href:
-                    chain.append(idx)
+                    implicit.append((doc_pos[0], idx))
             for c in getattr(node, "children", []):
                 _walk(c)
 
         _walk(tree)
-        self.focus_chain = chain
+        # G04 — explicit positive tabindex in numeric order (ties keep
+        # document order), then the implicit tier in document order.
+        explicit.sort(key=lambda t: (t[0], t[1]))
+        implicit.sort(key=lambda t: t[0])
+        self.focus_chain = [i for _, _, i in explicit] + [i for _, i in implicit]
         # Reset active field when the page changes.
         self.active_form_field = None
         self._form_states = {}
@@ -421,7 +462,12 @@ class PageInstance:
         carry script / interaction mutations — e.g. a button's
         ``onclick`` handler that changed ``textContent``) so that
         re-rendering for :hover/:focus does not wipe out the existing
-        DOM state (the report's "重排不会清除既有 DOM 状态")."""
+        DOM state (the report's "重排不会清除既有 DOM 状态").
+
+        C01 — a restate re-solves layout without changing the document
+        identity: bump ``layout_revision`` (NOT ``document_id``), and
+        tag the fresh frame with the new ``frame_id``.
+        """
         from toy_browser.document import dom as _dom_mod
         from toy_browser.style import css as _css_mod
         from toy_browser.layout import layout as _layout_mod
@@ -431,6 +477,8 @@ class PageInstance:
         css_text = getattr(self, "_last_css", "")
         if not html:
             return
+        # C01 — layout re-solve (restate), not a new document.
+        self.doc_version.bump_layout()
         # P0 (assessment report) — reuse the live tree when available
         # (the HTTP / local-script load paths store it); fall back to
         # a fresh parse only when no tree has been stored yet.
@@ -467,6 +515,10 @@ class PageInstance:
         bmp = _paint_mod.rasterize(dl, self.width, full_h)
         self.content_height = full_h
         self._full_bitmap = bmp
+        # C01 — tag the fresh frame with its id so a presenter can
+        # drop superseded frames (the full-document bitmap is the
+        # frame source; the clipped viewport is derived from it).
+        self.doc_version.bump_frame()
         self._reclip()
 
     def _set_form_value(self, idx: int, value: str) -> None:
@@ -476,11 +528,25 @@ class PageInstance:
         self._form_states[idx] = {"value": value, "dirty": True}
 
     def _toggle_checkbox(self, idx: int) -> None:
-        """P33.P1 — toggle a checkbox / radio button's checked state."""
-        st = self._form_states.get(idx, {"value": "", "checked": False})
+        """P33.P1 — toggle a checkbox / radio button's checked state.
+
+        G02 — when no state has been recorded for *idx* yet, seed it
+        from the DOM's own ``checked`` attribute so the first toggle
+        flips the *actual* initial state (a pre-checked box un-checks,
+        an unchecked box checks) instead of defaulting to unchecked.
+        """
+        st = self._form_states.get(idx)
+        if st is None:
+            st = {"value": "", "checked": False}
+            # Seed from the DOM when possible.
+            tree = getattr(self, "_dom_tree", None)
+            if tree is not None:
+                node = self._node_index_to_dom(tree, idx)
+                if node is not None and node.is_element():
+                    st["checked"] = node.attr("checked") is not None
+            self._form_states[idx] = st
         st["checked"] = not st.get("checked", False)
         st["dirty"] = True
-        self._form_states[idx] = st
 
     def _save_form_state_to_dom(self) -> None:
         """P33.P1 — apply dirty form states back to the DOM tree so
@@ -506,6 +572,48 @@ class PageInstance:
         calls this after :meth:`scroll_to`)."""
         if getattr(self, "_full_bitmap", None) is not None:
             self.bitmap = self._clip_bitmap(self._full_bitmap, self.height)
+
+    def activate_focused_keyboard(self) -> None:
+        """G02 — keyboard activation entry (Enter / Space) without a
+        Tk widget tree.
+
+        Mirrors :meth:`TabBrowser.activate_element` but stays inside
+        the page: run the focused element's click handler against the
+        shared Host (when present), then the control's default action
+        (checkbox/radio toggle, input/textarea/select focus).  The
+        Tk path (``_activate_focused`` → ``activate_element``) adds
+        canvas refresh + navigation; this variant is what the
+        assessment's *SAFE/CLICKED* button test and the unit tests
+        drive, so it is testable without a display.
+        """
+        idx = self.focus_id
+        if idx is None:
+            return
+        tree = getattr(self, "_dom_tree", None)
+        node = self._node_index_to_dom(tree, idx)
+        if node is None or not node.is_element():
+            return
+        tag = (node.tag or "").lower()
+        inp_type = (node.attr("type") or "").lower()
+        # 1 — fire the click handler before the default action (G02).
+        host = getattr(self, "_script_host", None)
+        if host is not None:
+            from toy_browser.scripting import js as _js_mod
+            _el = _js_mod.DomElement(node, host)
+            host.execute_event_bubbled(_el, "click")
+        # 2 — default action by control type.
+        if tag in ("input", "button"):
+            if inp_type in ("checkbox", "radio"):
+                self._toggle_checkbox(idx)
+                self._save_form_state_to_dom()
+            else:
+                self.active_form_field = idx
+        elif tag == "textarea":
+            self.active_form_field = idx
+        elif tag == "select":
+            self._save_form_state_to_dom()
+        self._reapply_interaction()
+
 
     def load_file(self, path: str, w: int = 800, h: int = 600):
         """Read *path* and render it."""
@@ -873,6 +981,11 @@ class TabBrowser:
         self.history = history
         self.bookmarks = bookmarks
 
+        # G04 — centralise keyboard routing between chrome / document /
+        # editor / dialog.  The address entry is the chrome owner;
+        # everything inside a tab's page frame is the document owner.
+        self._focus_manager = foci.FocusManager(self._widget_owner)
+
         # --- build UI ---
         self._build_menu()
         self._build_toolbar()
@@ -901,9 +1014,9 @@ class TabBrowser:
         self.root.bind("<Alt-Left>", lambda e: self._back())
         self.root.bind("<Alt-Right>", lambda e: self._forward())
         # P33.P1 — keyboard focus navigation (Tab / Shift+Tab).
-        self.root.bind("<Tab>", lambda e: self._tab_focus(True))
-        self.root.bind("<Shift-Tab>", lambda e: self._tab_focus(False))
-        self.root.bind("<Return>", lambda e: self._activate_focused())
+        self.root.bind("<Tab>", lambda e: self._tab_focus_routed(True))
+        self.root.bind("<Shift-Tab>", lambda e: self._tab_focus_routed(False))
+        self.root.bind("<Return>", lambda e: self._return_routed())
         # P33.P1 — click dispatch: hit-test + form toggle + focus.
         self.root.bind("<Button-1>", lambda e: self._click_dispatch(e))
         # P33.P1 — mouse-move: hover state update (throttled).
@@ -965,6 +1078,77 @@ class TabBrowser:
         self.canvas_var: dict[int, tk.PhotoImage] = {}
         self.page_frames: dict[int, tk.Frame] = {}
 
+    # ------------------------------------------------------------------
+    # G01/G05 — scroll protocol and wheel routing (extracted for testability)
+    # ------------------------------------------------------------------
+
+    def handle_scroll_command(self, tab_id: int, operation: str, *args) -> None:
+        """G01 — Tk scrollbar command handler, extracted for independent
+        testing.  *operation* is the Tk scrollbar protocol string
+        (``"moveto"``, ``"scroll"``, ``"set"``, ``"none"``); *args*
+        carries the Tk arguments.
+
+        Protocol (Tk scrollbar man page):
+          - moveto fraction   →  target = clamp(fraction * content_height,
+                                      0, scroll_max)
+          - scroll count units →  scroll_by(count * LINE_STEP)
+          - scroll count pages →  scroll_by(count * viewport_height * 0.9)
+
+        The Tk ``command`` callback is called as
+        ``command('moveto', fraction)`` or ``command('scroll', count,
+        'units')``; the legacy code only handled ``movements``/``units``
+        which never matched Tk's actual protocol strings, so drags were
+        silently ignored.
+        """
+        page = self.tabs[tab_id]
+        m = page.scroll_max()
+        if operation == "moveto":
+            # fraction of total content height (NOT of scroll_max).
+            if args:
+                try:
+                    fraction = float(args[0])
+                except (TypeError, ValueError):
+                    return
+                target = int(fraction * page.content_height)
+                page.scroll_to(target)
+            self._refresh_canvas(tab_id)
+        elif operation == "scroll":
+            # Tk: command('scroll', count, 'units' | 'pages')
+            count = int(args[0]) if args else 0
+            unit = (args[1] if len(args) > 1 else "units")
+            if unit == "pages":
+                step = int(count * page.height * 0.9)
+            else:
+                step = count * self._LINE_STEP
+            page.scroll_by(step)
+            self._refresh_canvas(tab_id)
+        # "set" and "none" are no-ops (Tk uses them for range updates).
+
+    _LINE_STEP = 40  # pixels per scroll-unit arrow / wheel notch
+
+    def handle_wheel_event(self, tab_id: int, delta: int) -> None:
+        """G05 — unified wheel input: convert a raw Tk/OS delta to a
+        scroll step, call :meth:`PageInstance.scroll_by`, refresh the
+        canvas.  *delta* is the raw OS value (Windows: ±120 per notch
+        or small positive/negative values; other platforms: ±1..±n).
+
+        Small-delta accumulation: if ``abs(delta) < 120`` we treat it
+        as a high-precision trackpad event and scroll by 10 px per
+        unit; otherwise (coarse wheel) we scroll by 40 px per 120-unit
+        delta (≈ 40 px per notch).
+        """
+        page = self.tabs[tab_id]
+        if delta > 0:
+            step = -self._LINE_STEP if delta >= 120 else -10
+        elif delta < 0:
+            step = self._LINE_STEP if delta <= -120 else 10
+        else:
+            return  # delta == 0: no movement
+        page.scroll_by(step)
+        self._refresh_canvas(tab_id)
+
+    # ------------------------------------------------------------------
+
     def _ensure_page_frame(self, idx: int) -> None:
         """Create the notebook tab widget for *idx* if not already present.
 
@@ -973,6 +1157,11 @@ class TabBrowser:
         bitmap) plus a vertical :class:`ttk.Scrollbar` that drives
         :meth:`PageInstance.scroll_to`.  The wheel binding on the
         viewport calls :meth:`PageInstance.scroll_by`.
+
+        G01/G05 — the scrollbar command is wired through
+        :meth:`handle_scroll_command` (testable) and the wheel is
+        routed through :meth:`handle_wheel_event` (unified delta
+        handling).
         """
         if idx in self.page_frames:
             return
@@ -984,26 +1173,20 @@ class TabBrowser:
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL)
         viewport.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        # P33.R2 — mouse-wheel scrolling (Windows: <MouseWheel> with
-        # delta in units of ~120; each wheel notch ≈ 40 px of scroll).
+        # G05 — mouse-wheel scrolling: the wheel event is routed
+        # through handle_wheel_event (unified delta → step conversion).
         def _wheel(event):
-            page = self.tabs[idx]
-            step = -40 if (event.delta or 0) > 0 else 40
-            page.scroll_by(step)
-            self._refresh_canvas(idx)
+            self.handle_wheel_event(idx, event.delta)
+        # Bind on the *label* (the actual display widget) AND on the
+        # viewport frame so wheel events fire regardless of which
+        # child has pointer focus.
+        label.bind("<MouseWheel>", _wheel)
+        label.bind("<Shift-MouseWheel>", _wheel)
         viewport.bind("<MouseWheel>", _wheel)
-        # P33.R2 — wire the scrollbar thumb: Tk's Scrollbar command
-        # fires as command(detail, *args) where detail is "movements"
-        # (thumb position 0.0-1.0 in args[0]) or "units" (arrows).
-        def _sb(detail, *args):
-            page = self.tabs[idx]
-            if not args:
-                return
-            if detail == "movements":
-                page.scroll_to(int(float(args[0]) * page.scroll_max()))
-            elif detail == "units":
-                page.scroll_by(40)
-            self._refresh_canvas(idx)
+        viewport.bind("<Shift-MouseWheel>", _wheel)
+        # G01 — wire the scrollbar via the testable handler.
+        def _sb(operation, *args):
+            self.handle_scroll_command(idx, operation, *args)
         scroll.config(command=_sb)
         frame._label = label
         frame._viewport = viewport
@@ -1062,10 +1245,15 @@ class TabBrowser:
             try:
                 m = page.scroll_max()
                 if m > 0:
-                    # Thumb spans viewport/content of the track, at
-                    # the current offset.
-                    sb.set(0.0, min(1.0, max(0.0,
-                             page.yoffset / page.content_height)))
+                    # G01 — thumb range = (offset / content_height,
+                    # (offset + viewport_h) / content_height), clamped
+                    # to [0, 1].  When content fits the viewport the
+                    # scrollbar stays idle (0..1).
+                    ch = page.content_height
+                    first = min(1.0, max(0.0, page.yoffset / ch)) if ch > 0 else 0.0
+                    last = min(1.0, max(0.0,
+                                        (page.yoffset + page.height) / ch)) if ch > 0 else 1.0
+                    sb.set(first, last)
                 else:
                     sb.set(0.0, 1.0)
             except tk.TclError:
@@ -1125,6 +1313,12 @@ class TabBrowser:
 
     def _navigate(self) -> None:
         url = self.addr_var.get().strip()
+        self._commit_navigation(url)
+
+    def _commit_navigation(self, url: str) -> None:
+        """G04 — the single navigation entry point shared by the Go
+        button, the address-bar Return (routed by :meth:`_return_routed`),
+        and bookmarks."""
         if not url:
             return
         page = self.tabs[self.current]
@@ -1141,7 +1335,7 @@ class TabBrowser:
     def _open_url(self, url: str) -> None:
         """P32.2 — navigate the current tab to *url* (bookmark menu item)."""
         self.addr_var.set(url)
-        self._navigate()
+        self._commit_navigation(url)
 
     def _bookmark_current(self) -> None:
         """P32.2 — bookmark the current page in the global store."""
@@ -1214,6 +1408,59 @@ class TabBrowser:
     # ------------------------------------------------------------------
     # P33.P1 — keyboard focus navigation + click dispatch
     # ------------------------------------------------------------------
+    def _widget_owner(self, widget) -> str | None:
+        """G04 — classify a Tk widget into a focus owner.
+
+        Returns ``"chrome"`` for the address entry, ``"document"`` for
+        widgets inside a tab's page frame, ``"dialog"`` for modal
+        dialogs (not yet present in the Tk transition — future hook),
+        and ``None`` otherwise (FocusManager treats as document).
+        """
+        # The address entry and toolbar widgets are chrome.
+        if widget is getattr(self, "addr_entry", None):
+            return "chrome"
+        # Walk up the widget hierarchy: if the widget is inside a page
+        # frame, it's the document owner.
+        if widget is getattr(self, "status_var", None):
+            return "chrome"
+        for idx, frame in getattr(self, "page_frames", {}).items():
+            if widget is frame or widget in getattr(frame, "winfo_children", lambda: [])():
+                return "document"
+        return None
+
+    def _current_focus_owner(self) -> str:
+        """G04 — resolve the focus owner of the widget that currently
+        has keyboard focus (``root.focus_get()``)."""
+        try:
+            w = self.root.focus_get()
+        except tk.TclError:
+            return "document"
+        if w is None:
+            return "document"
+        return self._focus_manager.owner(w)
+
+    def _tab_focus_routed(self, forward: bool) -> None:
+        """G04 — Tab / Shift+Tab through the FocusManager: the
+        event only reaches the page's focus chain when the *document*
+        owns keyboard focus (address bar in focus → break)."""
+        owner = self._current_focus_owner()
+        if owner == "document":
+            self._tab_focus(forward)
+        # chrome / editor / dialog → break (Tk's native order).
+
+    def _return_routed(self) -> None:
+        """G04 — Return / Enter through the FocusManager: in the
+        address bar, navigate the entry's text; in the page, activate
+        the focused element.  The legacy code sent every Return to the
+        page's focus chain — a Return while typing in the address bar
+        accidentally activated a page button."""
+        owner = self._current_focus_owner()
+        if owner == "chrome":
+            self._commit_navigation(self.addr_var.get().strip())
+        elif owner == "document":
+            self._activate_focused()
+        # editor / dialog → break.
+
     def _tab_focus(self, forward: bool = True) -> None:
         """P33.P1 — Tab / Shift+Tab: move the focus to the next/previous
         element in the current page's :attr:`focus_chain`."""
@@ -1222,9 +1469,11 @@ class TabBrowser:
         self._refresh_canvas(self.current)
 
     def _activate_focused(self) -> None:
-        """P33.P1 — Return / Enter: activate the currently focused
-        element (follow a link, submit a form, toggle a checkbox,
-        or click a button)."""
+        """G02 — Return / Enter: activate the currently focused element.
+
+        Delegates to :meth:`activate_element` with ``source="keyboard"``
+        so the default-action table is shared with the mouse path.
+        """
         page = self.tabs[self.current]
         idx = page.focus_id
         if idx is None:
@@ -1233,30 +1482,61 @@ class TabBrowser:
             getattr(page, "_dom_tree", None), idx)
         if node is None or not node.is_element():
             return
+        self.activate_element(page, node, idx, source="keyboard")
+
+    def activate_element(self, page, node, idx: int,
+                         source: str = "mouse") -> None:
+        """G02 — unified mouse / keyboard activation.
+
+        The legacy code had two divergent paths: ``_click_dispatch``
+        (mouse) executed the element's ``onclick`` handler but only for
+        input/button, while ``_activate_focused`` (Enter) *never*
+        executed onclick — the assessment's button test showed the DOM
+        still read SAFE after a keyboard Enter.  This method is the
+        single activation entry point:
+
+        1. Dispatch the element's click handler (``onclick`` attribute
+           or JS-level property) on the shared Host so DOM mutations
+           land in the live tree.
+        2. Run the control's default action (navigate for ``<a>``,
+           toggle for checkbox/radio, cycle for ``<select>``).
+        3. Re-apply the interaction state and refresh the canvas.
+        """
+        host = getattr(page, "_script_host", None)
         tag = (node.tag or "").lower()
+        inp_type = (node.attr("type") or "").lower()
+        # 1 — fire the click handler before the default action so a
+        # handler can inspect (or prevent) the default.
+        if host is not None:
+            from toy_browser.scripting import js as _js_mod
+            _el = _js_mod.DomElement(node, host)
+            host.execute_event_bubbled(_el, "click")
+        # 2 — default action by control type.
         if tag == "a" and node.attr("href"):
-            href = node.attr("href")
-            self._navigate_to(href)
+            self._navigate_to(node.attr("href"))
         elif tag in ("input", "button"):
-            page._toggle_checkbox(idx)
-            page._reapply_interaction()
-            self._refresh_canvas(self.current)
+            if inp_type in ("checkbox", "radio"):
+                page._toggle_checkbox(idx)
+                page._save_form_state_to_dom()
+            else:
+                # text / number / submit / button — focus for
+                # keyboard entry.
+                page.active_form_field = idx
+        elif tag == "textarea":
+            page.active_form_field = idx
         elif tag == "select":
             # Toy: cycle to the next <option>.
-            page._reapply_interaction()
-            self._refresh_canvas(self.current)
+            page._save_form_state_to_dom()
+        # 3 — re-apply interaction state + refresh.
+        page._reapply_interaction()
+        self._refresh_canvas(self.current)
+        self._update_status()
 
     def _click_dispatch(self, event) -> None:
         """P33.P1 — mouse click on the viewport: hit-test, set hover +
-        focus, toggle form controls, follow links.
-
-        P0 (assessment report) — the hit element's ``onclick`` handler
-        (attribute or JS-level property) is now *executed* against the
-        shared Host before the re-render, so a click that mutates
-        ``textContent`` / styles is visible in the next frame (the
-        report's button test: Edge shows CLICKED after a real click;
-        the legacy GUI path re-rendered from the source HTML and the
-        DOM was still SAFE)."""
+        focus, then activate the element via :meth:`activate_element`
+        (G02 — the shared mouse / keyboard activation entry point).
+        """
         page = self.tabs[self.current]
         frame = self.page_frames.get(self.current)
         if frame is None:
@@ -1271,41 +1551,23 @@ class TabBrowser:
         hit_idx = page.hit_test_at(x, y)
         # Update hover state.
         page.hover_id = hit_idx
-        _clicked_node = None
         if hit_idx is not None:
             page.set_focus(hit_idx, restate=False)
             node = page._node_index_to_dom(
                 getattr(page, "_dom_tree", None), hit_idx)
             if node is not None and node.is_element():
                 tag = (node.tag or "").lower()
+                # G02 — links navigate immediately; all other
+                # interactive controls go through the shared
+                # activation entry (click handler + default action).
                 if tag == "a" and node.attr("href"):
-                    href = node.attr("href")
-                    self._navigate_to(href)
+                    self.activate_element(page, node, hit_idx,
+                                          source="mouse")
                     return
-                elif tag in ("input", "button"):
-                    _clicked_node = node
-                    inp_type = (node.attr("type") or "").lower()
-                    if inp_type in ("checkbox", "radio"):
-                        page._toggle_checkbox(hit_idx)
-                        page._save_form_state_to_dom()
-                    else:
-                        # text / number / submit / button — focus for
-                        # keyboard entry.
-                        page.active_form_field = hit_idx
-                elif tag == "textarea":
-                    page.active_form_field = hit_idx
-                elif tag == "select":
-                    page.active_form_field = hit_idx
-        # P0 (assessment report) — fire the hit element's click handler
-        # (on<event> attribute or JS-level property) on the shared
-        # Host so DOM mutations land in the live tree.
-        if _clicked_node is not None:
-            host = getattr(page, "_script_host", None)
-            eid = _clicked_node.attr("id") or ""
-            from toy_browser.scripting import js as _js_mod
-            _el = _js_mod.DomElement(_clicked_node, host) if host else None
-            if host is not None and _el is not None:
-                host.execute_event_bubbled(_el, "click")
+                elif tag in ("input", "button", "textarea", "select"):
+                    self.activate_element(page, node, hit_idx,
+                                          source="mouse")
+                    return
         page._reapply_interaction()
         self._refresh_canvas(self.current)
 
