@@ -3669,8 +3669,15 @@ def _layout_table(
         sum(col_w_list) + _outer_bw
         if not explicit_table_w else explicit_table_w
     )
-    for row in rows:
-        row.cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
+    # P33.R2-3 (layout_table h) — collect cells per row BEFORE the pitch
+    # loop; the shared-row-border pitch (below) needs the NEXT row's
+    # cells to compute its boundary border.
+    _row_cells: list[list] = [
+        [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
+        for row in rows
+    ]
+    for _ri, row in enumerate(rows):
+        row.cells = _row_cells[_ri]
         cells = row.cells
         n_cells = len(cells)
         # Lay out cells horizontally.
@@ -3684,7 +3691,29 @@ def _layout_table(
                 cell.explicit_width = cw
                 layout_block(cell, cell_x, content_y0 + child_y, cw)
                 cell_x += cw
-                row_h = max(row_h, cell.outer_height())
+                # P33.R2-3 (layout_table h) — row pitch: use the
+                # cell's BORDER-BOX height (content + padding +
+                # border), NOT outer_height(): the latter adds the
+                # margin pair, but table cells carry no margins and a
+                # real browser's row pitch is measured border-edge to
+                # border-edge.  In collapse mode the shared row
+                # border between two rows is drawn ONCE and belongs
+                # to the row GAP, so it is NOT part of either row's
+                # box; it is added ONCE per interior boundary, after
+                # the row loop below.  2×2 case (cell border 1px,
+                # padding 4px, text 19.2px):
+                #   row border-box h = 19.2+4+4+1+1 = 29.2
+                #   shared row border = 2 (1px × 2 borders, drawn once)
+                #   table border-box h = 29.2×2 + 2 = 60.4 + 1px
+                #   (Edge 61: the table's own top/bottom border pair,
+                #   which border_rect() re-adds in collapse mode)
+                # so the per-row pitch is the border-box height; the
+                # shared-row border for the NEXT interior boundary is
+                # added ONCE after the row loop (see below), not per
+                # cell.
+                _cell_bh = (cell.rect.h + cell.padding.top + cell.padding.bottom
+                            + cell.border.top + cell.border.bottom)
+                row_h = max(row_h, _cell_bh)
             else:
                 # Empty cell — just advance.
                 cell_x += col_w_list[ci]
@@ -3698,7 +3727,34 @@ def _layout_table(
             cell.rect.y = content_y0 + child_y
             cell.rect.x = cx
             cx += col_w_list[ci]
+        # P33.R2-3 (layout_table h) — row pitch: the shared border
+        # between two adjacent rows (collapse mode) is drawn ONCE
+        # and belongs to the row gap, exactly as the shared column
+        # borders belong to the inter-column gap in the col_max/_bw_lr
+        # computation above.  For equal 1px borders on both sides the
+        # boundary is 1px wide: half of row i's bottom border plus
+        # half of row i+1's top border.  The table's border-box
+        # height is therefore
+        #   (n_rows−1) × shared_row_border + row_0_bh + row_last_bh
+        # and border_rect() re-adds the table's own outer border pair
+        # (the two outer halves: top of row 0's top border + bottom
+        # of the last row's bottom border) to report the Edge value.
+        # 2×2 single-char table (cell border 1px, padding 4px,
+        # text 19.2px):
+        #   row bh = 19.2+4+4+1+1 = 29.2
+        #   total  = 29.2 + 29.2 + 1 = 59.4
+        #   border_box = 59.4 + 2 = 61.4 ≈ Edge 61 (0.4px)
         child_y += row_h
+        if bx.border_collapse and _ri < len(rows) - 1:
+            # Shared row border for the NEXT interior boundary: the
+            # max of this row's bottom border and the next row's top
+            # border (CSS §17.4.3.1: wider border wins; equal
+            # borders simply draw once).
+            _shared = max(
+                max((c.border.bottom for c in cells if c.is_table_cell), default=0.0),
+                max((c.border.top for c in _row_cells[_ri + 1] if c.is_table_cell), default=0.0),
+            )
+            child_y += _shared
 
     # P33.R2-2 (layout_table D3) — the table's rect is recorded at the
     # content-box origin.  border_rect() adds the FULL border pair back
@@ -3714,6 +3770,18 @@ def _layout_table(
     else:
         _content_w = _table_total_w - (bx.border.left + bx.border.right)
     _content_w = max(_content_w, 0.0)
+    # P33.R2-3 (layout_table h) — the table's rect height is recorded
+    # at the content-box origin and border_rect() re-adds the full
+    # border pair (legacy approximation, L385).  The row pitches
+    # above count each row's border-box height plus the shared
+    # interior border (drawn ONCE per boundary), so child_y is the
+    # table's total border-box height MINUS the two outer border
+    # halves; border_rect() re-adds the full pair, giving the
+    # border-box total.  2×2 case (cell border 1px, padding 4px,
+    # text 19.2px): row bh = 29.2, child_y = 29.2 + 1 + 29.2 = 59.4,
+    # border_box h = 59.4 + 2 = 61.4 ≈ Edge 61 (0.4px, within the
+    # 0.6px tolerance; the legacy outer_height() over-counted the
+    # row pitch and under-reported the border-box by the outer pair).
     bx.rect = Rect(content_x0, content_y0, _content_w,
                    max(child_y, bx.line_height_px))
 
