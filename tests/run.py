@@ -80,6 +80,8 @@ from test_style_cache import TESTS as _STYLE_CACHE_TESTS
 from test_layout_incremental import TESTS as _LAYOUT_INCREMENTAL_TESTS
 from test_display_list import TESTS as _DISPLAY_LIST_TESTS
 from test_dirty_region import TESTS as _DIRTY_REGION_TESTS
+from test_png_export import TESTS as _PNG_EXPORT_TESTS
+from test_policy_regression import TESTS as _POLICY_REGRESSION_TESTS
 
 def main():
     tests = []
@@ -132,6 +134,8 @@ def main():
     tests.extend(_LAYOUT_INCREMENTAL_TESTS)
     tests.extend(_DISPLAY_LIST_TESTS)
     tests.extend(_DIRTY_REGION_TESTS)
+    tests.extend(_PNG_EXPORT_TESTS)
+    tests.extend(_POLICY_REGRESSION_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

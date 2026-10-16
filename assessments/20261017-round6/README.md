@@ -295,6 +295,52 @@
   的 tile 失效（重放前先查缓存恢复正确背景，再重放相交且顺序正确的
   图元，避免残影，C08 步骤 4）。
 
+## 批次 14 完成的工作项（C09 PNG 编码与异步导出 + C10 策略 API 与事件循环扩大回归，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C09 连续行编码 + 分段计时 + 压缩参数 | ✅ | `toy_browser/app/png_export.py` `ContinuousRows`（连续 RGB 行，消除 int 列表遍历）/ `encode_rows` + `PngEncodePlan`（行打包 / 压缩 / 写盘分段计时，`level` 控制压缩率 vs 速度）/ `decode_pixels` + `pixels_equal`（字节与像素双层一致性） | `tests/test_png_export.py`（18 条） |
+| C09 后台导出（不可变快照 + 取消 + 回 UI 通知） | ✅ | `png_export.py` `FrameSnapshot`（捕获冻结像素，交互帧不做 PNG）/ `BackgroundExporter`（pending/done/cancelled/failed，导出中导航 / 关页取消，完成回 UI 通知，写盘失败标记） | 同上 |
+| C10 策略一致性矩阵 + nonce / 脚本 URL | ✅ | `toy_browser/app/policy_regression.py` `policy_matrix`（CLI/GUI/刷新/历史返回同策略校验）/ `check_nonce`（合法 / 不匹配 / 缺失 / 大小写）/ `resolve_script_url` + `dedupe_scripts`（相对 / 绝对 / 协议相对 / data / 去重） | `tests/test_policy_regression.py`（26 条） |
+| C10 网络结果分类 + 观察器防无限触发 + 事件循环排空 | ✅ | `policy_regression.py` `classify_fetch`（正文/JSON、失败拒绝、重定向、超时、取消、凭据、CORS，拒绝路径不误当成功）/ `ObserverGuard` + `ResizeObserverGuard`（批量 / 截断 / 触发上限 / disconnect / 回调中不重触发 / resize 循环保护）/ `EventLoopScheduler`（嵌套 Promise 微任务排空、定时器内微任务、重复定时器取消、rAF 顺序、排空错误记录） | 同上 |
+
+### C09 PNG 编码与异步导出（`png_export.py`）
+- **不破坏默认字节契约**（C09 步骤 4）：`encode_rows(level=6)` 与
+  browser.py `_png_encode_rows` 逐字节一致（同 IHDR / IDAT zlib /
+  IEND 规则）；新增快速 / 高压缩模式（`level` 0–9）只改 IDAT 数据
+  段，用 `decode_pixels` + `pixels_equal` 做**像素一致性**回归
+  （"不能简单改掉字节金图掩盖错误"）。
+- `ContinuousRows`（C09 步骤 1）：从位图按行切片读连续 RGB，`row_rgb`
+  / `raw_rows`（filter-0 raw-row 负载，与 browser.py `_png_raw_rows`
+  同字节序），消除逐像素 int 列表遍历。
+- `PngEncodePlan`（C09 步骤 2）：`stage_timings` 分别记 pack /
+  compress / write 耗时；`level` 参数在压缩率与速度间取舍。
+- `FrameSnapshot` + `BackgroundExporter`（C09 步骤 3 + 验收）：导出
+  捕获**不可变帧快照**（交互帧不进 PNG 路径），后台编码，完成 / 取消
+  / 写盘失败分别回 UI 通知；导出中导航 / 关页 → 取消任务不写盘。
+
+### C10 策略 API 与事件循环扩大回归（`policy_regression.py`）
+- `policy_matrix`（C10 步骤 1）：CLI / GUI / 刷新 / 历史返回各入口的
+  最终 URL / base / origin / CSP / 请求模式一致性矩阵，`mismatches`
+  定位偏离字段与入口。
+- `check_nonce`（C10 步骤 2）：合法 / 不匹配 / 缺失 / 区分大小写
+  （默认敏感，可设不敏感）。
+- `resolve_script_url` + `dedupe_scripts`（C10 步骤 2）：脚本 src 相对
+  base_url 解析（相对 / 绝对 / 协议相对 / data / 空），重复标签去重
+  （保持首现序）。
+- `classify_fetch`（C10 步骤 3）：把 fetch/XHR 原始结果分类成
+  `NetworkOutcome`（json / text / redirected / failed / timeout /
+  cancelled / cors_denied）；`success` 属性保证**拒绝路径不误当成功**
+  （4xx/5xx / 超时 / 取消 / CORS 拒绝 → `ok=False`）。
+- `ObserverGuard` + `ResizeObserverGuard`（C10 步骤 4）：MutationObserver
+  批量记录 + drain 截断 + 触发次数上限 + disconnect + 回调中不立即重
+  触发（防无限递归）；ResizeObserver 尺寸不变不触发 / 布局变化触发 /
+  单轮循环保护（防 resize→布局→resize 死循环）。
+- `EventLoopScheduler`（C10 步骤 5）：嵌套 Promise 微任务 FIFO 排空、
+  定时器内微任务、重复定时器取消（不再入队）、rAF 按调度顺序执行、
+  排空错误记录到 `drain_errors`（对齐浏览器事件循环：宏任务后排空
+  微任务）。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -327,7 +373,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1229/1229 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41） |
+| `py -3 test.py` | **1273/1273 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44） |
 
 ## 批次 2 关键实现说明
 

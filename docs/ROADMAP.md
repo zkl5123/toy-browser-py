@@ -2926,11 +2926,45 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   `_reapply_interaction` 增量重排 / 光栅化重放需活显示环境验收，留后续。
 
 ---
+### R6.23 C09 PNG 编码与异步导出 + C10 策略 API 与事件循环扩大回归（纯逻辑核心，批次 14）
+
+- [x] **C09 连续行编码 + 分段计时 + 压缩参数**（`toy_browser/app/png_export.py`
+  `ContinuousRows` / `encode_rows` / `PngEncodePlan` / `decode_pixels` /
+  `pixels_equal`）：`ContinuousRows` 按行切片读连续 RGB（消除逐像素 int
+  列表遍历）；`encode_rows(level)` 保留默认 level=6 字节契约（与
+  browser.py `_png_encode_rows` 逐字节一致），`level` 0–9 调压缩率
+  vs 速度；`PngEncodePlan.stage_timings` 分段计时 pack / compress /
+  write；`decode_pixels` + `pixels_equal` 做解码像素一致性（改压缩
+  级别后字节变但像素一致，不能简单改字节金图掩盖错误）。
+- [x] **C09 不可变快照 + 后台导出**（`png_export.py` `FrameSnapshot`
+  / `BackgroundExporter`）：导出捕获不可变帧快照（交互帧不进 PNG
+  路径），后台编码；任务状态 pending/done/cancelled/failed，导出中
+  导航 / 关页取消不写盘，完成回 UI 通知，写盘失败只标记任务。
+- [x] **C10 策略一致性矩阵 + nonce / 脚本 URL**（`toy_browser/app/`
+  `policy_regression.py` `policy_matrix` / `check_nonce` /
+  `resolve_script_url` / `dedupe_scripts`）：CLI / GUI / 刷新 / 历史
+  返回各入口统一策略一致性；nonce 合法 / 不匹配 / 缺失 / 大小写；
+  脚本 src 相对 / 绝对 / 协议相对 / data 解析 + 重复标签去重。
+- [x] **C10 网络结果分类 + 观察器防无限触发 + 事件循环排空**
+  （`policy_regression.py` `classify_fetch` / `ObserverGuard` /
+  `ResizeObserverGuard` / `EventLoopScheduler`）：fetch/XHR 结果分类
+  正文/JSON、失败拒绝、重定向、超时、取消、凭据、CORS；观察器批量
+  / 截断 / 触发上限 / disconnect / 回调中不重触发 + ResizeObserver
+  尺寸不变不触发 / 布局变化触发 / 单轮循环保护；事件循环嵌套 Promise
+  微任务 FIFO 排空、定时器内微任务、重复定时器取消、rAF 顺序、排空
+  错误记录到 `drain_errors`。
+- 回归：`tests/test_png_export.py`（18 条）+ `tests/test_policy_regression.py`（26 条）。
+- 说明：本批为纯逻辑判定层；PNG 实际写盘 / GUI 导出按钮接线、C10
+  真实本机 HTTP 与 Edge 行为对照、观察器 / 事件循环的实际 JS 引擎
+  接入需活显示 / 在线环境验收，留后续。
+
+---
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘）已完成（**1229/1229** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）与批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）已完成；批次 14（C09 PNG 编码与异步导出 / C10 策略 API 与事件循环扩大回归 / G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C02 连续缓冲区 / B 系列）按实施文档依赖顺序继续。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归）已完成（**1273/1273** 测试通过）。
+
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）、批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）与批次 14（C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归纯逻辑核心）已完成；批次 15（G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C02 连续缓冲区迁移 / B 系列）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
