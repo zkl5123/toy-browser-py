@@ -61,6 +61,9 @@ from test_p1_supports import TESTS as _P1_SUPPORTS_TESTS
 from test_gui_scroll import TESTS as _GUI_SCROLL_TESTS
 from test_gui_activation import TESTS as _GUI_ACTIVATION_TESTS
 from test_focus_routing import TESTS as _FOCUS_ROUTING_TESTS
+from test_editor import TESTS as _EDITOR_TESTS
+from test_viewport import TESTS as _VIEWPORT_TESTS
+from test_cpu_image import TESTS as _CPU_IMAGE_TESTS
 
 def main():
     tests = []
@@ -94,6 +97,9 @@ def main():
     tests.extend(_GUI_SCROLL_TESTS)
     tests.extend(_GUI_ACTIVATION_TESTS)
     tests.extend(_FOCUS_ROUTING_TESTS)
+    tests.extend(_EDITOR_TESTS)
+    tests.extend(_VIEWPORT_TESTS)
+    tests.extend(_CPU_IMAGE_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

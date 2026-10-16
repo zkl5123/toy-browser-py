@@ -14,11 +14,81 @@
 | G05 滚轮统一输入 | ✅ | `handle_wheel_event`（粗/精 delta 分流） | 随 G01 测试 |
 | C01 Document 版本骨架 | ✅ | `toy_browser/app/document_state.py` `DocumentVersion` | 版本单调性已验证 |
 
+## 批次 2 完成的工作项（用户指定：G03 / G06 / G07 / C02 / C03）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G03 编辑、选区与输入法 | ✅（纯逻辑核心） | `toy_browser/app/editor.py` `EditorState` | `tests/test_editor.py`（16 条） |
+| G06 动态视口、DPI 与缩放 | ✅（坐标契约 + 合并器） | `toy_browser/app/viewport.py` `ViewportState` / `ResizeCoalescer` | `tests/test_viewport.py`（10 条） |
+| G07 UI 与文档工作分离 | ⏳ 未实施（依赖网络线程，见下） | — | — |
+| C02 连续像素缓冲区及呈现 | ✅（数据契约 + PPM 批量打包 + 缓冲池） | `toy_browser/rendering/cpu_image.py` | `tests/test_cpu_image.py`（6 条） |
+| C03 行内格式化与文字布局 | ⏳ 未实施（需先冻结 Edge 几何对照，见下） | — | — |
+
+## 批次 2 关键实现说明
+
+### G03 编辑状态机（纯逻辑核心）
+- `EditorState`：node 标识 + value + selection_start/end + caret +
+  composition_range（IME 组合区）+ undo/redo + dirty + password 显示
+  分离。`apply_input(InputEvent)` 按 beforeinput（可取消）→ value
+  更新 → input 顺序派发；`commit_change` 在失焦 / 提交时触发一次
+  change（不为每键重复）。
+- IME 三阶段：`ime_composition_start` / `ime_composition_update`（组合
+  中间态不派发 input）/ `ime_composition_commit`（最终汉字一次性写入
+  并派发 input），取消走 `deleteByComposition`。
+- 文本编辑命令：左右 / Home / End、Backspace / Delete / 选区删除、
+  粘贴替换选区、undo/redo；脚本改值按编辑 / 非编辑两态同步
+  （`sync_from_dom`）。
+- **未实施**：Tk 原生 Entry/Text 覆盖层（G03 step 2，需活显示环境）；
+  剪贴板 / IME 人工验收（需真实键盘 + 系统 IME）。
+
+### G06 视口 / DPI / 缩放
+- `ViewportState` 统一 css/ui 像素、device_scale、page_zoom、scroll 的
+  换算：`css_to_ui` / `ui_to_css` / `logical_to_css`（G06 step 3 的
+  坐标公式），`set_size` / `set_zoom`（围绕锚点）/ `clamp_scroll`。
+- `ResizeCoalescer`：连续 resize 合并，合并窗口（首个 offer 起算）
+  ≥ 16ms 才提交最新尺寸（G06 step 1）。
+- **未实施**：Tk `Configure` 绑定到重排、命中树 / 编辑覆盖层 /
+  scrollbar 的随动（需活显示环境）。
+
+### C02 连续像素缓冲区
+- `CPUImage`（RGB8 连续 `bytearray` 缓冲区 + stride）；
+  `from_bitmap` 用 `struct.pack` 逐行批量打包（0xRRGGBB → RGB PPM
+  字节序，与 legacy `Bitmap.save_ppm` 逐字节一致）；
+  `to_ppm_bytes` 供 Tk `PhotoImage` 直接消费，不再逐像素创建临时
+  bytes（第五轮实测 800×600 转换链 ~1209ms 的根因路径）。
+- `ImagePool`：按尺寸复用 + 清零 + 有界（帧所有权由 C01 版本保证）。
+- 已接入 `TabBrowser._bitmap_to_photopix`（Tk 呈现走 CPUImage 路径）。
+- **未实施**：填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区
+  （批次 3）；独立进程 + 共享内存槽（可选 GPU 方案）。
+
+## 本批未完成 / 阻塞项
+
+- **G07 UI 与文档工作分离**：有界命令队列 + 网络 I/O 移出主线程 +
+  文档进程方案。依赖 G08 导航状态机与 C01 完整 `DocumentState`
+  抽取（批次 3）；本批先落 C01 版本骨架（批次 1）为 G07 任务丢弃
+  提供基础，但未实施线程分离本身（纯 Python 线程无多核收益，文档
+  建议评估文档进程方案）。
+- **C03 行内格式化与文字布局**：需先将最小失败页面拆为普通文本 /
+  b/i/span / 链接 / 连续空白 / 中文拉丁混排 / 长单词，并冻结 Edge
+  几何与截图（C03 step 1），本批未执行该冻结步骤，故未实施
+  InlineRun/LineBox。
+
+## 剩余限制（下一批次）
+
+- G08 导航状态 / 停止 / 错误、G09 标签页与历史会话、G10 工具栏 /
+  状态栏 / 诊断区、G11 可访问性。
+- C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
+  合一）、C03 文字布局、C04 表格表单、C05 样式缓存。
+- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize 的 Tk 实测需有显示
+  环境执行；本批回归覆盖纯逻辑与协议公式。
+- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
+  语义、错误分类），不在本批范围。
+
 ## 回归数字
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **967/967 通过**（基线 939 + 新增 28） |
+| `py -3 test.py` | **999/999 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32） |
 
 ## 关键实现说明
 
@@ -42,7 +112,15 @@
 
 ## 剩余限制（下一批次）
 
-- G03（编辑、选区与输入法）与 G06（动态视口 / DPI / 缩放）未实施；G03 依赖 G02 + G04（已就绪）。
-- C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表合一）为批次 2 重构；本批只落了版本计数器骨架。
-- 滚轮 / 滚动条的 Tcl 实测（真实 Tk command）需在有显示环境执行；本批回归覆盖 PageInstance 协议逻辑与纯解析公式。
-- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location 语义、错误分类），不在本批范围。
+- G08 导航状态 / 停止 / 错误、G09 标签页与历史会话、G10 工具栏 /
+  状态栏 / 诊断区、G11 可访问性。
+- G07 UI 与文档工作分离（有界命令队列 + 线程分离）依赖 G08 与
+  C01 完整 `DocumentState` 抽取。
+- C01 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表
+  合一）、C03 行内格式化与文字布局（需先冻结 Edge 几何对照）、
+  C04 表格表单、C05 样式缓存、C02 填充 / 混合 / 图片 / 字形逐阶段
+  迁移到连续缓冲区。
+- 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize 的 Tk 实测需有显示
+  环境执行；本批回归覆盖纯逻辑与协议公式。
+- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
+  语义、错误分类），不在本批范围。

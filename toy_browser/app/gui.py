@@ -1214,15 +1214,17 @@ class TabBrowser:
         Tk's ``image create photo -data`` reliably parses P6 (binary
         PPM with #! comment), which is simpler and faster than the
         space-separated P3 text form.
+
+        C02 — route the pixel packing through the contiguous-buffer
+        contract (:class:`cpu_image.CPUImage`) instead of the legacy
+        per-pixel Python loop: one batch ``struct.pack`` per row, no
+        per-pixel temporary bytes (the 5th-round measurement put the
+        800×600 conversion chain at ~1209 ms; C02 targets ≥80% below
+        that on this path).
         """
-        import io
-        buf = io.BytesIO()
-        buf.write(f"P6\n{bmp.width} {bmp.height}\n255\n".encode("ascii"))
-        for y in range(bmp.height):
-            for x in range(bmp.width):
-                p = bmp.pixels[y * bmp.width + x]
-                buf.write(bytes([(p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF]))
-        return tk.PhotoImage(data=buf.getvalue())
+        from toy_browser.rendering import cpu_image as _cpuimg
+        data = _cpuimg.CPUImage.from_bitmap(bmp).to_ppm_bytes()
+        return tk.PhotoImage(data=data)
 
     def _refresh_canvas(self, idx: int) -> None:
         page = self.tabs[idx]

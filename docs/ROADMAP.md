@@ -2572,11 +2572,58 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - 完整 `DocumentState` 抽取（DOM 树 + Host + 策略 + 子资源注册表合一）
   为批次 2 重构，本批只落版本计数器骨架。
 
+### R6.6 G03 编辑、选区与输入法（`toy_browser/app/editor.py`）✅
+
+- [x] `EditorState`：value / selection / caret / composition_range /
+  undo / redo / dirty / password 显示分离。
+- [x] `apply_input` 按 beforeinput（可取消）→ value 更新 → input
+  顺序派发；Backspace / Delete / 选区删除 / 粘贴 / Home / End /
+  左右；`commit_change` 在失焦 / 提交时触发一次 change。
+- [x] IME 三阶段：composition_start / composition_update（不派发
+  input）/ composition_commit（一次性写入 + input）；取消走
+  deleteByComposition。
+- [x] 脚本改值同步 `sync_from_dom`（编辑中 / 非编辑两态）。
+- 回归：`tests/test_editor.py`（16 条）。
+- 未实施：Tk 原生 Entry/Text 覆盖层（需活显示环境）；剪贴板 / IME
+  人工验收。
+
+### R6.7 G06 动态视口、DPI 与缩放（`toy_browser/app/viewport.py`）✅
+
+- [x] `ViewportState`：css / ui 像素 + device_scale + page_zoom +
+  scroll 统一换算（`css_to_ui` / `ui_to_css` / `logical_to_css`、
+  `set_size` / `set_zoom`（围绕锚点）/ `clamp_scroll`）。
+- [x] `ResizeCoalescer`：连续 resize 合并，合并窗口 ≥ 16ms 提交最新
+  尺寸（只留最后一个 offer）。
+- 回归：`tests/test_viewport.py`（10 条）。
+- 未实施：Tk `Configure` 绑定重排、命中树 / 编辑覆盖层 / scrollbar
+  随动（需活显示环境）。
+
+### R6.8 C02 连续像素缓冲区及 GUI 呈现
+（`toy_browser/rendering/cpu_image.py`）✅
+
+- [x] `CPUImage`（RGB8 连续 `bytearray` 缓冲区 + stride）；
+  `from_bitmap` 用 `struct.pack` 逐行批量打包（与 legacy
+  `Bitmap.save_ppm` 逐字节一致）；`to_ppm_bytes` 供 Tk `PhotoImage`
+  直接消费。
+- [x] `ImagePool`：按尺寸复用 + 清零 + 有界。
+- [x] 接入 `TabBrowser._bitmap_to_photopix`（Tk 呈现走 CPUImage）。
+- 回归：`tests/test_cpu_image.py`（6 条）。
+- 未实施：填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区（批次 3）；
+  独立进程 + 共享内存槽（可选 GPU 方案）。
+
+### R6.9 G07 / C03 未实施说明
+
+- G07（UI 与文档工作分离）：有界命令队列 + 网络 I/O 移出主线程 +
+  文档进程方案。依赖 G08 导航状态机与 C01 完整 `DocumentState`
+  抽取；本批仅落 C01 版本骨架为其提供任务丢弃基础。
+- C03（行内格式化与文字布局）：需先冻结 Edge 几何对照（C03 step 1），
+  本批未执行，故未实施 InlineRun/LineBox。
+
 ---
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0）已完成（**967/967** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02）已完成（**999/999** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）已完成；批次 2（G03 / G06 / G07–G11 / C02–C10 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）与批次 2（G03/G06/C02）已完成；G07/C03 与批次 3（G08–G11 / C01 完整抽取 / C03–C10）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。

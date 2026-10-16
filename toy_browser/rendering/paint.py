@@ -102,10 +102,16 @@ class Bitmap:
 
     def save_ppm(self, path: str) -> None:
         with open(path, "wb") as f:
-            header = f"P6\n{self.width} {self.height}\n255\n".encode()
-            f.write(header)
-            for px in self.pixels:
-                f.write(bytes(((px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF)))
+            f.write(self.to_ppm_bytes())
+
+    def to_ppm_bytes(self) -> bytes:
+        """P6 binary PPM bytes.  ``save_ppm`` writes these to disk;
+        the GUI's Tk conversion uses :mod:`cpu_image` instead (C02)."""
+        header = f"P6\n{self.width} {self.height}\n255\n".encode("ascii")
+        out = bytearray()
+        for px in self.pixels:
+            out += bytes(((px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF))
+        return header + bytes(out)
 
 
 def describe(bmp: Bitmap) -> str:
