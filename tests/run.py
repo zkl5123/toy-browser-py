@@ -198,6 +198,8 @@ def main():
     tests.extend(_DOCUMENT_PROCESS_TESTS)
     tests.extend(_EDITOR_OVERLAY_TESTS)
     tests.extend(_RASTERIZE_CPU_TESTS)
+    from test_b_series_gui_wiring import TESTS as _B_SERIES_GUI_WIRING_TESTS
+    tests.extend(_B_SERIES_GUI_WIRING_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

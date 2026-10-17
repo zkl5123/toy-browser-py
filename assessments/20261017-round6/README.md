@@ -736,6 +736,26 @@
 - 回归：`tests/test_rasterize_cpu.py`（19 条）纯逻辑验证"CPUCanvas 直接落 buffer 与 Bitmap 逐像素一致（fill / 透明 / 半透明 blend / 越界 clamp / to_bitmap roundtrip）+ rasterize_to_cpu_image / rasterize_direct 与权威 `paint_engine.rasterize` 逐像素一致 + 两 CPUImage 路径互一致 + cpu_matches 全帧差分（含 size / tolerance）+ 奇数宽度 / 自定义 stride / 透明图片 C02 验收 + to_ppm_bytes P6 头 + 完整小页多命令一致 + clip_viewport 与 _clip_bitmap 语义一致"。
 - 说明：本批为 C02 活显示 rasterize 切 CPUImage 的纯逻辑核心 + gui.py 活显示接线；后续批次让 `paint_engine` 的整个命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层），并把 `_c02_refresh_canvas_cpu` 设为默认呈现路径。
 
+## 批次 41 完成的工作项（B 系列活显示 GUI 接线 + 网络 I/O 实装）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| B 系列活显示 GUI 接线 + 网络 I/O 实装（BGuiWiring 统一分派 + 本地 loopback HTTP 冒烟 + render_document_from_url 本地实装验收） | 完成 | `toy_browser/app/b_series_wiring.py` | `tests/test_b_series_gui_wiring.py`（23 条） |
+
+### B 系列活显示 GUI 接线 + 网络 I/O 实装（`b_series_wiring.py`）
+- 依据 B01–B10 纯逻辑核心（批次 16–20）"活显示 / GUI 接线 / 网络 I/O 留后续批次"。本批补**活显示 GUI 接线核心 + 本地 loopback HTTP 网络 I/O 实装冒烟**（环境无出站网络，只走本地 `http.server`）：
+  - `BGuiWiring` — 把 B01 `NavigationController` + B07 `activate_element` + B08 `DocumentContext` 接成统一分派入口：
+    - `dispatch_address(text)` — B01 地址栏三分类（URL / 相对 URL / 普通文本）→ 导航成功 → `ctx.bump_task_version()` + `ctx.final_url` 更新。
+    - `dispatch_link(href, target_attr)` — B07 链接激活（`parse_link_target` 相对解析 + `target_attr` 分类）→ B01 分派 → `ctx.bump_task_version()`；不支持的 scheme（`javascript:` / `mailto:`）返回 `action="none"` + `error="scheme-not-supported"`。
+    - `dispatch_form(fields, form_id, action, method, trigger, validate)` — B07 表单提交（`build_form_submission` 校验 + 序列化）→ B01 分派；`blocked` 时返回 `violations`；POST 时 `query` 携带 body。
+    - `mark_resource(url, state, status_code, blocked_reason)` — B08 资源三态登记（`downloaded` / `decoded` / `applied` / `blocked`）。
+    - `describe()` — 诊断串（`resource_completeness` 消费）。
+  - `start_local_http_server(handler, host, port)` — 本地 loopback HTTP 服务器（`socketserver.ThreadingTCPServer` + `BaseHTTPRequestHandler`，`port=0` 系统分配；GET / POST / 重定向 / 404 全路径覆盖；`server.shutdown()` 负责关闭）。
+  - `network_io_smoke(base_url, config, ctx)` — B02 `RequestConfig` + B08 `DocumentContext` 网络 I/O 实装冒烟：驱动 `net.HttpClient` 的 `get` / `post` / 重定向 / 404 路径，验证资源三态登记闭环（`mark_downloaded` / `mark_decoded` / `mark_applied` / `mark_blocked`）。
+  - `run_b_series_local_http(port, handler, width, height)` — `render_document_from_url` 本地实装验收：起本地 HTTP 服务器 → 渲染 → 确认 `bmp_nonwhite > 0`（活显示批次"网络 I/O 实装"验收项）。
+- 回归：`tests/test_b_series_gui_wiring.py`（23 条）覆盖：BGuiWiring 地址栏 / 链接 / 表单分派 + B08 资源三态 + 本地 HTTP 起停 + GET 200 / 404 / POST echo / 重定向 + `network_io_smoke` + `run_b_series_local_http`（`render_document_from_url` 本地实装）+ 纯逻辑默认导航 / 自定义导航。
+- 说明：本批为 B 系列活显示 GUI 接线核心 + 网络 I/O 本地实装冒烟；出站网络仍阻塞（"在线对照复测"留后续）；`gui.py` 活显示调用 `BGuiWiring` 实际接线留后续批次。
+
 ## 剩余限制（下一批次）
 
 - G03 原生覆盖层位置同步 / 撤销协议纯逻辑核心已在批次 34 落地（`OverlayPlacement` 四类同步触发 + `should_show_overlay` + `overlay_caret_position` + password 分离），批次 39 已把该协议接入 `gui.py` 的 `TabBrowser`（`_g03_overlay` 控制器 + `activate_element` 附着 + G11 编辑层路由），Tk 原生 Entry/Text 真实控件创建 / 放置 + IME 人工验收留活显示批次。
@@ -779,7 +799,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1764/1764 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复新增 10 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心新增 14 + 批次 39 G03 原生覆盖层 Tk 接线新增 23 + 批次 40 C02 活显示 rasterize 切 CPUImage 新增 19） |
+| `py -3 test.py` | **1806/1806 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复新增 10 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心新增 14 + 批次 39 G03 原生覆盖层 Tk 接线新增 23 + 批次 40 C02 活显示 rasterize 切 CPUImage 新增 19 + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装新增 23） |
 
 ## 批次 2 关键实现说明
 
