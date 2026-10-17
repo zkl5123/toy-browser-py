@@ -108,6 +108,7 @@ from test_layout_diff import TESTS as _LAYOUT_DIFF_TESTS
 from test_caret_explain import TESTS as _CARET_EXPLAIN_TESTS
 from test_overlay_protocol import TESTS as _OVERLAY_PROTOCOL_TESTS
 from test_tk_keyboard_binding import TESTS as _TK_KEYBOARD_BINDING_TESTS
+from test_g11_gui_wiring import TESTS as _G11_GUI_WIRING_TESTS
 
 def main():
     tests = []
@@ -188,6 +189,7 @@ def main():
     tests.extend(_CARET_EXPLAIN_TESTS)
     tests.extend(_OVERLAY_PROTOCOL_TESTS)
     tests.extend(_TK_KEYBOARD_BINDING_TESTS)
+    tests.extend(_G11_GUI_WIRING_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

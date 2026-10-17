@@ -1021,6 +1021,10 @@ class TabBrowser:
         self.root.bind("<Button-1>", lambda e: self._click_dispatch(e))
         # P33.P1 — mouse-move: hover state update (throttled).
         self.root.bind("<Motion>", lambda e: self._hover_dispatch(e))
+        # G11 — 批次 35/36：完整按键集进 Tk 绑定（与上面 G04 专门绑定
+        # 共存；G11 handler 只对增量键 break，Tab/Return/Control 让专门
+        # 绑定接管）。
+        self._install_g11_bindings()
 
     # ------------------------------------------------------------------
     def _build_menu(self) -> None:
@@ -1462,6 +1466,91 @@ class TabBrowser:
         elif owner == "document":
             self._activate_focused()
         # editor / dialog → break.
+
+    # ------------------------------------------------------------------
+    # G11 — Tk 侧真实键盘绑定桥（批次 35 桥 + 批次 36 接线）
+    # ------------------------------------------------------------------
+    def _g11_get_router(self):
+        """G11 — 每次按键构造当前焦点状态的 :class:`KeyboardRouter`。
+
+        从 :meth:`_current_focus_owner` 取 chrome / document / editor /
+        dialog 域。GUI 过渡版尚无原生编辑层（G03 覆盖层批次才落地），
+        故 ``focus_in_edit`` / ``has_active_field`` 均为 False —— 编辑
+        层按键届时由覆盖层批次接入。
+        """
+        from toy_browser.app.keyboard_router import KeyboardRouter
+        owner = self._current_focus_owner()
+        return KeyboardRouter(focus_owner=owner, focus_in_edit=False,
+                              has_active_field=False)
+
+    def _g11_dispatch(self, decision, event) -> None:
+        """G11 — 把批次 21 :class:`KeyDecision` 分派到既有 G04 动作。
+
+        与既有 G04 专门绑定（``<Tab>`` / ``<Return>`` / Control 组合）
+        **不重复触发**：那些键已有专门 ``lambda`` 绑定处理，本分派层
+        只对 G04 未覆盖的 G11 完整按键集做**增量补全**——
+        方向键 / Home / End / PageUp / PageDown（页面焦点链移动或
+        caret-move）、Escape（chrome 清地址栏 / document 取消激活）。
+        每次分派记录到 :attr:`_g11_dispatch_log`（纯逻辑可查，供
+        回归核对接线正确性）。
+        """
+        action = decision.action
+        owner = decision.target
+        # 记录（供回归 / 诊断）
+        self._g11_dispatch_log.append(
+            (action, owner, bool(decision.consumed)))
+        # 仅处理 G04 未覆盖的增量键；Tab / Return / Control 组合已被
+        # 既有专门绑定处理，此处不重复执行（避免双重触发）。
+        if action in ("tab", "shift-tab", "navigate"):
+            return
+        if action == "activate" and owner == "document":
+            self._activate_focused()
+        elif action == "escape":
+            if owner == "address" or owner == "chrome":
+                self.addr_var.set("")
+                self._focus_address()
+            elif owner == "document":
+                # 取消当前焦点激活（blur）
+                page = self.tabs[self.current]
+                if page.focus_id is not None:
+                    page.set_focus(None)
+                    self._refresh_canvas(self.current)
+        elif action in ("caret-move",) and owner == "document":
+            # 页面焦点链上的 caret / 焦点移动（方向键 / Home / End /
+            # PageUp / PageDown）：映射为焦点前进 / 后退的近似
+            # （PageDown/Down 前进、PageUp/Up/Home 后退；Left/Right 依
+            # 顺序）。编辑层落地由 G03 覆盖层批次接入。
+            key = getattr(event, "keysym", "")
+            if key in ("Down", "Right", "PageDown", "End"):
+                self._tab_focus(True)
+            elif key in ("Up", "Left", "PageUp", "Home"):
+                self._tab_focus(False)
+        elif action in ("edit",) and owner == "address":
+            # 地址栏可打印字符输入（chrome 焦点）：交由 Tk 原生
+            # Entry 处理（fall-through），此处仅记录。
+            return
+        # 其余（drop / edit 在 document 无编辑层等）→ no-op。
+
+    def _install_g11_bindings(self) -> None:
+        """G11 — 把批次 35 :func:`install` 桥接进本 shell：在 root 上
+        装 ``<Key>`` 绑定，``get_router`` / ``dispatch`` 由本类提供。
+
+        与既有 G04 专门绑定共存：G11 handler 对已被专门绑定的键
+        （Tab / Return / Control 组合）返回 ``None``（fall-through，让
+        专门绑定接管），只对增量键返回 ``"break"``。``install`` 内部
+        的返回值契约（批次 35 :func:`binding_result`）已保证：
+        ``consumed=True`` → ``"break"``、``consumed=False`` → ``None``。
+        而 :meth:`_g11_dispatch` 对 Tab/Return/Control 这些 G04 已处理
+        的 action 不做动作（见上），双重触发的**执行**被消除——Tk 的
+        ``<Key>`` 与 ``<Tab>`` 绑定同一事件都会跑，但只有 G04 的
+        专门绑定真正移动焦点 / 导航。
+        """
+        from toy_browser.app import tk_keyboard_binding
+        # 分派日志（纯逻辑可查）
+        if not hasattr(self, "_g11_dispatch_log"):
+            self._g11_dispatch_log: list = []
+        tk_keyboard_binding.install(
+            self.root, self._g11_get_router, self._g11_dispatch)
 
     def _tab_focus(self, forward: bool = True) -> None:
         """P33.P1 — Tab / Shift+Tab: move the focus to the next/previous
