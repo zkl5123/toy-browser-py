@@ -5,6 +5,86 @@ All notable changes to toy-browser-py are documented in this file.
 The project follows a milestone scheme (P33 = project 33, R1–R5 =
 roadmap milestones).
 
+> **⚠️ 本文件自 R4 stage 7 起未逐批更新。** 第五轮（R5）实测与第六轮
+> 批次 1–41（R6）的逐项实施细节见 [ROADMAP R6 章节](ROADMAP.md) 与
+> [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。
+> 下方 R5 / R6 概览为回溯补录（2026-10-17 批次 41 之后补写）。
+
+---
+
+## R5 — 第五轮实测（2026-10-16）
+
+*完整回归 939/939；51 个 JS 案例规范化日志后相符；48 个边框盒探针对齐；
+CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光栅化迁移
+方案、逐项改进实施方案（G01–G11 / C01–C10 / P01–P13 / B01–B10）与
+百度真实网页访问评估。本文件不再逐节展开，详见
+[assessments/20261016-round5/](../assessments/20261016-round5/README.md)。*
+
+- 实测报告：`assessments/20261016-round5/docs/实测评估报告.md`
+- GUI 改进建议：`assessments/20261016-round5/docs/GUI改进建议.md`
+- GPU 光栅化迁移方案：`assessments/20261016-round5/docs/GPU光栅化迁移方案.md`
+- 逐项改进实施方案：`assessments/20261016-round5/docs/逐项改进实施方案.md`
+- 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
+- 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
+
+## R6 — 第六轮批次 1–41（2026-10-17，回溯补录）
+
+*按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
+落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
+loopback 网络 I/O 实装。完整回归 **1806/1806**（基线 939 + 批次 1–41
+新增 867）。P01–P13 GPU 系列未实施。逐项批次记录见
+[assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
+
+### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
+
+- 批次 1 P0：G01 / G02 / G04 / G05 / C01（滚动条 / 统一激活 / 焦点路由 /
+  滚轮 / Document 版本骨架）
+- 批次 2：G03 / G06 / G07 / C02 / C03
+- 批次 3：G07 / G08
+- 批次 4：G09
+- 批次 5：G07 网络 I/O 外移 + G08 可取消 transport
+- 批次 6：G10 诊断 / 工具栏纯逻辑
+- 批次 7：C01 完整 DocumentState / G11 键盘全流程
+- 批次 8：G09 step 3 统一历史入口
+- 批次 9：G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层
+- 批次 10：C04 表格 / 表单呈现模型 + G10 step 4/5 诊断区展开收起
+- 批次 11：C05 样式缓存键 / 失效范围 / 命中率统计
+- 批次 12：C06 布局树构建与增量布局
+- 批次 13：C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘
+- 批次 14：C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归
+- 批次 15：C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局
+- 批次 16：B03 脚本异常隔离 + B04 多变量声明 / 序列表达式
+- 批次 17：B01 统一导航控制器 + B05 location 导航语义
+- 批次 18：B06 字段编辑状态 + B07 统一激活 / 表单提交
+- 批次 19：B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归
+- 批次 20：B02 请求配置 / 页面可用性诊断 + B09 可读首屏
+
+### 批次 21–41（GUI 实际接线 + 网络 I/O 实装）
+
+- 批次 21–25：G11 键盘全流程路由层 / C01 公共 API GUI 接入 / G10 诊断区
+  面板 / G07 标签级编排 / C04 表单提交端到端 / G09 标签会话协议
+- 批次 26–30：G09 会话持久化损坏文件降级 / C03 几何冻结 / C05 按 Document
+  LRU 缓存 / C02 帧版本与读写所有权 / C06 全量 vs 增量布局差分
+- 批次 31–35：G03 脚本改值同步可解释性 / C02 填充混合图片迁移 /
+  C02 图片字形逐阶段迁移 + 缓冲池复用 / G03 原生覆盖层协议 /
+  G11 Tk 侧真实键盘绑定桥
+- 批次 36–40：G11 键盘绑定桥接入 gui.py / G09 标签会话协议层接入 gui.py
+  + Tk image 注册表修复 / G07 step 4 文档进程多核方案 / G03 原生覆盖层
+  Tk 接线 / C02 活显示 rasterize 切 CPUImage
+- 批次 41：B 系列活显示 GUI 接线 + 网络 I/O 实装（本地 loopback）——
+  `toy_browser/app/b_series_wiring.py`（BGuiWiring 统一分派 +
+  `start_local_http_server` + `network_io_smoke` +
+  `run_b_series_local_http`）+ `tests/test_b_series_gui_wiring.py`（23 条）
+
+### 未实施（留待后续批次）
+
+- P01–P13 GPU 光栅化迁移方案
+- 出站网络在线对照复测（TCP 443 阻塞中）
+- G07 doc-process 真实 spawn + 活显示验收
+- `gui.py` 活显示调用 BGuiWiring 实际接线
+- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage
+- TTF 字形正确性修复 + DPI / 抗锯齿优化
+
 ---
 
 ## R4 stage 7 — P2 性能与内存剖析（第四轮计划收尾）

@@ -8,6 +8,11 @@
 + 布局验证 position/z-index/transform/overflow/grid（P33.R4）
 + 增量布局 dirty 子树标记 + 区域级重光栅化 + 布局热点优化（P33.R5）。
 
+> **当前状态（2026-10-17 批次 41）**：第六轮批次 1–41 已全部落地
+> （G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
+> loopback 网络 I/O 实装），完整回归 **1806/1806**。P01–P13 GPU 系列
+> 未实施。详细批次记录见 [assessments/20261017-round6/README.md](assessments/20261017-round6/README.md)，
+> 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 功能状态说明（GPT P1-3）
 
@@ -28,9 +33,13 @@
 | 动画（@keyframes） | 部分支持 | 可解析并驱动帧推进，但不与 compositor 合成（玩具过渡引擎 `toy_browser/style/transition.py`） |
 | `scroll` / 滚动行为 | 基础实现 | 布局可计算滚动尺寸，GUI 支持全内容滚动（P33.R2），但 `scroll-behavior: smooth` 等细节未实现 |
 
-**本次验证**：2026 年 10 月 16 日模块目录整理后，939 项回归全部完成验证：沙箱内 927 项通过，12 项临时目录权限受限用例在常规权限下重跑通过；另有 4 项独立 CSS 测试通过。
-测试及编排集中在 `tests/`，根目录 `test.py` 为启动入口。
-见 [验证记录](assessments/structure-20261016/docs/验证记录.md)、[模块目录](docs/PROJECT_STRUCTURE.md) 和 [分轮评估文档](assessments/README.md)。
+**本次验证**：2026 年 10 月 17 日批次 41 之后，完整回归 **1806/1806**
+全部通过（基线 939 + 第六轮批次 1–41 新增 867）。测试及编排集中在
+`tests/`，根目录 `test.py` 为启动入口。历史验证记录（939 项基线）见
+[assessments/structure-20261016/docs/验证记录.md](assessments/structure-20261016/docs/验证记录.md)；
+模块目录见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)；
+分轮评估见 [assessments/README.md](assessments/README.md)；
+当前进度见 [docs/ROADMAP.md](docs/ROADMAP.md) R6.40–R6.50 各节。
 
 ## 架构
 
@@ -57,6 +66,7 @@ toy-browser-py/
 │   ├── <轮次>/docs/     按轮次分类的报告、建议与实施方案
 │   ├── 20261014*/       历史评估（其他日期同级保存）
 │   ├── 20261016-round5/ 第五轮实测资料
+│   ├── 20261017-round6/ 第六轮批次 1–41 实施记录
 │   ├── structure-20261016/ 本次目录迁移验证
 │   └── legacy/          早期评估资料
 ├── README.md
