@@ -386,6 +386,28 @@
 - **构造器帧 / 类方法帧函数级作用域**：`ToyClass.__call__` 的 ctor 帧显式 `frame._is_func = True` + 参数直写 `frame.scope`（与 `_make_func` / `_make_arrow` 的帧语义一致），修复 `new C(x, y)` 构造器参数 `ReferenceError`。
 - `eval_block` TDZ 预声明对 `MultiDecl` 逐项 `declare_block`。
 
+## 批次 17 完成的工作项（B01 统一导航控制器 + B05 location 导航语义，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| B01 统一导航控制器（启动 / 地址栏 / 链接同一入口 + 地址栏三分类 + 历史 / 序号 / 丢弃旧任务） | 完成 | `toy_browser/app/navigation.py`（`NavRequest` / `NavOutcome` / `NavigationController`） | `tests/test_navigation.py`（9 条 B01） |
+| B05 location 与文档 URL 的导航语义（assign / replace / reload / href + 相对解析 + 同文档 hash + 跳转预算） | 完成 | `toy_browser/app/navigation.py`（`Location` / `NavBudget` / `record_hop`） | `tests/test_navigation.py`（10 条 B05） |
+
+### B01 统一导航控制器（`navigation.py`）
+- `NavRequest`（B01 步骤 1）：源文档 `origin_url` / 目标 URL / 触发方式 `source`（launch / address / link / script / redirect / meta / bookmark / file）/ 是否替换历史 `replace` / 单调导航序号 `seq`（B10 丢弃旧任务）/ 失败时 `error` 类型。`kind()` 区分 web / file / about / local。
+- `NavigationController.dispatch`（B01 步骤 1 "本地文件、about 页面和 http/https 经同一分派入口"）：分配 `seq`、成功统一更新地址栏 / 当前 URL / 历史；失败保留请求目标与错误类型（**不**改历史游标、不静默改界面文本，B01 步骤 4）。`drop_stale(seq)` 供 B10 丢弃过期结果。
+- 地址栏三分类（B01 步骤 3）：绝对 URL 原样导航；相对 URL 经 `urljoin` 相对当前文档基址解析；普通文本走 `search_url_for` 搜索策略钩子（**独立产品策略**，不提供钩子时标记 `plain-text-no-search-policy`，不当本地文件）。
+- 历史模型：成功 assign 新建项并清前进栈；replace 原地替换当前项（游标不动）；`back` / `forward` 移动游标并同步 `current_url`（浏览器语义：URL 随前进 / 后退更新）。`current_url` 始终是"已提交文档"，供 `Location` 统一初始化来源。
+- 启动导航（B01 步骤 2）：`launch(initial_path)` 生成请求经同一 `dispatch` 入口提交，本地 / about / http 不分条件丢弃 URL。
+
+### B05 location 导航语义（`navigation.py`）
+- `Location`（B05 步骤 1）：替换 `web_api.make_location` 纯字典——宿主对象读取**当前已提交文档 URL**（`doc_url` 唯一初始化来源，核对 `host.url` / `host.doc_url` 不同使用位置）；`as_dict()` 保持旧键契约兼容。
+- `assign` / `replace` / `reload` / `set_href`（B05 步骤 2）：调用**转成导航任务**（返回 `NavRequest`，由控制器 `dispatch` 消费），不在 JS getter/setter 中同步递归加载整个网页。`replace` 替换历史项、`assign` 新建历史项（B05 步骤 3）。
+- 相对目标与最终响应 URL 用 stdlib `urljoin` 解析；`is_same_doc`（B05 步骤 3 "hash 同文档导航与跨文档加载分开"）：protocol + host + path(+query) 相同且 `ignore_fragment=True` 时 `#` 差异不算跨文档。
+- `NavBudget` + `record_hop`（B05 步骤 4）：HTTP 重定向 / 脚本跳转 / meta refresh 共用导航次数 + 取消标记；循环跳转超 `max_hops` 拒绝继续（`nav-budget-exhausted`）。
+- **百度 227 字节脚本页**（B05 验收）：`location.replace(location.href.replace("https://", "http://"))` 产生 `replace=True` 的导航任务并更新当前 URL，不再无声停在原 URL。
+- **纯逻辑核心**：不触碰 Tk / 网络 I/O；`web_api` 真实接线、meta refresh 解析、GUI 地址栏绑定留后续批次。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -414,15 +436,16 @@
   键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
   与协议公式。
 - 百度等真实网站可用性：B03（脚本异常隔离）+ B04（JS 多变量声明 /
-  序列表达式）纯逻辑核心已在批次 16 落地；剩余阻断项 B01（统一导航
-  控制器）、B05（location 语义）、B06–B10（编辑 / 激活 / 生命周期 /
-  首帧 / 异步取消）的纯逻辑部分留作后续批次。
+  序列表达式）纯逻辑核心已在批次 16 落地；B01（统一导航控制器）+
+  B05（location 导航语义）纯逻辑核心已在批次 17 落地；剩余阻断项
+  B02（请求配置 / 可用性诊断）、B06–B10（编辑 / 激活 / 表单 / 生命周期
+  / 首帧 / 异步取消）的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1331/1331 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31） |
+| `py -3 test.py` | **1350/1350 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19） |
 
 ## 批次 2 关键实现说明
 
@@ -594,8 +617,9 @@
   缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
-- 百度等真实网站可用性：B03 + B04 纯逻辑核心已落地（批次 16）；剩余
-  B01 / B05 / B06–B10 的纯逻辑部分留作后续批次。
+- 百度等真实网站可用性：B03 + B04 纯逻辑核心已落地（批次 16），
+  B01 + B05 纯逻辑核心已落地（批次 17）；剩余 B02 / B06–B10 的
+  纯逻辑部分留作后续批次。
 
 ## 回归数字
 

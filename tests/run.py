@@ -86,6 +86,7 @@ from test_cpu_image_formats import TESTS as _CPU_IMAGE_FORMATS_TESTS
 from test_inline_layout import TESTS as _INLINE_LAYOUT_TESTS
 from test_script_error import TESTS as _SCRIPT_ERROR_TESTS
 from test_js_multi_decl import TESTS as _JS_MULTI_DECL_TESTS
+from test_navigation import TESTS as _NAVIGATION_TESTS
 
 def main():
     tests = []
@@ -144,6 +145,7 @@ def main():
     tests.extend(_INLINE_LAYOUT_TESTS)
     tests.extend(_SCRIPT_ERROR_TESTS)
     tests.extend(_JS_MULTI_DECL_TESTS)
+    tests.extend(_NAVIGATION_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
