@@ -23,6 +23,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog
+from typing import Optional
 
 # P31 — pure stdlib: we do NOT require Pillow.  tkinter PhotoImage
 # supports PPM/PGM directly (P4 format).  We convert our Bitmap to
@@ -280,6 +281,7 @@ class PageInstance:
         root2 = _layout_mod.layout(styled, float(w), float(full_h))
         self._layout_root = root2
         dl = _paint_mod.emit_commands(root2)
+        self._last_dl = dl  # C02 批次 40 — 缓存 DL 供 CPUImage 活显示呈现
         bmp = _paint_mod.rasterize(dl, w, full_h)
         # P33.P1 — build the focus chain (tabindex order) for keyboard
         # navigation.  Walk the DOM tree and collect elements with
@@ -512,6 +514,7 @@ class PageInstance:
         root2 = _layout_mod.layout(styled, float(self.width), float(full_h))
         self._layout_root = root2
         dl = _paint_mod.emit_commands(root2)
+        self._last_dl = dl  # C02 批次 40 — 缓存 DL 供 CPUImage 活显示呈现
         bmp = _paint_mod.rasterize(dl, self.width, full_h)
         self.content_height = full_h
         self._full_bitmap = bmp
@@ -1253,6 +1256,61 @@ class TabBrowser:
         # 显式命名 + 绑定 root，使 image 名不依赖全局分配顺序。
         return tk.PhotoImage(master=self.root,
                              name=f"toytab_{idx}", data=data)
+
+    # ------------------------------------------------------------------
+    # C02 批次 40 — 活显示 rasterize 切到 CPUImage 连续 buffer
+    # ------------------------------------------------------------------
+    def _c02_rasterize_cpu_image(self, page) -> "Optional[CPUImage]":
+        """C02 批次 40 — 活显示呈现入口：把页面光栅化到
+        :class:`CPUImage`（RGB8 连续 buffer，不逐帧还原 int 列表）。
+
+        用批次 40 :func:`rasterize_to_cpu_image`（权威路径：跑已验证的
+        ``paint_engine.rasterize`` 得 Bitmap，再 ``from_bitmap`` 一次性
+        转 RGB8 buffer）；后续批次可切到 :func:`rasterize_direct`
+        （rect / border 直接落 buffer）进一步消除 scratch Bitmap。
+        取页面缓存的 ``_last_dl``（restate / initial load 时设置），
+        无缓存（未加载页面）时返回 None。
+        """
+        from toy_browser.rendering.rasterize_cpu import (
+            rasterize_to_cpu_image)
+        dl = getattr(page, "_last_dl", None)
+        if dl is None:
+            return None
+        full_h = page.content_height or page.height
+        return rasterize_to_cpu_image(dl, page.width, full_h)
+
+    def _c02_refresh_canvas_cpu(self, idx: int) -> None:
+        """C02 批次 40 — 活显示刷新：经 CPUImage 连续 buffer 呈现
+        （替代 ``_bitmap_to_photopix`` 的 per-frame int 列表还原）。
+
+        走 :meth:`_c02_rasterize_cpu_image` 得全页 CPUImage，再经
+        :meth:`CPUCanvas.clip_viewport` 裁到当前滚动视口（与
+        ``_clip_bitmap`` 语义一致但不还原 int 列表），``to_ppm_bytes``
+        供 Tk PhotoImage；显式 master + 名字（P37 G09 同款，防全局
+        image 注册表脏化）。
+        """
+        page = self.tabs[idx]
+        full = self._c02_rasterize_cpu_image(page)
+        if full is None:
+            self._refresh_canvas(idx)  # 回退到 Bitmap 路径
+            return
+        from toy_browser.rendering.rasterize_cpu import CPUCanvas
+        canvas = CPUCanvas(full)
+        viewport = canvas.clip_viewport(page.yoffset, page.height)
+        data = viewport.img.to_ppm_bytes()
+        photo = tk.PhotoImage(master=self.root,
+                              name=f"toytab_c02_{idx}", data=data)
+        self.canvas_var[idx] = photo
+        frame = self.page_frames.get(idx)
+        if frame is None:
+            return
+        label: tk.Label = frame._label
+        label.config(image=photo)
+
+    def _c02_stats(self) -> dict:
+        """C02 批次 40 — 诊断（当前 CPUImage 呈现路径可用）。"""
+        return {"cpu_image_path": True,
+                "module": "toy_browser.rendering.rasterize_cpu"}
 
     def _refresh_canvas(self, idx: int) -> None:
         page = self.tabs[idx]
