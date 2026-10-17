@@ -95,6 +95,7 @@ from test_request_config import TESTS as _REQUEST_CONFIG_TESTS
 from test_first_screen import TESTS as _FIRST_SCREEN_TESTS
 from test_keyboard_router import TESTS as _KEYBOARD_ROUTER_TESTS
 from test_gui_document_bridge import TESTS as _GUI_DOCUMENT_BRIDGE_TESTS
+from test_tab_document_orchestrator import TESTS as _TAB_DOC_ORCH_TESTS
 
 def main():
     tests = []
@@ -162,6 +163,7 @@ def main():
     tests.extend(_FIRST_SCREEN_TESTS)
     tests.extend(_KEYBOARD_ROUTER_TESTS)
     tests.extend(_GUI_DOCUMENT_BRIDGE_TESTS)
+    tests.extend(_TAB_DOC_ORCH_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
