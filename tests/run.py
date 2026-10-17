@@ -106,6 +106,7 @@ from test_style_cache_lru import TESTS as _STYLE_CACHE_LRU_TESTS
 from test_frame_ownership import TESTS as _FRAME_OWNERSHIP_TESTS
 from test_layout_diff import TESTS as _LAYOUT_DIFF_TESTS
 from test_caret_explain import TESTS as _CARET_EXPLAIN_TESTS
+from test_overlay_protocol import TESTS as _OVERLAY_PROTOCOL_TESTS
 
 def main():
     tests = []
@@ -184,6 +185,7 @@ def main():
     tests.extend(_FRAME_OWNERSHIP_TESTS)
     tests.extend(_LAYOUT_DIFF_TESTS)
     tests.extend(_CARET_EXPLAIN_TESTS)
+    tests.extend(_OVERLAY_PROTOCOL_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
