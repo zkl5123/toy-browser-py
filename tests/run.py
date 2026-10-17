@@ -84,6 +84,7 @@ from test_png_export import TESTS as _PNG_EXPORT_TESTS
 from test_policy_regression import TESTS as _POLICY_REGRESSION_TESTS
 from test_cpu_image_formats import TESTS as _CPU_IMAGE_FORMATS_TESTS
 from test_cpu_image_fill import TESTS as _CPU_IMAGE_FILL_TESTS
+from test_cpu_image_glyph import TESTS as _CPU_IMAGE_GLYPH_TESTS
 from test_inline_layout import TESTS as _INLINE_LAYOUT_TESTS
 from test_script_error import TESTS as _SCRIPT_ERROR_TESTS
 from test_js_multi_decl import TESTS as _JS_MULTI_DECL_TESTS
@@ -161,6 +162,7 @@ def main():
     tests.extend(_POLICY_REGRESSION_TESTS)
     tests.extend(_CPU_IMAGE_FORMATS_TESTS)
     tests.extend(_CPU_IMAGE_FILL_TESTS)
+    tests.extend(_CPU_IMAGE_GLYPH_TESTS)
     tests.extend(_INLINE_LAYOUT_TESTS)
     tests.extend(_SCRIPT_ERROR_TESTS)
     tests.extend(_JS_MULTI_DECL_TESTS)

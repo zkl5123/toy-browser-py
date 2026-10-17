@@ -636,6 +636,16 @@
 - C02 step 2"保留 `Bitmap.pixels` 兼容适配，分批迁移填充、混合、图片和字形到连续缓冲区"——批次 15 `cpu_image.py` / `cpu_image_formats.py` 已落地 `CPUImage`（RGB8 连续 buffer + `from_bitmap` / `to_ppm_bytes`）+ `FormatConverter`（RGBA8/BGRA8→RGB8 批量转换 + `composite_alpha`）+ `FrameImage`（帧版本 + 所有权，批次 29 进一步固化），本批补**迁移执行层**：`fill_rect_rgb8`（把 `Bitmap.fill_rect` 语义——越界 clamp / 透明跳过 / 不透明快路径 / 半透明逐像素 `blend_over`——直接落到 RGB8 连续 buffer，不还原 int 列表）；`blit_rgba8_over_rgb8`（RGBA8 图片/字形 mask alpha 混合进 RGB8 目标，走 `composite_alpha` 同公式）；`blit_rgba8_over_rgba8`（RGBA8→RGBA8 层叠，保留目标 alpha 通道）；`blend_pixel_rgba8`（单像素 RGBA src-over-dst，与 `Color.blend_over` 同语义扩展 4 通道）；`fill_matches_bitmap`（C02 验收"逐像素一致"差分核对：Bitmap int 列表 vs CPUImage buffer，空 = 一致）。
 - **纯逻辑核心**：不触碰 tkinter / 网络；仅 stdlib + 批次 15 `CPUImage` / `cpu_image_formats`。活显示批次 `paint_engine.rasterize` 切到 `CPUImage` 后逐阶段用本模块替代 `bmp.fill_rect` / 图片混合（先填充/混合，再图片/字形），不再每帧还原大 int 列表（C02 step 2 目标）。
 
+## 批次 33 完成的工作项（C02 step 2 图片/字形逐阶段迁移 + 缓冲池复用治理，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C02 step 2 "图片和字形"迁移 + step 4 "缓冲池按尺寸复用"可观测 | 完成 | `toy_browser/rendering/cpu_image_glyph.py`（`paint_image_nearest` / `paint_glyph_mask` / `ImagePoolPolicy`） | `tests/test_cpu_image_glyph.py`（17 条） |
+
+### C02 step 2 图片/字形 + 池复用治理（`cpu_image_glyph.py`）
+- C02 step 2"分批迁移填充、混合、图片和字形到连续缓冲区" + step 4"缓冲池按尺寸复用"——批次 32 `cpu_image_fill.py` 已落地填充/混合/图片 blit 执行层（`fill_rect_rgb8` / `blit_rgba8_over_rgb8` / `fill_matches_bitmap`），本批补"图片最近邻缩放 + 字形 mask 混合"两个迁移入口 + 池复用**可观测治理**：`paint_image_nearest`（复刻 `paint_engine._paint_img_pixels` 的最近邻缩放 + 越界 clamp + 截断 data URI 防御 P3.1/P19，但直接写 `CPUImage` RGB8 连续 buffer，不还原 0xRRGGBB int 列表）；`paint_glyph_mask`（CPU 字形 mask 0–255 覆盖率 alpha 混合进 RGB8 buffer，与批次 12/15 字形栅格语义一致，P11 不重复相乘）；`ImagePoolPolicy`（批次 15 `ImagePool` 之上的复用治理：hit/miss/evicted 计数 + `hit_rate` + `total_created` + `size_distribution` + `to_report`，活显示批次诊断区可证明池在复用而非每帧新建）。
+- **纯逻辑核心**：不触碰 tkinter / 网络；仅 stdlib + 批次 15 `CPUImage`/`ImagePool` + 批次 32 `fill_matches_bitmap`。图片/字形与 `Bitmap` 参考路径逐像素一致（`fill_matches_bitmap` 直接回归）。
+
 ## 剩余限制（下一批次）
 
 - G11 Tk 侧键盘绑定（纯逻辑路由层已在批次 21 落地，Tk 真实绑定 / 焦点画布滚动留后续）、
@@ -668,7 +678,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1647/1647 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21） |
+| `py -3 test.py` | **1664/1664 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17） |
 
 ## 批次 2 关键实现说明
 
