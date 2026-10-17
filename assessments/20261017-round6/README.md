@@ -408,6 +408,27 @@
 - **百度 227 字节脚本页**（B05 验收）：`location.replace(location.href.replace("https://", "http://"))` 产生 `replace=True` 的导航任务并更新当前 URL，不再无声停在原 URL。
 - **纯逻辑核心**：不触碰 Tk / 网络 I/O；`web_api` 真实接线、meta refresh 解析、GUI 地址栏绑定留后续批次。
 
+## 批次 18 完成的工作项（B06 字段编辑状态 + B07 统一激活 / 表单提交，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| B06 字段编辑状态（稳定 DOM 身份 + 键盘路由三分 + 局部刷新） | 完成 | `toy_browser/app/field_editing.py`（`FieldRegistry` / `key_to_input_event`，复用 G03 `EditorState`） | `tests/test_field_editing.py`（9 条） |
+| B07 统一激活、表单提交与链接跳转（纯逻辑核心） | 完成 | `toy_browser/app/activation.py`（`ActivateDecision` / `FormField` / `activate_element` / `build_form_submission` / `parse_link_target`） | `tests/test_activation.py`（16 条） |
+
+### B06 字段编辑状态（`field_editing.py`）
+- `FieldRegistry`（B06 步骤 1 "以稳定 DOM 身份关联"）：按 `node_id` 索引字段编辑状态（不依赖可能变化的遍历下标）；`register` / `get` / `untrack`；只读 / 禁用态在 `apply_key` 前拦截（不修改 value）。
+- 键盘路由三分（B06 步骤 2）：`route_key` 按焦点把按键归 `address`（地址栏）/ `edit`（原生编辑层，委托焦点字段 `EditorState`）/ `page`（焦点 / 激活）；`key_to_input_event` 把可打印键 → `insertText`、Backspace / Delete / Enter → 对应 inputType，功能键（Tab / 方向 / Esc）→ `None`（归页面）。
+- 值与 DOM 同步（B06 步骤 3）：`set_value` / `sync_value` 复用 `EditorState.sync_from_dom`（编辑 / 非编辑两态保留可解释 caret）；IME 三阶段与密码遮罩复用 G03。
+- 局部刷新（B06 步骤 4 "编辑变化触发所需事件和可合并的局部刷新，禁止一次输入引发全页面同步下载和重建"）：`dirty_field_ids` 只报告被改字段；`flush_refresh` 取走并复位。
+
+### B07 统一激活、表单提交与链接跳转（`activation.py`）
+- `activate_element`（B07 步骤 1 "鼠标、Enter/Space 按控件类型进入同一默认动作；先派发可取消事件"）：可取消 `click`（`ClickEvent.default_prevented` 阻断导航 / 提交，B07 验收 "preventDefault"）；链接 → 导航决策；submit / 命名 button / form 内 Enter → 提交决策；其余可聚焦控件 → 焦点动作。
+- `FormField.is_successful_control`（B07 步骤 2 "form owner、提交按钮、successful controls、禁用/未命名字段排除"）：禁用 / 未命名字段一律排除；checkbox / radio 仅 `checked=True` 时计入；重复字段名作为重复 `k=v` 对。
+- `parse_link_target`（B07 步骤 3 "action=/s、相对 a href、协议相对 URL 和 <base> 都交给文档基址解析"）：协议相对补 base scheme、绝对 URL 不相对化、相对经 `urljoin`；`target=_blank` 记录为新标签、`javascript:` / `mailto:` / `data:` / `ftp:` 标 `scheme_ok=False`（明确处理不静默）。
+- `build_form_submission`（B07 步骤 4 "submit/requestSubmit 与默认 Enter 提交差异"）：GET 查询进 URL、POST 查询进 body（urlencoded）；`requestSubmit` / Enter 走必填校验（空 required 阻断），`form.submit()` 跳过校验。
+- 不硬编码识别站点 ID（B07 步骤 4 "脚本驱动 textarea/button 仍须执行其实际事件逻辑"）：事件钩子（`on_click`）由 GUI / 脚本层注入，本模块只提供"事件 → 决策"的通用纯逻辑。
+- **纯逻辑核心**：表单字段序列化复用批次 1 `browser.py` 同公式；GUI 按键 / 鼠标接线、`<base>` 实际解析、活显示验收留后续批次。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -437,15 +458,16 @@
   与协议公式。
 - 百度等真实网站可用性：B03（脚本异常隔离）+ B04（JS 多变量声明 /
   序列表达式）纯逻辑核心已在批次 16 落地；B01（统一导航控制器）+
-  B05（location 导航语义）纯逻辑核心已在批次 17 落地；剩余阻断项
-  B02（请求配置 / 可用性诊断）、B06–B10（编辑 / 激活 / 表单 / 生命周期
-  / 首帧 / 异步取消）的纯逻辑部分留作后续批次。
+  B05（location 导航语义）纯逻辑核心已在批次 17 落地；B06（字段编辑
+  状态）+ B07（统一激活 / 表单提交）纯逻辑核心已在批次 18 落地；
+  剩余阻断项 B02（请求配置 / 可用性诊断）、B08–B10（资源与事件
+  生命周期 / 首帧 / 异步取消）的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1350/1350 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19） |
+| `py -3 test.py` | **1375/1375 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25） |
 
 ## 批次 2 关键实现说明
 
@@ -618,8 +640,8 @@
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
 - 百度等真实网站可用性：B03 + B04 纯逻辑核心已落地（批次 16），
-  B01 + B05 纯逻辑核心已落地（批次 17）；剩余 B02 / B06–B10 的
-  纯逻辑部分留作后续批次。
+  B01 + B05 纯逻辑核心已落地（批次 17），B06 + B07 纯逻辑核心已落地
+  （批次 18）；剩余 B02 / B08–B10 的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
