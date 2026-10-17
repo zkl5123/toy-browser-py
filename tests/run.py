@@ -89,6 +89,8 @@ from test_js_multi_decl import TESTS as _JS_MULTI_DECL_TESTS
 from test_navigation import TESTS as _NAVIGATION_TESTS
 from test_field_editing import TESTS as _FIELD_EDITING_TESTS
 from test_activation import TESTS as _ACTIVATION_TESTS
+from test_document_context import TESTS as _DOCUMENT_CONTEXT_TESTS
+from test_load_phases import TESTS as _LOAD_PHASES_TESTS
 
 def main():
     tests = []
@@ -150,6 +152,8 @@ def main():
     tests.extend(_NAVIGATION_TESTS)
     tests.extend(_FIELD_EDITING_TESTS)
     tests.extend(_ACTIVATION_TESTS)
+    tests.extend(_DOCUMENT_CONTEXT_TESTS)
+    tests.extend(_LOAD_PHASES_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

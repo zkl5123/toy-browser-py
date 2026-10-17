@@ -429,6 +429,27 @@
 - 不硬编码识别站点 ID（B07 步骤 4 "脚本驱动 textarea/button 仍须执行其实际事件逻辑"）：事件钩子（`on_click`）由 GUI / 脚本层注入，本模块只提供"事件 → 决策"的通用纯逻辑。
 - **纯逻辑核心**：表单字段序列化复用批次 1 `browser.py` 同公式；GUI 按键 / 鼠标接线、`<base>` 实际解析、活显示验收留后续批次。
 
+## 批次 19 完成的工作项（B08 资源与事件生命周期 + B10 异步取消与用户任务级回归，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| B08 DocumentContext + 资源三态 + 脚本调度（纯逻辑核心） | 完成 | `toy_browser/app/document_context.py`（`DocumentContext` / `ResourceRecord` / `ScriptScheduler`） | `tests/test_document_context.py`（15 条） |
+| B10 阶段状态机 + 取消 + 用户任务级回归骨架（纯逻辑核心） | 完成 | `toy_browser/app/load_phases.py`（`PhaseTracker` / `PhaseBudget` / `UserTaskRunner` / `TaskRepro`） | `tests/test_load_phases.py`（13 条） |
+
+### B08 资源与事件生命周期（`document_context.py`）
+- `DocumentContext`（B08 步骤 1 "使用同一 DocumentContext 保存最终 URL、基址、策略、Cookie、资源表、任务版本与错误列表，消除 CLI/GUI 重复拼接的状态差异"）：`final_url` / `base_url` / `policy` / `cookies` / `task_version` / `resources` / `errors` 合一；`bump_task_version` + `is_stale_task` 与 C01 任务版本对齐（B10 复用旧结果丢弃）。
+- `ResourceRecord`（B08 步骤 2 "为资源记录类型、请求/解码结果、使用方和阻断原因；区分'下载 200''成功解码''应用到页面'"）：三态 `downloaded` / `decoded` / `applied` + `blocked_reason`；`usable` 属性 = 真正 applied（"33 个 200"不能代替渲染验收，B08 验收）。
+- 资源三态登记入口（B08 步骤 2/4）：`mark_downloaded` / `mark_decoded` / `mark_applied` / `mark_blocked` 各自记录阻断原因并登记 `errors`；`register_resource` 按 url 幂等。
+- `ScriptScheduler`（B08 步骤 3 "对动态插入的 script/link/img、async/defer、CSS 依赖与 DOMContentLoaded/load 建立最小一致模型；任务和微任务顺序用专门 fixture 对照，不能仅靠一次统一 flush 近似整站行为"）：按脚本组别（普通=文档序 / async=就绪序 / defer / doc_ready / disabled）稳定排序；`mark_dom_content_loaded` / `mark_load` 生命周期门控；未启用脚本不执行。
+- 可解释报告（B08 步骤 5 "能解释完整首页为何仍隐藏或缺失内容，网络成功数与页面使用结果分别可查"）：`resource_completeness`（total / downloaded / decoded / applied / usable / blocked）、`visibility_report`（列出未 applied 资源 + 阻断原因）、`usage_report`（合并视图 + 脚本错误列表）。
+
+### B10 消除加载阻塞 + 用户任务级回归（`load_phases.py`）
+- `PhaseTracker`（B10 步骤 1 "每次导航携带版本号，取消/切标签后旧结果不得覆盖新页面" + 步骤 2 "提供连接、下载、解析、执行、布局、绘制阶段状态和取消入口"）：六阶段顺序状态机（`connect→download→parse→execute→layout→present`），前置未完成时阻断；`nav_version` + `drop_stale` / `accept_phase` 旧版本结果丢弃；`cancel` 把 running 阶段翻 cancelled、后续结果拒绝；`progress` / `all_done` / `status_label`（区分 complete / cancelled / budget-exhausted / blocked / in-progress）。
+- `PhaseBudget`（B10 步骤 2 + B08 步骤 4 "保持响应大小、请求数、时间和内存预算"）：`max_requests` / `max_bytes` / `max_seconds` / `max_mem`；`exhausted` + `exhaust_reason`（预算耗尽与网站拒绝访问分别提示，避免持续显示 Loaded）。
+- `UserTaskRunner`（B10 步骤 4 "在线任务固定为'首页可用 → 输入 → Enter/按钮搜索 → 结果可读 → 结果跳转 → 返回'，被前置问题阻断的步骤明确标为 blocked"）：固定六步；`run_step` 接受纯逻辑钩子，`TaskBlocked` → `blocked`（记录原因），前置被阻断时后续步骤级联 `skipped`；`summary` 输出失败分布。
+- `TaskRepro`（B10 步骤 5 "首次修复后先完成一次闭环，再进行至少 3 次独立会话复测，并扩充相同语义的小站和本地页；记录失败分布，不以单站或单次成功声称达到真实浏览器标准"）：`min_sessions` 默认 3；`failure_distribution` 跨会话统计各步骤 ok/blocked/skipped 计数；`report` 输出可复核完整证据。
+- **纯逻辑核心**：不触碰 Tk / 网络 I/O；`net.py` 资源加载器接线、GUI 任务队列、本地 HTTP 服务 fixture、活显示验收留后续批次。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -460,14 +481,15 @@
   序列表达式）纯逻辑核心已在批次 16 落地；B01（统一导航控制器）+
   B05（location 导航语义）纯逻辑核心已在批次 17 落地；B06（字段编辑
   状态）+ B07（统一激活 / 表单提交）纯逻辑核心已在批次 18 落地；
-  剩余阻断项 B02（请求配置 / 可用性诊断）、B08–B10（资源与事件
-  生命周期 / 首帧 / 异步取消）的纯逻辑部分留作后续批次。
+  B08（资源与事件生命周期）+ B10（异步取消 / 用户任务级回归）纯逻辑
+  核心已在批次 19 落地；剩余阻断项 B02（请求配置 / 可用性诊断）、
+  B09（可读首屏 / 字体与几何）的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1375/1375 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25） |
+| `py -3 test.py` | **1403/1403 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28） |
 
 ## 批次 2 关键实现说明
 
@@ -641,7 +663,8 @@
   键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
 - 百度等真实网站可用性：B03 + B04 纯逻辑核心已落地（批次 16），
   B01 + B05 纯逻辑核心已落地（批次 17），B06 + B07 纯逻辑核心已落地
-  （批次 18）；剩余 B02 / B08–B10 的纯逻辑部分留作后续批次。
+  （批次 18），B08 + B10 纯逻辑核心已落地（批次 19）；剩余 B02 / B09
+  的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
