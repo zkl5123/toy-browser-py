@@ -82,6 +82,8 @@ from test_display_list import TESTS as _DISPLAY_LIST_TESTS
 from test_dirty_region import TESTS as _DIRTY_REGION_TESTS
 from test_png_export import TESTS as _PNG_EXPORT_TESTS
 from test_policy_regression import TESTS as _POLICY_REGRESSION_TESTS
+from test_cpu_image_formats import TESTS as _CPU_IMAGE_FORMATS_TESTS
+from test_inline_layout import TESTS as _INLINE_LAYOUT_TESTS
 
 def main():
     tests = []
@@ -136,6 +138,8 @@ def main():
     tests.extend(_DIRTY_REGION_TESTS)
     tests.extend(_PNG_EXPORT_TESTS)
     tests.extend(_POLICY_REGRESSION_TESTS)
+    tests.extend(_CPU_IMAGE_FORMATS_TESTS)
+    tests.extend(_INLINE_LAYOUT_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:

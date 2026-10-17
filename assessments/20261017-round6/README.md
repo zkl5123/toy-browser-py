@@ -341,6 +341,26 @@
   排空错误记录到 `drain_errors`（对齐浏览器事件循环：宏任务后排空
   微任务）。
 
+## 批次 15 完成的工作项（C02 连续像素缓冲区阶段 2–3 + C03 行内格式化与文字布局，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C02 多格式 + padding + 帧版本所有权 | 完成 | `toy_browser/rendering/cpu_image_formats.py`（`FrameImage` frame_version / owner / publish / snapshot + `bytes_per_pixel` / `padded_stride` / `row_offset` + `FormatConverter` 批量转换 / 透明合成） | `tests/test_cpu_image_formats.py`（13 条） |
+| C03 行内格式化 + 文字布局 | 完成 | `toy_browser/rendering/inline_layout.py`（`InlineRun` / `LineBox` / `PlacedRun` + `WhitespaceFolder` 空白折叠 + `InlineLayout` 共享 advance / 可断点分行 / 基线定位 + `line_baseline`） | `tests/test_inline_layout.py`（14 条） |
+
+### C02 连续像素缓冲区阶段 2–3（`cpu_image_formats.py`）
+- **多格式 + padding**（C02 步骤 1/3）：`bytes_per_pixel`（RGB8=3 / RGBA8=4 / BGRA8=4）、`padded_stride(width, fmt, align)` 行 padding 对齐（GPU 常用 4/32/64 字节对齐）、`row_offset` 行首偏移。
+- **帧版本 + 读写所有权**（C02 步骤 4）：`FrameImage` 带 `frame_version` + `owner`；写侧 `bump_version` 改图后 `publish` 才允许 UI 读；`can_read()` 在写侧仍持所有权 / 版本不一致时 False；`snapshot()` 返回已发布版本的冻结字节（UI 持有期间写侧不得改同一 buffer）。
+- **批量格式转换**（C02 步骤 3 "不在 Python 中对每像素创建临时 bytes"）：`FormatConverter.rgba_to_rgb8` / `bgra_to_rgb8` / `rgb8_to_rgba` 整块转换；`composite_alpha` 透明合成与 `paint.Color.blend_over` 同公式（C02 验收 "透明图片逐像素一致"）。
+
+### C03 行内格式化与文字布局（`inline_layout.py`）
+- `InlineRun`（C03 步骤 2）：同一行内格式化上下文的一条文本片段，携带共享字体度量（font_px/family/weight）+ 样式标记；不把每个 span 当独立块或重复收集父子文本。
+- `WhitespaceFolder` + `collapse_runs`（C03 步骤 3）：按 white-space 模式（normal/nowrap/pre）折叠空白，保留跨节点（相邻 run 之间）的空白状态，行首/行尾空白去掉。
+- `SimpleMetrics` / `FontMetrics`（C03 步骤 3/6 "先使用共享字体度量计算 advance"）：`advance` / `line_metrics`（ascent/descent），真实 TTF 复用现有 font/ttf_font（C03 步骤 6，不为 GPU 引入第二套排版逻辑）。
+- `InlineLayout.layout`（C03 步骤 3/4/5）：空白折叠 → 共享 advance 累加 → 按可断点（空格 / CJK / word-break:break-all）分行 → 每行按 ascent/descent + line-height 计算基线，把字符定位进 `LineBox.runs`（`PlacedRun` 序列）；绘制阶段直接消费已定位的行盒（"单一排版数据源"，C03 步骤 5 "不再独立换行或重新测量"）。
+- `line_baseline`（C03 步骤 4）：未设 line-height 时基线 = y + ascent、行高 = ascent + descent；设 line-height 时基线居中行盒。
+- `runs_overlap`（C03 验收 "各片段按顺序且不重叠"）：两行 y / x 区间相交判定（用作回归断言，不应发生重叠）。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -351,8 +371,10 @@
 - **C04 表单提交端到端**（C04 步骤 4/5）：提交复用现有
   `browser.py` serialize/validate/form_submit，端到端 GET/POST 任务
   需活显示环境，留后续。
-- **C03 行内格式化与文字布局**：需先冻结 Edge 几何与截图
-  （C03 step 1），本批未执行该冻结步骤。
+- **C03 几何冻结 + 实际排版接入**：本批落行内格式化 / 文字布局纯逻辑
+  核心（InlineRun / LineBox / 空白折叠 / 共享 advance / 基线定位）；Edge
+  几何冻结（C03 step 1）与 paint_engine 实际排版接入需活显示环境验收，
+  留后续。
 - **G07 文档进程方案**：可取消网络工作单元 + 线程初版；把 CPU
   工作（DOM / 布局）移入文档进程是后续（纯 Python 线程无多核收益）。
 
@@ -373,7 +395,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1273/1273 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44） |
+| `py -3 test.py` | **1300/1300 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27） |
 
 ## 批次 2 关键实现说明
 

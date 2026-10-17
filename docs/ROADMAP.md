@@ -2959,12 +2959,49 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   接入需活显示 / 在线环境验收，留后续。
 
 ---
+### R6.24 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化与文字布局（纯逻辑核心，批次 15）
+
+- [x] **C02 多格式 + padding + 帧版本所有权**（`toy_browser/rendering/`
+  `cpu_image_formats.py` `FrameImage` / `bytes_per_pixel` /
+  `padded_stride` / `row_offset` / `FormatConverter`）：RGB8/RGBA8/BGRA8
+  每像素字节数、行 padding 对齐（GPU 常用 4/32/64 字节）、行首偏移；
+  `FrameImage` 带 `frame_version` + `owner`，写侧 `bump_version` 改图后
+  `publish` 才允许 UI 读（`can_read()` 在写侧仍持所有权 / 版本不一致时
+  False），`snapshot()` 返回已发布版本的冻结字节（UI 持有期间写侧不得
+  改同一 buffer）。
+- [x] **C02 批量格式转换 + 透明合成**（`cpu_image_formats.py`
+  `FormatConverter.rgba_to_rgb8` / `bgra_to_rgb8` / `rgb8_to_rgba` +
+  `composite_alpha`）：整块转换不在 Python 中对每像素创建临时 bytes
+  （C02 步骤 3），`composite_alpha` 与 `paint.Color.blend_over` 同公式
+  （C02 验收 "透明图片逐像素一致"）。
+- [x] **C03 行内片段 + 已定位行盒**（`toy_browser/rendering/`
+  `inline_layout.py` `InlineRun` / `LineBox` / `PlacedRun`）：行内
+  格式化上下文的一条文本片段（共享字体度量，不把每个 span 当独立块或
+  重复收集父子文本）；`LineBox` 携带已定位片段（`PlacedRun` 序列，
+  含 x / 基线 / 行高），绘制阶段直接消费（"单一排版数据源"，C03 步骤 5
+  "不再独立换行或重新测量"）。
+- [x] **C03 空白折叠 + 共享 advance + 可断点分行 + 基线定位**
+  （`inline_layout.py` `WhitespaceFolder` / `collapse_runs` /
+  `SimpleMetrics` / `InlineLayout` / `line_baseline`）：按
+  white-space 模式（normal/nowrap/pre）折叠空白、保留跨节点空白状态、
+  行首 / 行尾空白去掉；`InlineLayout.layout` 共享 advance 累加（先使用
+  共享字体度量计算 advance，C03 步骤 3/6），按可断点（空格 / CJK /
+  word-break:break-all）分行，每行按 ascent/descent + line-height
+  计算基线（`line_baseline`，未设时基线 = y + ascent、行高 =
+  ascent + descent；设 line-height 时基线居中行盒）。
+- 回归：`tests/test_cpu_image_formats.py`（13 条）+
+  `tests/test_inline_layout.py`（14 条）。
+- 说明：本批为纯逻辑判定层；C02 实际光栅化（填充 / 混合 / 图片 /
+  字形逐阶段迁移到连续缓冲区）与 C03 Edge 几何冻结（C03 step 1）+
+  paint_engine 实际排版接入需活显示环境验收，留后续。
+
+---
 
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归）已完成（**1273/1273** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局）已完成（**1300/1300** 测试通过）。
 
-R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）、批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）与批次 14（C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归纯逻辑核心）已完成；批次 15（G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / C03 行内格式化 / C02 连续缓冲区迁移 / B 系列）按实施文档依赖顺序继续。
+R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）、批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）与批次 14（C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归纯逻辑核心）已完成；批次 15（C02 连续像素缓冲区阶段 2–3 + C03 行内格式化与文字布局纯逻辑核心）已完成；后续批次（G11 Tk 键盘绑定 / G10 Tk 诊断区绑定 / G09 Tk 侧路由 / G07 文档进程 / C01 包装层 GUI 接入 / B 系列真实网站阻断项）按实施文档依赖顺序继续。
 
 每项完成后：
 1. 运行 `python test.py` 确认无回归。
