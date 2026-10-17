@@ -582,6 +582,17 @@
 - **指纹 / 序列化**：`fingerprint`（SHA-1，"是否已冻结 / 被改动"判据）+ `save_frozen` / `load_frozen`（JSON 落盘，供后续批次 / Edge 对照复测做对照目标）；`FrozenGeometry.from_json` 往返保字段。
 - **纯逻辑**：输入是批次 15 排版产物 `LineBox` 序列，不触碰 tkinter / 显示环境 / 网络；"Edge 截图"本身留活显示批次，本批冻结的是 `LineBox` 几何量（Edge 对照复测时把 Edge 几何喂进 `capture_geometry`，接口一致）。
 
+## 批次 28 完成的工作项（C05 step 5 按 Document 管理的带上限 LRU 缓存容器，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| C05 step 5 按 Document 管理的带上限 LRU 缓存容器（不靠 Python id 识别身份） | 完成 | `toy_browser/app/style_cache_lru.py`（`StyleCache` / `DocumentCacheManager` / `content_cache_key` / `_hashable` / `content_key_fingerprint`） | `tests/test_style_cache_lru.py`（20 条） |
+
+### C05 step 5 按 Document 管理的带上限 LRU 缓存容器（`style_cache_lru.py`）
+- C05 step 5"所有长期缓存有上限并按 Document 管理；节点释放后不依赖可复用的 Python id 单独识别身份"——批次 11 `style_cache.py` 已落地**键 / 失效范围 / 命中率 / 预算**（`StyleCacheKey` / `invalidate_scope` / `HitRateStats` / `document_cache_budget`），本批补**容器层**：`StyleCache`（单文档 LRU，带上限 4096 与 `css.py` `_CANDIDATE_RULES_CACHE_MAX` 一致，`OrderedDict` move-to-end LRU + `evicted_count` 诊断）+ `DocumentCacheManager`（按 `document_id` 管理多个 `StyleCache`：`get_cache` 取/建、`drop_document` 关标签释放、`total_size` / `drop_all` 全局诊断；多标签各持独立缓存不串页，G09 验收同语义）。
+- `content_cache_key`：把节点**内容标识**（tag + classes + style_revision + element_id）归一成可哈希键，**绝不**用 `id(对象)`——节点删除后再分配新对象 `id` 变但内容键不变（C05 验收"节点删除后再分配"冷/热结果相同）；`identity_includes_id` 对应 `css.py` P34.5 标志（False 时键不含 id，避免"每节点唯一 id"100% 未命中）；`content_key_fingerprint` 确定性指纹（诊断 / 日志）。
+- **纯逻辑核心**：不触碰 tkinter / 网络；仅 stdlib `collections`。css.py 活显示批次把 candidate-rule 缓存迁到 `DocumentCacheManager` 时直接调用，不另写一套。
+
 ## 剩余限制（下一批次）
 
 - G11 Tk 侧键盘绑定（纯逻辑路由层已在批次 21 落地，Tk 真实绑定 / 焦点画布滚动留后续）、
@@ -614,7 +625,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1568/1568 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14） |
+| `py -3 test.py` | **1588/1588 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20） |
 
 ## 批次 2 关键实现说明
 
