@@ -101,6 +101,7 @@ from test_tab_session import TESTS as _TAB_SESSION_TESTS
 from test_session_recovery import TESTS as _SESSION_RECOVERY_TESTS
 from test_geometry_freeze import TESTS as _GEOMETRY_FREEZE_TESTS
 from test_style_cache_lru import TESTS as _STYLE_CACHE_LRU_TESTS
+from test_frame_ownership import TESTS as _FRAME_OWNERSHIP_TESTS
 
 def main():
     tests = []
@@ -174,6 +175,7 @@ def main():
     tests.extend(_SESSION_RECOVERY_TESTS)
     tests.extend(_GEOMETRY_FREEZE_TESTS)
     tests.extend(_STYLE_CACHE_LRU_TESTS)
+    tests.extend(_FRAME_OWNERSHIP_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
