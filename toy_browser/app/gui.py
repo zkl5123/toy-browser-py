@@ -1014,6 +1014,15 @@ class TabBrowser:
         self._ensure_page_frame(0)
         self._show_tab(0)
 
+        # G03 — 批次 39：原生覆盖层控制器（input/textarea 的活动编辑
+        # 层；位置同步 / 撤销经批次 34 OverlayPlacement 协议驱动，
+        # 编辑逻辑经批次 7/9 EditorState）。覆盖层在激活表单控件时
+        # 由 :meth:`_g03_ensure_overlay` 附着；G11 路由经
+        # :meth:`_g11_get_router` 的 focus_in_edit / has_active_field
+        # 反映覆盖层活动状态（编辑层按键路由到覆盖层）。
+        from toy_browser.app.editor_overlay import EditorOverlayController
+        self._g03_overlay = EditorOverlayController()
+
         # --- bindings ---
         self.root.bind("<Control-l>", lambda e: self._focus_address())
         self.root.bind("<Control-t>", lambda e: self._new_tab())
@@ -1547,14 +1556,19 @@ class TabBrowser:
         """G11 — 每次按键构造当前焦点状态的 :class:`KeyboardRouter`。
 
         从 :meth:`_current_focus_owner` 取 chrome / document / editor /
-        dialog 域。GUI 过渡版尚无原生编辑层（G03 覆盖层批次才落地），
-        故 ``focus_in_edit`` / ``has_active_field`` 均为 False —— 编辑
-        层按键届时由覆盖层批次接入。
+        dialog 域。**G03 批次 39**：GUI 过渡版已有原生编辑覆盖层
+        （:meth:`_g03_ensure_overlay` 附着），故 ``focus_in_edit`` /
+        ``has_active_field`` 反映当前覆盖层活动状态——有活动编辑
+        覆盖层时编辑层按键（可打印 / caret / Escape）路由到覆盖层
+        而非 document 焦点链。
         """
         from toy_browser.app.keyboard_router import KeyboardRouter
         owner = self._current_focus_owner()
-        return KeyboardRouter(focus_owner=owner, focus_in_edit=False,
-                              has_active_field=False)
+        ov = getattr(self, "_g03_overlay", None)
+        in_edit = bool(ov and ov.active)
+        has_field = bool(ov and ov.state is not None and ov.state.value is not None)
+        return KeyboardRouter(focus_owner=owner, focus_in_edit=in_edit,
+                              has_active_field=has_field)
 
     def _g11_dispatch(self, decision, event) -> None:
         """G11 — 把批次 21 :class:`KeyDecision` 分派到既有 G04 动作。
@@ -1589,20 +1603,51 @@ class TabBrowser:
                     page.set_focus(None)
                     self._refresh_canvas(self.current)
         elif action in ("caret-move",) and owner == "document":
+            # 编辑层（G03 批次 39）：有活动编辑覆盖层时，caret-move
+            # 路由到覆盖层（Left/Right/Home/End 移动 caret）而非
+            # 页面焦点链。
+            ov = getattr(self, "_g03_overlay", None)
+            if ov is not None and ov.active:
+                key = getattr(event, "keysym", "")
+                if key == "Left":
+                    self._g03_dispatch("move-left")
+                elif key == "Right":
+                    self._g03_dispatch("move-right")
+                elif key == "Home":
+                    self._g03_dispatch("move-home")
+                elif key == "End":
+                    self._g03_dispatch("move-end")
+                return
             # 页面焦点链上的 caret / 焦点移动（方向键 / Home / End /
             # PageUp / PageDown）：映射为焦点前进 / 后退的近似
             # （PageDown/Down 前进、PageUp/Up/Home 后退；Left/Right 依
-            # 顺序）。编辑层落地由 G03 覆盖层批次接入。
+            # 顺序）。
             key = getattr(event, "keysym", "")
             if key in ("Down", "Right", "PageDown", "End"):
                 self._tab_focus(True)
             elif key in ("Up", "Left", "PageUp", "Home"):
                 self._tab_focus(False)
-        elif action in ("edit",) and owner == "address":
-            # 地址栏可打印字符输入（chrome 焦点）：交由 Tk 原生
-            # Entry 处理（fall-through），此处仅记录。
-            return
-        # 其余（drop / edit 在 document 无编辑层等）→ no-op。
+        elif action in ("edit",):
+            # 编辑层（G03 批次 39）：有活动编辑覆盖层时，可打印字符
+            # / Backspace / Delete / Enter 路由到覆盖层编辑。
+            ov = getattr(self, "_g03_overlay", None)
+            if ov is not None and ov.active:
+                key = getattr(event, "keysym", "")
+                ch = getattr(event, "char", "")
+                if ch and key not in ("BackSpace", "Delete", "Return"):
+                    self._g03_dispatch("insert-text", ch)
+                elif key == "BackSpace":
+                    self._g03_dispatch("delete-backward")
+                elif key == "Delete":
+                    self._g03_dispatch("delete-forward")
+                elif key == "Return":
+                    self._g03_on_blur()  # Enter 提交 + 失焦撤销覆盖层
+                return
+            if owner == "address":
+                # 地址栏可打印字符输入（chrome 焦点）：交由 Tk 原生
+                # Entry 处理（fall-through），此处仅记录。
+                return
+        # 其余（drop / edit 无编辑层等）→ no-op。
 
     def _install_g11_bindings(self) -> None:
         """G11 — 把批次 35 :func:`install` 桥接进本 shell：在 root 上
@@ -1686,8 +1731,14 @@ class TabBrowser:
                 # text / number / submit / button — focus for
                 # keyboard entry.
                 page.active_form_field = idx
+                # G03 — 批次 39：文本类 input 附着原生编辑覆盖层
+                # （positioned / editable；checkbox/radio 无文本编辑）。
+                if inp_type not in ("checkbox", "radio"):
+                    self._g03_ensure_overlay(page, node, idx)
         elif tag == "textarea":
             page.active_form_field = idx
+            # G03 — 批次 39：textarea 附着原生编辑覆盖层。
+            self._g03_ensure_overlay(page, node, idx)
         elif tag == "select":
             # Toy: cycle to the next <option>.
             page._save_form_state_to_dom()
@@ -1695,6 +1746,131 @@ class TabBrowser:
         page._reapply_interaction()
         self._refresh_canvas(self.current)
         self._update_status()
+
+    # ------------------------------------------------------------------
+    # G03 — 批次 39：原生覆盖层接线（EditorOverlayController + 批次 34 协议）
+    # ------------------------------------------------------------------
+    def _g03_control_info(self, page, node, idx: int):
+        """G03 批次 39 — 从 DOM 节点构造 :class:`OverlayControlInfo`。
+
+        取 type / value / readonly / 几何（布局盒 rect → OverlayRect），
+        供覆盖层附着。无布局 / 非 input / textarea 返回 None。
+        """
+        from toy_browser.app.editor_overlay import OverlayControlInfo
+        from toy_browser.app.overlay_protocol import OverlayRect
+        tag = (node.tag or "").lower()
+        if tag not in ("input", "textarea"):
+            return None
+        inp_type = (node.attr("type") or "").lower()
+        # checkbox / radio / button / submit 无文本编辑（不建覆盖层）
+        if tag == "input" and inp_type in ("checkbox", "radio",
+                                           "button", "submit"):
+            return None
+        value = node.attr("value") or ""
+        readonly = node.attr("readonly") is not None
+        is_password = (tag == "input" and inp_type == "password")
+        # 几何：布局盒 rect（CSS px），找不到则退化为小矩形（呈现层
+        # 活显示批次按真实布局 + 视口转换精化）
+        rect = OverlayRect(x=10.0, y=10.0, w=160.0, h=24.0)
+        try:
+            box = self._g03_layout_box_for(page, idx)
+            if box is not None and getattr(box, "rect", None) is not None:
+                r = box.rect
+                rect = OverlayRect(x=float(r.x), y=float(r.y),
+                                   w=max(1.0, float(r.w)),
+                                   h=max(1.0, float(r.h)))
+        except Exception:
+            pass
+        return OverlayControlInfo(node_ref=idx, tag=tag, value=value,
+                                  is_password=is_password,
+                                  is_read_only=readonly, rect=rect)
+
+    def _g03_layout_box_for(self, page, idx: int):
+        """G03 批次 39 — DOM 节点 idx → 布局盒（活显示批次按真实
+        布局 + 视口转换精化；本核心用退化矩形即可回归）。"""
+        root = getattr(page, "_layout_root", None)
+        if root is None:
+            return None
+        node = page._node_index_to_dom(getattr(page, "_dom_tree", None), idx)
+        if node is None:
+            return None
+        found = []
+
+        def _walk(bx):
+            try:
+                if getattr(bx, "dom", None) is node:
+                    found.append(bx)
+                    return
+            except Exception:
+                pass
+            for c in getattr(bx, "children", []) or []:
+                _walk(c)
+        _walk(root)
+        return found[0] if found else None
+
+    def _g03_ensure_overlay(self, page, node, idx: int) -> bool:
+        """G03 批次 39 — 激活 input/textarea 时附着原生编辑覆盖层。
+
+        经 :meth:`_g03_control_info` 取控件信息，:meth:`attach` 建
+        覆盖层（可编辑才显示）。返回是否显示。
+        """
+        info = self._g03_control_info(page, node, idx)
+        if info is None:
+            return False
+        from toy_browser.app.overlay_protocol import Viewport
+        vp = Viewport(scroll_x=0, scroll_y=page.yoffset,
+                      width=page.width, height=page.height,
+                      page_zoom=1.0)
+        return self._g03_overlay.attach(info, vp, has_focus=True)
+
+    def _g03_on_scroll(self, page) -> None:
+        """G03 批次 39 — 页面滚动：同步覆盖层位置（滚出视口自动隐藏）。"""
+        from toy_browser.app.overlay_protocol import Viewport
+        if not self._g03_overlay.attached:
+            return
+        vp = Viewport(scroll_x=0, scroll_y=page.yoffset,
+                      width=page.width, height=page.height,
+                      page_zoom=1.0)
+        self._g03_overlay.on_scroll(vp)
+
+    def _g03_on_blur(self) -> None:
+        """G03 批次 39 — 失焦：撤销覆盖层 + 提交 change + 写回 DOM。"""
+        ov = self._g03_overlay
+        if not ov.attached:
+            return
+        page = self.tabs[self.current]
+        # 提交 change（value 偏离基线时触发）+ 写回 DOM（真实 value）
+        node = self._g03_active_node(page)
+        if node is not None:
+            dom_attrs = getattr(node, "attrs", None)
+            if isinstance(dom_attrs, dict):
+                val = ov.write_back(dom_attrs)
+                page._save_form_state_to_dom()
+        ov.on_blur()
+
+    def _g03_on_destroy(self) -> None:
+        """G03 批次 39 — 节点销毁：覆盖层终态（协议 destroyed）。"""
+        self._g03_overlay.on_node_destroy()
+
+    def _g03_active_node(self, page):
+        """G03 批次 39 — 当前覆盖层对应的 DOM 节点（node_ref=idx）。"""
+        st = self._g03_overlay.state
+        if st is None:
+            return None
+        try:
+            idx = int(st.node_ref)
+        except (TypeError, ValueError):
+            return None
+        return page._node_index_to_dom(getattr(page, "_dom_tree", None), idx)
+
+    def _g03_dispatch(self, command: str, data: str = "",
+                      ime_mark: int = 0) -> bool:
+        """G03 批次 39 — 编辑命令 → 覆盖层（键盘 / G11 编辑层按键）。"""
+        return self._g03_overlay.dispatch(command, data, ime_mark)
+
+    def _g03_stats(self) -> dict:
+        """G03 批次 39 — 覆盖层诊断（附着 / 活动 / 协议审计）。"""
+        return self._g03_overlay.stats()
 
     def _click_dispatch(self, event) -> None:
         """P33.P1 — mouse click on the viewport: hit-test, set hover +

@@ -111,6 +111,7 @@ from test_tk_keyboard_binding import TESTS as _TK_KEYBOARD_BINDING_TESTS
 from test_g11_gui_wiring import TESTS as _G11_GUI_WIRING_TESTS
 from test_g09_gui_wiring import TESTS as _G09_GUI_WIRING_TESTS
 from test_document_process import TESTS as _DOCUMENT_PROCESS_TESTS
+from test_editor_overlay import TESTS as _EDITOR_OVERLAY_TESTS
 
 def main():
     tests = []
@@ -194,6 +195,7 @@ def main():
     tests.extend(_G11_GUI_WIRING_TESTS)
     tests.extend(_G09_GUI_WIRING_TESTS)
     tests.extend(_DOCUMENT_PROCESS_TESTS)
+    tests.extend(_EDITOR_OVERLAY_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
