@@ -1026,6 +1026,15 @@ class TabBrowser:
         from toy_browser.app.editor_overlay import EditorOverlayController
         self._g03_overlay = EditorOverlayController()
 
+        # B 系列批次 42 — 活显示 GUI 接线：把 B01 NavigationController +
+        # B07 activate_element + B08 DocumentContext 接成 BGuiWiring 统一
+        # 分派入口。地址栏 / 链接 / 表单分派经 :meth:`_b_dispatch_address`
+        # / :meth:`_b_dispatch_link` / :meth:`_b_dispatch_form` 走 BGuiWiring
+        # （资源三态 + 任务版本门控），导航执行仍走既有
+        # :meth:`_commit_navigation` / :meth:`_navigate_to`（不改呈现路径）。
+        from toy_browser.app.b_series_wiring import BGuiWiring
+        self._b_wiring = BGuiWiring()
+
         # --- bindings ---
         self.root.bind("<Control-l>", lambda e: self._focus_address())
         self.root.bind("<Control-t>", lambda e: self._new_tab())
@@ -1458,8 +1467,43 @@ class TabBrowser:
         self.addr_entry.focus_set()
 
     def _navigate(self) -> None:
+        """B 系列批次 42 — 地址栏 Go / Return 经 BGuiWiring 分派。
+
+        走 :meth:`_b_dispatch_address`（B01 三分类 + B08 任务版本门控），
+        成功则导航到 ``result.target``（最终 URL），失败则回退到原始
+        输入。导航执行仍走既有 :meth:`_commit_navigation`（不改呈现
+        路径）。
+        """
         url = self.addr_var.get().strip()
-        self._commit_navigation(url)
+        res = self._b_dispatch_address(url)
+        target = res.target if res.ok and res.target else url
+        self._commit_navigation(target)
+
+    def _b_dispatch_address(self, text: str):
+        """B 系列批次 42 — 地址栏输入经 BGuiWiring 分派（活显示入口）。
+
+        分派前把 BGuiWiring 内部 NavigationController 的 current_url
+        同步到当前 page.url，保证 B01 三分类（URL / 相对 URL / 普通
+        文本）基于真实文档 URL 而非 about:blank。
+        """
+        self._b_wiring.nav.current_url = (
+            self.tabs[self.current].url or "about:blank")
+        return self._b_wiring.dispatch_address(text)
+
+    def _b_dispatch_link(self, href: str, target_attr: str = ""):
+        """B 系列批次 42 — 链接点击经 BGuiWiring 分派（活显示入口）。"""
+        return self._b_wiring.dispatch_link(href, target_attr)
+
+    def _b_dispatch_form(self, fields, form_id: str = "",
+                         action: str = "", method: str = "GET",
+                         trigger: str = "", validate: bool = True):
+        """B 系列批次 42 — 表单提交经 BGuiWiring 分派（活显示入口）。"""
+        return self._b_wiring.dispatch_form(
+            fields, form_id, action, method, trigger, validate)
+
+    def _b_describe(self) -> str:
+        """B 系列批次 42 — 诊断串（资源三态 + 任务版本）。"""
+        return self._b_wiring.describe()
 
     def _commit_navigation(self, url: str) -> None:
         """G04 — the single navigation entry point shared by the Go
@@ -1780,7 +1824,11 @@ class TabBrowser:
             host.execute_event_bubbled(_el, "click")
         # 2 — default action by control type.
         if tag == "a" and node.attr("href"):
-            self._navigate_to(node.attr("href"))
+            # B 系列批次 42 — 传递 target_attr（_blank/_self 等）经
+            # BGuiWiring parse_link_target 分类；活显示走既有
+            # _navigate_to → BGuiWiring dispatch_link 路径。
+            self._navigate_to(node.attr("href"),
+                              target_attr=node.attr("target") or "")
         elif tag in ("input", "button"):
             if inp_type in ("checkbox", "radio"):
                 page._toggle_checkbox(idx)
@@ -1998,14 +2046,30 @@ class TabBrowser:
         # re-clips via _reapply_interaction when needed).
         self._refresh_canvas(self.current)
 
-    def _navigate_to(self, href: str) -> None:
-        """P33.P1 — navigate to *href* (relative or absolute URL)."""
+    def _navigate_to(self, href: str, target_attr: str = "") -> None:
+        """P33.P1 / B 系列批次 42 — navigate to *href*（活显示经
+        BGuiWiring 分派：B07 parse_link_target 相对解析 + B01 导航
+        决策 + B08 任务版本门控）。
+
+        * ``action == "navigate"`` — 导航到 ``result.target``（最终 URL）。
+        * ``action == "none"`` + ``error == "scheme-not-supported"`` —
+          不支持的 scheme（javascript: / mailto: 等），no-op。
+        * ``ok == False`` — 分派失败，回退到原始 href（既有行为）。
+        """
+        # BGuiWiring 内部 NavigationController 的 current_url 需与当前
+        # page 同步，否则相对链接解析基于 about:blank 而非真实 page.url。
+        page = self.tabs[self.current]
+        self._b_wiring.nav.current_url = page.url or "about:blank"
+        res = self._b_dispatch_link(href, target_attr)
+        if res.ok and res.action == "navigate" and res.target:
+            self._commit_navigation(res.target)
+            return
+        # 回退到既有路径（相对链接 / 不支持 scheme / 分派失败）
         page = self.tabs[self.current]
         if href.startswith("http://") or href.startswith("https://"):
             page.load_url(href, page.width, page.height)
         elif not href.startswith("#") and href.strip():
-            # Relative link — toy: just log it (no base-URL resolution
-            # in the click path; full resolution requires the net module).
+            # 相对链接 — toy: just log it（既有行为不变）
             pass
         self._refresh_canvas(self.current)
         self._update_status()

@@ -293,6 +293,115 @@ def test_bguiwiring_custom_nav():
     assert r.target == "http://seed.example/page.html"
 
 
+# ---------------------------------------------------------------------------
+# 8. 批次 42 — gui.py TabBrowser 活显示接线（stub 驱动，不构建 Tk）
+# ---------------------------------------------------------------------------
+
+class _PageStub:
+    """最小 PageInstance 替身：记录 load_url 调用，供 TabBrowser stub 测试。"""
+
+    def __init__(self, url: str = "about:blank"):
+        self.url = url
+        self.width = 800
+        self.height = 600
+        self.title = "test"
+        self.back_stack: list = []
+        self.fwd_stack: list = []
+        self.bitmap = None
+        self._dom_tree = None
+        self.hover_id = None
+        self.focus_id = None
+        self.active_form_field = None
+        self._browser = None
+
+    def load_url(self, url, w=800, h=600):
+        self.url = url
+
+
+def _make_stub_tabbrowser(initial_url="about:blank"):
+    """构造一个不跑 __init__ 的 TabBrowser stub，注入 BGuiWiring + 最小桩属性。
+
+    与既有 gui 回归测试（test_g09_gui_wiring / test_g11_gui_wiring）的
+    ``object.__new__(TabBrowser)`` 模式一致：避免构建完整 Tk UI，只
+    验证 BGuiWiring 分派映射 + 既有导航执行路径的接线。
+    """
+    from toy_browser.app.gui import TabBrowser
+    tb = object.__new__(TabBrowser)
+    tb.tabs = [_PageStub(initial_url)]
+    tb.current = 0
+    tb._b_wiring = BGuiWiring()
+    tb._refresh_canvas = lambda idx: None
+    tb._update_status = lambda: None
+    tb.status_var = type("S", (), {"set": staticmethod(lambda v: None)})()
+    tb.notebook = type("N", (), {"tab": staticmethod(
+        lambda a, b=None, text=None, c=None: None)})()
+
+    # addr_var 桩：get 返回初始 URL，set 记录最后一次
+    tb.addr_var = type("V", (), {
+        "get": staticmethod(lambda: initial_url),
+        "set": staticmethod(lambda v: None),
+        "trace_add": staticmethod(lambda *a: None),
+    })()
+    return tb
+
+
+def test_b42_navigate_via_b_wiring():
+    """批次 42 — _navigate 经 BGuiWiring 分派（地址栏 → commit_navigation）。"""
+    tb = _make_stub_tabbrowser("http://seed.example/")
+    committed = []
+    tb._commit_navigation = lambda url: committed.append(url)
+    tb._navigate()
+    assert committed == ["http://seed.example/"]
+
+
+def test_b42_navigate_to_b_wiring_relative():
+    """批次 42 — _navigate_to 经 BGuiWiring dispatch_link（相对链接 → 最终 URL）。"""
+    tb = _make_stub_tabbrowser("http://seed.example/dir/")
+    nav_called = []
+    tb._commit_navigation = lambda url: nav_called.append(url)
+    # 相对链接 / 不支持 scheme → 走既有回退路径（page.load_url / no-op）
+    tb._navigate_to("page.html")
+    assert nav_called == ["http://seed.example/dir/page.html"]
+
+
+def test_b42_navigate_to_b_wiring_unsupported_scheme():
+    """批次 42 — _navigate_to 经 BGuiWiring dispatch_link（javascript: → 回退既有路径）。"""
+    tb = _make_stub_tabbrowser("http://seed.example/")
+    tb._navigate_to("javascript:void(0)")
+    # 不支持 scheme → 既有回退路径（不导航），page.url 不变
+    assert tb.tabs[0].url == "http://seed.example/"
+
+
+def test_b42_navigate_to_b_wiring_absolute():
+    """批次 42 — _navigate_to 经 BGuiWiring dispatch_link（绝对 URL → 最终 URL）。"""
+    tb = _make_stub_tabbrowser("about:blank")
+    nav_called = []
+    tb._commit_navigation = lambda url: nav_called.append(url)
+    tb._navigate_to("http://other.example/x")
+    assert nav_called == ["http://other.example/x"]
+
+
+def test_b42_dispatch_form_b_wiring():
+    """批次 42 — _b_dispatch_form 经 BGuiWiring 分派（GET 表单 → 导航 URL）。"""
+    tb = _make_stub_tabbrowser("http://seed.example/")
+    fields = [FormField(name="q", value="test", kind="text")]
+    r = tb._b_dispatch_form(fields, "f1", "/search", "GET")
+    assert r.ok
+    assert r.action == "submit"
+    assert r.target.endswith("/search?q=test")
+
+
+def test_b42_describe_b_wiring():
+    """批次 42 — _b_describe 诊断串（资源三态 + 任务版本）。"""
+    tb = _make_stub_tabbrowser("about:blank")
+    r = tb._b_dispatch_link("/a")
+    assert r.ok
+    s = tb._b_describe()
+    assert "nav=http://seed" not in s or "nav=" in s
+    assert "ctx.final=" in s
+    assert "resources_total=" in s
+
+
 TESTS = [
     ("b41_dispatch_address_ok", test_dispatch_address_ok),
     ("b41_dispatch_address_empty", test_dispatch_address_empty),
@@ -317,4 +426,10 @@ TESTS = [
     ("b41_run_b_series_local_http_url", test_run_b_series_local_http_url),
     ("b41_bguiwiring_default_nav_blank", test_bguiwiring_default_nav_blank),
     ("b41_bguiwiring_custom_nav", test_bguiwiring_custom_nav),
+    ("b42_navigate_via_b_wiring", test_b42_navigate_via_b_wiring),
+    ("b42_navigate_to_b_wiring_relative", test_b42_navigate_to_b_wiring_relative),
+    ("b42_navigate_to_b_wiring_unsupported_scheme", test_b42_navigate_to_b_wiring_unsupported_scheme),
+    ("b42_navigate_to_b_wiring_absolute", test_b42_navigate_to_b_wiring_absolute),
+    ("b42_dispatch_form_b_wiring", test_b42_dispatch_form_b_wiring),
+    ("b42_describe_b_wiring", test_b42_describe_b_wiring),
 ]

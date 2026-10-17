@@ -31,8 +31,8 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
-loopback 网络 I/O 实装。完整回归 **1806/1806**（基线 939 + 批次 1–41
-新增 867）。P01–P13 GPU 系列未实施。逐项批次记录见
+loopback 网络 I/O 实装。完整回归 **1812/1812**（基线 939 + 批次 1–42
+新增 873）。P01–P13 GPU 系列未实施。逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -75,13 +75,21 @@ loopback 网络 I/O 实装。完整回归 **1806/1806**（基线 939 + 批次 1�
   `toy_browser/app/b_series_wiring.py`（BGuiWiring 统一分派 +
   `start_local_http_server` + `network_io_smoke` +
   `run_b_series_local_http`）+ `tests/test_b_series_gui_wiring.py`（23 条）
+- 批次 42：B 系列活显示 GUI 实际接线——`gui.py` `TabBrowser` 地址栏 /
+  链接 / 表单分派走 BGuiWiring（`_b_dispatch_address` / `_b_dispatch_link`
+  / `_b_dispatch_form` / `_b_describe`，先同步 nav.current_url 到
+  page.url 再分派；`_navigate` / `_navigate_to` 成功走 BGuiWiring 最终
+  URL，失败回退既有路径；`activate_element` 的 `<a>` 分支传
+  `target_attr`），导航执行仍走 `_commit_navigation`（不改呈现层），
+  `tests/test_b_series_gui_wiring.py` 新增 6 条（stub 驱动
+  `object.__new__(TabBrowser)` 验证接线，不构建 Tk UI）
 
 ### 未实施（留待后续批次）
 
 - P01–P13 GPU 光栅化迁移方案
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收
-- `gui.py` 活显示调用 BGuiWiring 实际接线
+- `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
 - `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage
 - TTF 字形正确性修复 + DPI / 抗锯齿优化
 
