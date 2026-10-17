@@ -678,6 +678,19 @@
 - **回归**：`tests/test_g11_gui_wiring.py` 用 `object.__new__(TabBrowser)` 绕过 `__init__`（避免构建完整 Tk UI），只注入 G11 分派所需最小桩属性，纯逻辑验证"决策 → 动作"分派映射 + 增量补全语义；`_install_g11_bindings` 单独用最小 Tk root 验证安装不抛异常（tkinter 不可用则跳过）。
 - **说明**：本批为 G11 键盘绑定桥的实际接线；`gui.py` 顶层仍不引入新依赖（批次 35 桥在方法内惰性 import）。真实按键验收（人工操作 / 读屏器）留活显示批次。
 
+## 批次 37 完成的工作项（G09 统一标签会话协议层接入 gui.py 实际接线 + Tk image 注册表 latent bug 修复）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| G09 标签会话协议层 → `gui.py` 实际接线（`_g09_session` / `_tab_ids` / `_g09_close_tab` / `_g09_resolve` / `_g09_tab_id` / `_g09_idx_of_tab` / `_g09_stats` / `_g09_describe`） | 完成 | `toy_browser/app/gui.py`（G09 接线层） | `tests/test_g09_gui_wiring.py`（10 条） |
+| Tk PhotoImage 全局 image 注册表 latent bug 修复（`_rebuild_tabs` 关标签重建后 "image pyimageN doesn't exist"） | 完成 | `toy_browser/app/gui.py`（`_bitmap_to_photopix` 显式 master + 名字） | 同上前述回归 |
+
+### G09 → gui.py 接线（`gui.py` G09 接线层）
+- 批次 25 已落 `TabSession` 统一标签会话协议层纯逻辑核心（稳定 tab_id + 关闭首/中/末 compact 重建 + 旧回调防护 `resolve_callback` + 任务门控 + 关闭审计），本批把它**接进 `TabBrowser`**：`__init__` 初始化 `self._g09_session = TabSession()` + `self._tab_ids`（idx ↔ 稳定 tab_id 映射，首标签经 `open_tab` 分配）；`_add_tab` 为新标签 `open_tab` 分配稳定 tab_id；`_remove_tab` 经新增 `_g09_close_tab`（`session.close_tab` 取消在途任务 + 释放资源 + 重建 idx 映射 + 关闭审计，再同步 `_tab_ids`）；`_g09_resolve(old_idx)`（旧回调统一拦截：返回当前 tab_id 或 None + stale 计数，"不串页"）；`_g09_tab_id` / `_g09_idx_of_tab`（idx ↔ tab_id 双向查询）；`_g09_stats` / `_g09_describe`（诊断区 / 状态栏可查会话审计）。
+- **Tk PhotoImage latent bug 修复**：`_bitmap_to_photopix` 原 `tk.PhotoImage(data=data)` 无显式 master / 名字，Tk image 名由**全局 Tcl 解释器**顺序分配（pyimage1/2/…）。`_rebuild_tabs` 里 `canvas_var.clear()` 让旧 PhotoImage 被 GC → Tcl 注销同名 image，新 PhotoImage 再创建时全局 image 注册表脏化报 "image pyimageN doesn't exist"（关标签重建路径的 latent bug）。修复：`tk.PhotoImage(master=self.root, name=f"toytab_{idx}", data=data)` 显式命名 + 绑定 root，使 image 名不依赖全局分配顺序。
+- **回归**：`tests/test_g09_gui_wiring.py`（10 条）用 `object.__new__(TabBrowser)` 绕过 `__init__`（避免构建完整 Tk UI），注入最小桩属性（`_g09_session` = 真实 `TabSession` + `_tab_ids` + `_add_tab` / `_remove_tab` 桩），纯逻辑验证"idx ↔ 稳定 tab_id 映射 + 关标签 compact 重建 + 旧回调拦截"；末尾一条真实 `TabBrowser` 冒烟（tkinter 可用时）用**共享 root 不 destroy**（避免全量里多 Tk 测试 image 冲突），验证 G09 接线在真实 shell 上跑通 + PhotoImage 修复不回归。
+- **说明**：本批为 G09 标签会话协议层的实际接线 + 顺带修 Tk image 注册表 latent bug；真实按键 / 关标签人工验收留活显示批次。
+
 ## 剩余限制（下一批次）
 
 - G11 Tk 侧键盘绑定桥已在批次 35/36 落地并接入 `gui.py`
@@ -685,8 +698,13 @@
   完整按键集进 Tk 绑定，G04 已处理键不重复触发），真实按键人工
   验收（键盘 / 读屏器 / IME）留活显示批次；G09 step 2+4 Tk 侧路由。
 - G09 step 1 统一标签会话协议层纯逻辑核心已在批次 25 落地
-  （`TabSession`，关闭首/中/末 + 旧回调防护 + 会话快照/恢复），Tk 侧
-  标签控件 / 闭包重绑 / 活显示验收留后续。
+  （`TabSession`，关闭首/中/末 + 旧回调防护 + 会话快照/恢复），
+  批次 37 已把 `TabSession` 接入 `gui.py` 的 `TabBrowser`
+  （`_g09_session` / `_tab_ids` / `_g09_close_tab` / `_g09_resolve`
+  / `_g09_stats` / `_g09_describe`，关标签走会话协议层 + 旧回调拦截），
+  顺带修 Tk PhotoImage 全局 image 注册表 latent bug
+  （`_rebuild_tabs` 关标签重建后 "image pyimageN doesn't exist"）；
+  活显示验收留后续。
 - G07 文档进程（CPU 工作移出 UI 线程的多核方案）：标签级编排纯逻辑核心已在批次 23 落地
   （`TabDocumentOrchestrator`），文档进程 / 多核方案留后续。
 - C01 公共 API 包装层 GUI 接入纯逻辑核心已在批次 22 落地
@@ -712,7 +730,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1717/1717 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12） |
+| `py -3 test.py` | **1727/1727 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复新增 10） |
 
 ## 批次 2 关键实现说明
 

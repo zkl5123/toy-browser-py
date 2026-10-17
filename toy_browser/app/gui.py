@@ -1003,6 +1003,14 @@ class TabBrowser:
             page.title = "about:blank"
             page.bitmap = page._about_page("about:blank", 800, 600)
         self.tabs.append(page)
+        # G09 — 批次 37：统一标签会话协议层（稳定 tab_id + 关闭重建
+        # 映射 + 旧回调防护 + 任务门控）。每个 PageInstance 配一个稳定
+        # tab_id，``self._tab_ids[idx]`` 与 ``self.tabs[idx]`` 对应。
+        # 旧回调（持旧 idx 的加载 / 历史闭包）经 :meth:`_g09_resolve`
+        # 解析为当前 tab_id，失效则 no-op（不串页）。
+        from toy_browser.app.tab_session import TabSession
+        self._g09_session = TabSession()
+        self._tab_ids: list[int] = [self._g09_session.open_tab()]
         self._ensure_page_frame(0)
         self._show_tab(0)
 
@@ -1228,7 +1236,14 @@ class TabBrowser:
         """
         from toy_browser.rendering import cpu_image as _cpuimg
         data = _cpuimg.CPUImage.from_bitmap(bmp).to_ppm_bytes()
-        return tk.PhotoImage(data=data)
+        # P37 (G09) — 显式 master + 显式名字：Tk image 名由**全局 Tcl
+        # 解释器**顺序分配（pyimage1/2/…）。_rebuild_tabs 里
+        # canvas_var.clear() 让旧 PhotoImage 被 GC → Tcl 注销同名
+        # image；新 PhotoImage 再创建时全局 image 注册表若脏化会报
+        # "image pyimageN doesn't exist"（关标签重建的 latent bug）。
+        # 显式命名 + 绑定 root，使 image 名不依赖全局分配顺序。
+        return tk.PhotoImage(master=self.root,
+                             name=f"toytab_{idx}", data=data)
 
     def _refresh_canvas(self, idx: int) -> None:
         page = self.tabs[idx]
@@ -1270,6 +1285,8 @@ class TabBrowser:
     def _add_tab(self, page: PageInstance) -> int:
         idx = len(self.tabs)
         self.tabs.append(page)
+        # G09 — 批次 37：为新标签分配稳定 tab_id（与 idx 对应）。
+        self._tab_ids.append(self._g09_session.open_tab())
         self._ensure_page_frame(idx)
         return idx
 
@@ -1277,6 +1294,9 @@ class TabBrowser:
         if len(self.tabs) <= 1:
             self.root.quit()
             return
+        # G09 — 批次 37：关标签经会话协议层（取消在途任务 + 释放资源
+        # + 重建 idx 映射 + 前台让给剩余标签 + 关闭审计）。
+        self._g09_close_tab(idx)
         # Drop the removed tab and rebuild the notebook consistently.
         del self.tabs[idx]
         self._rebuild_tabs()
@@ -1291,6 +1311,59 @@ class TabBrowser:
         for i, page in enumerate(self.tabs):
             self._ensure_page_frame(i)
         self.current = 0
+
+    # ------------------------------------------------------------------
+    # G09 — 批次 37：统一标签会话协议层接线
+    # ------------------------------------------------------------------
+    def _g09_close_tab(self, idx: int) -> dict:
+        """G09 批次 37 — 关标签经 :class:`TabSession`（取消在途任务 +
+        释放资源 + 重建 idx 映射 + 关闭审计），并同步 :attr:`_tab_ids`。
+
+        返回 :meth:`TabSession.close_tab` 的结果（``cancelled`` /
+        ``compact_mapping`` / ``new_active``）。``compact_mapping`` 供
+        旧闭包重绑：持旧 idx 的回调经 :meth:`_g09_resolve` 解析为
+        新 tab_id（失效则 no-op，不串页）。
+        """
+        tab_id = self._tab_ids[idx]
+        res = self._g09_session.close_tab(tab_id)
+        # 同步 _tab_ids（删掉被关槽位；compact 后槽位前移）
+        del self._tab_ids[idx]
+        return res
+
+    def _g09_resolve(self, old_idx: int):
+        """G09 批次 37 — 旧回调（持旧 idx）的统一拦截入口。
+
+        关闭中间标签后旧 idx 对应槽位已前移 / 失效；直接用旧 idx 会
+        **操作到别的标签**（G09 验收"不串页"）。本方法把 *old_idx*
+        解析为当前稳定 tab_id：
+
+        - 仍映射到存活 tab_id → 返回该 tab_id（调用方以 tab_id 为
+          key 继续，安全）；
+        - 已失效（被关闭 / 前移错位）→ 返回 None（调用方 no-op，
+          不操作别的标签），并计入会话的 ``stale_callbacks``。
+        """
+        return self._g09_session.resolve_callback(old_idx)
+
+    def _g09_tab_id(self, idx: int):
+        """G09 批次 37 — idx → 稳定 tab_id（越界返回 None）。"""
+        if 0 <= idx < len(self._tab_ids):
+            return self._tab_ids[idx]
+        return None
+
+    def _g09_idx_of_tab(self, tab_id: int):
+        """G09 批次 37 — 稳定 tab_id → 当前 idx（不存在返回 None）。"""
+        try:
+            return self._tab_ids.index(tab_id)
+        except ValueError:
+            return None
+
+    def _g09_stats(self):
+        """G09 批次 37 — 会话审计统计（供诊断区 / 状态栏）。"""
+        return self._g09_session.stats()
+
+    def _g09_describe(self) -> str:
+        """G09 批次 37 — 会话诊断串（含 stale_callbacks 拦截计数）。"""
+        return self._g09_session.describe()
 
     def _show_tab(self, idx: int) -> None:
         if idx < 0 or idx >= len(self.tabs):
