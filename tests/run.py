@@ -91,6 +91,8 @@ from test_field_editing import TESTS as _FIELD_EDITING_TESTS
 from test_activation import TESTS as _ACTIVATION_TESTS
 from test_document_context import TESTS as _DOCUMENT_CONTEXT_TESTS
 from test_load_phases import TESTS as _LOAD_PHASES_TESTS
+from test_request_config import TESTS as _REQUEST_CONFIG_TESTS
+from test_first_screen import TESTS as _FIRST_SCREEN_TESTS
 
 def main():
     tests = []
@@ -154,6 +156,8 @@ def main():
     tests.extend(_ACTIVATION_TESTS)
     tests.extend(_DOCUMENT_CONTEXT_TESTS)
     tests.extend(_LOAD_PHASES_TESTS)
+    tests.extend(_REQUEST_CONFIG_TESTS)
+    tests.extend(_FIRST_SCREEN_TESTS)
     passed = 0
     failed = []
     for name, fn in tests:
