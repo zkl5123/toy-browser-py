@@ -118,6 +118,57 @@ class CPUImage:
             f.write(self.to_ppm_bytes())
 
     # ------------------------------------------------------------------
+    # C09 批次 43 — 连续行 PNG 编码（直接读 RGB8 buffer，消除 int 列表）
+    # ------------------------------------------------------------------
+    def raw_rows(self) -> bytearray:
+        """C09 步骤 1 — filter-0 raw-row 负载（每行 1 字节 filter(0) +
+        stride*? 实际 w*3 字节 RGB），**直接切片 RGB8 buffer**（不还原
+        0xRRGGBB int 列表，与 :class:`browser.ContinuousRows` 的 int
+        列表路径逐字节一致）。"""
+        w, h = self.width, self.height
+        stride = self.stride
+        buf = self.buffer
+        bpr = w * 3  # bytes per row（RGB8）
+        raw = bytearray(h * (bpr + 1))
+        off = 0
+        for py in range(h):
+            raw[off] = 0  # filter type: none
+            off += 1
+            sbase = py * stride
+            raw[off:off + bpr] = buf[sbase:sbase + bpr]
+            off += bpr
+        return raw
+
+    def to_png_bytes(self, level: int = 6) -> bytes:
+        """C09 批次 43 — 把 RGB8 buffer 编码成 8-bit RGB PNG 字节
+        （zlib 压缩级别 *level*，默认 6 与 :func:`browser.write_png`
+        逐字节一致；C09 步骤 1 "直接读连续 RGB 行，消除导出时再次
+        遍历 Python int 列表"）。"""
+        from toy_browser.app.png_export import encode_rows
+        raw = self.raw_rows()
+        return encode_rows(self.width, self.height, bytes(raw),
+                           level=level)
+
+    def save_png(self, path: str, level: int = 6) -> None:
+        with open(path, "wb") as f:
+            f.write(self.to_png_bytes(level=level))
+
+    def nonwhite_count(self) -> int:
+        """C02 — 非白像素计数（与 :meth:`paint.Bitmap.nonwhite` 同
+        语义；供 CLI 输出 ``nonwhite px`` 统计，不还原 int 列表）。"""
+        buf = self.buffer
+        stride = self.stride
+        n = 0
+        for py in range(self.height):
+            base = py * stride
+            for px in range(self.width):
+                i = base + px * 3
+                if buf[i] != 0xFF or buf[i + 1] != 0xFF \
+                        or buf[i + 2] != 0xFF:
+                    n += 1
+        return n
+
+    # ------------------------------------------------------------------
     # 尺寸 / 校验
     # ------------------------------------------------------------------
     @property

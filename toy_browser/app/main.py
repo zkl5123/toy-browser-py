@@ -66,24 +66,47 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def _render_error_and_exit(html: str, args) -> None:
     """P21.3 — render the unified error-page HTML and write the image,
-    so a network failure still produces a viewable PPM/PNG."""
-    from toy_browser.rendering import paint; from toy_browser.rendering import paint_engine; from toy_browser.layout import layout; from toy_browser.style import css; from toy_browser.document import dom
+    so a network failure still produces a viewable PPM/PNG.
+
+    批次 43 — 错误页也走 CPUImage 路径（rasterize_to_cpu_image），
+    消除 Bitmap int 列表中间层。
+    """
+    from toy_browser.layout import layout; from toy_browser.style import css; from toy_browser.document import dom
+    from toy_browser.rendering.rasterize_cpu import rasterize_to_cpu_image
+    from toy_browser.rendering import paint_engine
     dl = paint_engine.emit_commands(
         layout.build_box(css.apply(dom.parse(html), ""), 0.0),
     )
-    out = paint_engine.rasterize(dl, args.width, args.height)
-    if args.png:
-        browser.write_png(out, args.output)
-    else:
-        browser.write_ppm(out, args.output)
+    img = rasterize_to_cpu_image(dl, args.width, args.height)
+    _write_image(img, args)
 
 
-def _write_image(bmp, args) -> None:
-    """Write the rendered bitmap as PPM (default) or PNG (--png)."""
-    if args.png:
-        browser.write_png(bmp, args.output)
-    else:
-        browser.write_ppm(bmp, args.output)
+def _write_image(img, args) -> None:
+    """Write the rendered image as PPM (default) or PNG (--png).
+
+    批次 43 — 接受 :class:`CPUImage`（RGB8 连续 buffer）或
+    :class:`Bitmap`（0xRRGGBB int 列表）；两者经各自的
+    ``save_ppm`` / ``save_png`` / ``write_ppm`` / ``write_png`` 写出，
+    逐字节一致。
+    """
+    if hasattr(img, "save_ppm"):  # CPUImage
+        if args.png:
+            img.save_png(args.output)
+        else:
+            img.save_ppm(args.output)
+    else:  # Bitmap（legacy 兼容）
+        if args.png:
+            browser.write_png(img, args.output)
+        else:
+            browser.write_ppm(img, args.output)
+
+
+def _image_nonwhite(img) -> int:
+    """批次 43 — 非白像素计数（CPUImage 走 ``nonwhite_count``，Bitmap
+    走 int 列表遍历；两者结果一致）。"""
+    if hasattr(img, "nonwhite_count"):  # CPUImage
+        return img.nonwhite_count()
+    return sum(1 for p in img.pixels if p != 0xFFFFFF)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -182,8 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.a11y}  ({len(a11y)} a11y nodes)")
 
     # Render.
+    # 批次 43 — C02 活显示 rasterize 切 CPUImage：CLI 路径直接消费
+    # :class:`CPUImage`（RGB8 连续 buffer），消除 Bitmap int 列表中间层。
     if args.event:
-        bmp = browser.render_document_with_event(
+        img = browser.render_document_with_event_to_cpu_image(
             html, css_text, args.width, args.height, args.event
         )
     elif args.click:
@@ -193,20 +218,19 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             print(f"--click expects 'x,y', got {args.click!r}", file=sys.stderr)
             return 2
-        bmp = browser.render_document_with_click(
+        img = browser.render_document_with_click_to_cpu_image(
             html, css_text, args.width, args.height, x, y
         )
     else:
-        bmp = browser.render_document(html, css_text, args.width, args.height)
+        img = browser.render_document_to_cpu_image(
+            html, css_text, args.width, args.height
+        )
 
     # P2.3 — output PNG if requested.
-    if args.png:
-        browser.write_png(bmp, args.output)
-    else:
-        browser.write_ppm(bmp, args.output)
-    nonwhite = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+    _write_image(img, args)
+    nonwhite = _image_nonwhite(img)
     ext = ".png" if args.png else ".ppm"
-    print(f"wrote {args.output}  ({bmp.width}x{bmp.height}, {nonwhite} non-white px)")
+    print(f"wrote {args.output}  ({img.width}x{img.height}, {nonwhite} non-white px)")
 
     # P4.1 — @keyframes animation: render N+1 frames to a directory.
     if args.animate:

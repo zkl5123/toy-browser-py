@@ -199,6 +199,115 @@ def render_document_from_url(
     return paint_engine.rasterize(dl, width, height)
 
 
+# --- C02 批次 43 — CPUImage 渲染入口（直接落 RGB8 buffer，CLI 消费）------
+
+def render_document_to_cpu_image(
+    html: str,
+    css_text: str = "",
+    width: int = 800,
+    height: int = 600,
+) -> "CPUImage":
+    """C02 批次 43 — 渲染 HTML 出 :class:`CPUImage`（RGB8 连续 buffer）。
+
+    与 :func:`render_document` 同一管线（parse → style → layout →
+    paint → rasterize），但经 :func:`rasterize_cpu.rasterize_to_cpu_image`
+    直接落 :class:`CPUImage`（C09 步骤 1 "直接读连续 RGB 行，消除导出
+    时再次遍历 Python int 列表"）。CLI 输出走 ``CPUImage.save_ppm`` /
+    ``save_png``（PNG 经 :meth:`CPUImage.to_png_bytes` 复用 C09
+    ``encode_rows``）。
+    """
+    tree = dom_mod.parse(html)
+    author_css, ua_css = _full_css(tree, css_text)
+    host = _run_scripts(tree)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
+    styled = css_mod.apply(
+        tree, author_css, ua_css=ua_css,
+        media_rules=media_rules,
+        supports_rules=supports_rules,
+        viewport_w=float(width),
+        viewport_h=float(height),
+    )
+    root = layout_mod.layout(styled, float(width), float(height))
+    dl = paint_engine.emit_commands(root)
+    from toy_browser.rendering.rasterize_cpu import rasterize_to_cpu_image
+    return rasterize_to_cpu_image(dl, width, height)
+
+
+def render_document_with_event_to_cpu_image(
+    html: str,
+    css_text: str,
+    width: int,
+    height: int,
+    element_id: str,
+    log_sink=None,
+) -> "CPUImage":
+    """C02 批次 43 — :func:`render_document_with_event` 的 CPUImage 变体。"""
+    from toy_browser.scripting import js as js_mod
+    tree = dom_mod.parse(html)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
+    host = js_mod.Host(tree, log_sink or (lambda _s: None))
+    host.execute_all()
+    host.execute_event(element_id)
+    styled = css_mod.apply(
+        tree, author_css, ua_css=ua_css,
+        media_rules=media_rules,
+        supports_rules=supports_rules,
+        viewport_w=float(width),
+        viewport_h=float(height),
+    )
+    root = layout_mod.layout(styled, float(width), float(height))
+    dl = paint_engine.emit_commands(root)
+    from toy_browser.rendering.rasterize_cpu import rasterize_to_cpu_image
+    return rasterize_to_cpu_image(dl, width, height)
+
+
+def render_document_with_click_to_cpu_image(
+    html: str,
+    css_text: str,
+    width: int,
+    height: int,
+    x: float,
+    y: float,
+    log_sink=None,
+) -> "CPUImage":
+    """C02 批次 43 — :func:`render_document_with_click` 的 CPUImage 变体
+    （命中测试 + 点击事件 + 重渲染，逐像素与 Bitmap 路径一致）。"""
+    from toy_browser.scripting import js as js_mod
+    tree = dom_mod.parse(html)
+    author_css, ua_css = _full_css(tree, css_text)
+    media_rules = css_mod.parse_media_queries(author_css)
+    supports_rules = css_mod.parse_supports_blocks(author_css)
+    styled = css_mod.apply(
+        tree, author_css, ua_css=ua_css,
+        media_rules=media_rules,
+        supports_rules=supports_rules,
+        viewport_w=float(width),
+        viewport_h=float(height),
+    )
+    root = layout_mod.layout(styled, float(width), float(height))
+    host = js_mod.Host(tree, log_sink or (lambda _s: None))
+    host.execute_all()
+    hit = layout_mod.hit_test(root, x, y)
+    if hit is not None and hit.dom is not None and hit.dom.is_element():
+        eid = hit.dom.attr("id")
+        if eid:
+            host.execute_event(eid)
+    styled2 = css_mod.apply(
+        tree, author_css, ua_css=ua_css,
+        media_rules=media_rules,
+        supports_rules=supports_rules,
+        viewport_w=float(width),
+        viewport_h=float(height),
+    )
+    root2 = layout_mod.layout(styled2, float(width), float(height))
+    dl = paint_engine.emit_commands(root2)
+    from toy_browser.rendering.rasterize_cpu import rasterize_to_cpu_image
+    return rasterize_to_cpu_image(dl, width, height)
+
+
 def _run_scripts(tree):
     """Execute inline <script> blocks in document order via the toy JS engine."""
     from toy_browser.scripting import js as js_mod

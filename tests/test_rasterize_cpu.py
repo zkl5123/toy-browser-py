@@ -273,6 +273,139 @@ def test_clip_viewport_clamp():
     assert r.img.height == 1
 
 
+# ---------------------------------------------------------------------------
+# 批次 43 — C02 活显示 rasterize 切 CPUImage（CLI 消费 + 字节一致性）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_cpu_image_ppm_bytes_match_bitmap():
+    """批次 43 — CPUImage.to_ppm_bytes 与 Bitmap.to_ppm_bytes 逐字节一致。"""
+    dl = _dl_rects()
+    bmp = pe_rasterize(dl, 200, 120)
+    img = rasterize_to_cpu_image(dl, 200, 120)
+    assert bmp.to_ppm_bytes() == img.to_ppm_bytes()
+
+
+@_reg
+def test_cpu_image_png_bytes_match_bitmap():
+    """批次 43 — CPUImage.to_png_bytes 与 browser.write_png 逐字节一致
+    （C09 步骤 1 直接读 RGB8 buffer，zlib level=6 保留旧契约）。"""
+    import tempfile, os as _os
+    from toy_browser.app import browser as _b
+    dl = _dl_rects()
+    bmp = pe_rasterize(dl, 200, 120)
+    img = rasterize_to_cpu_image(dl, 200, 120)
+    td = tempfile.mkdtemp()
+    pb, cb = _os.path.join(td, "b.png"), _os.path.join(td, "c.png")
+    _b.write_png(bmp, pb)
+    img.save_png(cb)
+    with open(pb, "rb") as f:
+        fb = f.read()
+    with open(cb, "rb") as f:
+        fc = f.read()
+    assert fb == fc
+
+
+@_reg
+def test_cpu_image_raw_rows_match_continuous_rows():
+    """批次 43 — CPUImage.raw_rows 与 C09 ContinuousRows.raw_rows 逐字节
+    一致（C09 步骤 1 直接读连续 RGB 行，消除 int 列表遍历）。"""
+    from toy_browser.app.png_export import ContinuousRows
+    dl = _dl_rects()
+    bmp = pe_rasterize(dl, 101, 63)  # 奇数宽度（C02 验收）
+    img = rasterize_to_cpu_image(dl, 101, 63)
+    raw_cpu = img.raw_rows()
+    rows = ContinuousRows(list(bmp.pixels), 101, 63)
+    raw_int = rows.raw_rows()
+    assert bytes(raw_cpu) == bytes(raw_int)
+
+
+@_reg
+def test_cpu_image_nonwhite_count_match_bitmap():
+    """批次 43 — CPUImage.nonwhite_count 与 Bitmap int 列表遍历一致。"""
+    dl = _dl_rects()
+    bmp = pe_rasterize(dl, 80, 60)
+    img = rasterize_to_cpu_image(dl, 80, 60)
+    nw_bmp = sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+    assert img.nonwhite_count() == nw_bmp
+
+
+@_reg
+def test_render_document_to_cpu_image_match_bitmap():
+    """批次 43 — browser.render_document_to_cpu_image 与
+    render_document（Bitmap）逐像素一致。"""
+    from toy_browser.app import browser as _b
+    html = "<html><body><div style='width:40px;height:30px;background:#c81e1e'></div></body></html>"
+    bmp = _b.render_document(html, "", 80, 60)
+    img = _b.render_document_to_cpu_image(html, "", 80, 60)
+    mm = cpu_matches_bitmap(img, bmp)
+    assert mm == []
+
+
+@_reg
+def test_render_document_with_event_to_cpu_image():
+    """批次 43 — render_document_with_event_to_cpu_image 返回 CPUImage。"""
+    from toy_browser.app import browser as _b
+    html = (
+        "<html><body>"
+        "<button id='b1' onclick='document.getElementById(\"t\").style.backgroundColor=\"#ff0000\"'>Click</button>"
+        "<div id='t'></div>"
+        "</body></html>"
+    )
+    img = _b.render_document_with_event_to_cpu_image(html, "", 80, 60, "b1")
+    assert img.width == 80 and img.height == 60
+    assert len(img.buffer) == 80 * 60 * 3
+
+
+@_reg
+def test_render_document_with_click_to_cpu_image():
+    """批次 43 — render_document_with_click_to_cpu_image 返回 CPUImage。"""
+    from toy_browser.app import browser as _b
+    html = ("<html><body><button id='b1'>Click</button></body></html>")
+    img = _b.render_document_with_click_to_cpu_image(html, "", 80, 60, 40, 30)
+    assert img.width == 80 and img.height == 60
+
+
+@_reg
+def test_main_write_image_dispatch():
+    """批次 43 — main._write_image 正确分派 CPUImage（save_ppm/save_png）
+    与 Bitmap（write_ppm/write_png）。"""
+    import tempfile, os as _os
+    from toy_browser.app import main as _m
+    from toy_browser.app import browser as _b
+    from toy_browser.rendering.paint import Bitmap, Color, WHITE
+
+    class _Args:
+        png = False
+        output = ""
+
+    # CPUImage 路径
+    dl = _dl_rects()
+    img = rasterize_to_cpu_image(dl, 40, 30)
+    td = tempfile.mkdtemp()
+    p1 = _os.path.join(td, "c.ppm")
+    a1 = _Args(); a1.png = False; a1.output = p1
+    _m._write_image(img, a1)
+    assert _os.path.exists(p1)
+    p2 = _os.path.join(td, "c.png")
+    a2 = _Args(); a2.png = True; a2.output = p2
+    _m._write_image(img, a2)
+    assert _os.path.exists(p2)
+
+    # Bitmap 路径（legacy 兼容）
+    bmp = pe_rasterize(dl, 40, 30)
+    p3 = _os.path.join(td, "b.ppm")
+    a3 = _Args(); a3.png = False; a3.output = p3
+    _m._write_image(bmp, a3)
+    assert _os.path.exists(p3)
+
+    # 非白计数分派
+    nw = _m._image_nonwhite(img)
+    assert nw == img.nonwhite_count()
+    nw_bmp = _m._image_nonwhite(bmp)
+    assert nw_bmp == sum(1 for p in bmp.pixels if p != 0xFFFFFF)
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

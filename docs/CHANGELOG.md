@@ -31,8 +31,9 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
-loopback 网络 I/O 实装。完整回归 **1812/1812**（基线 939 + 批次 1–42
-新增 873）。P01–P13 GPU 系列未实施。逐项批次记录见
+loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage。完整回归
+**1820/1820**（基线 939 + 批次 1–43 新增 881）。P01–P13 GPU 系列未实施。
+逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -83,6 +84,16 @@ loopback 网络 I/O 实装。完整回归 **1812/1812**（基线 939 + 批次 1�
   `target_attr`），导航执行仍走 `_commit_navigation`（不改呈现层），
   `tests/test_b_series_gui_wiring.py` 新增 6 条（stub 驱动
   `object.__new__(TabBrowser)` 验证接线，不构建 Tk UI）
+- 批次 43：main.py CLI 路径切 CPUImage——`CPUImage.raw_rows`（直接切
+  RGB8 buffer）/ `to_png_bytes` / `save_png` / `nonwhite_count`
+  （C09 步骤 1 直接读连续 RGB 行，zlib level=6 与
+  `browser.write_png` 逐字节一致）+ `browser.render_document_to_cpu_image`
+  / `with_event` / `with_click` + `main._write_image` /
+  `_image_nonwhite` 双形态分派（CPUImage / Bitmap）+ 错误页切 CPUImage，
+  `tests/test_rasterize_cpu.py` 新增 8 条（PPM / PNG 字节与 Bitmap 逐字节
+  一致 + raw_rows 与 C09 ContinuousRows 逐字节一致（奇数宽度）+
+  nonwhite_count 一致 + render_document_to_cpu_image 逐像素一致 +
+  with_event / with_click CPUImage 变体 + main._write_image 双形态分派）
 
 ### 未实施（留待后续批次）
 
@@ -90,7 +101,7 @@ loopback 网络 I/O 实装。完整回归 **1812/1812**（基线 939 + 批次 1�
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
-- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage
+- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径 + `paint_engine` 命令分派直接画到 `CPUCanvas` 留后续）
 - TTF 字形正确性修复 + DPI / 抗锯齿优化
 
 ---
