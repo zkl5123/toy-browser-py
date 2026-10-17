@@ -385,6 +385,36 @@ class LetDecl(JNode):
     kind: str = "var"
 
 
+# B04 — multi-variable declaration list: ``var a=1, b=2, c=3;``
+# Each element is a (name, initializer) pair.  The evaluator defines
+# every binding in one scope with the shared kind (var / let / const),
+# preserving let/const block scoping + TDZ and const re-assignment
+# limits.  This is NOT split into multiple independent LetDecl
+# statements (that would create multiple scope records).
+@dataclass
+class MultiDecl(JNode):
+    """B04 — comma-separated declaration list.
+
+    ``items`` is a list of ``(name: str, value: JNode | None)`` pairs
+    in source order.  ``kind`` is the shared declaration kind.
+    """
+    items: list            # list of (name: str, value: JNode | None)
+    kind: str = "var"
+
+
+# B04 — sequence expression: ``(a, b, c)``.  Lowest precedence in JS
+# (below even comma-as-declaration-separator).  Evaluates each
+# expression left-to-right, discards all but the last, returns the
+# last value.
+@dataclass
+class SeqExpr(JNode):
+    """B04 — sequence expression: ``(e1, e2, ..., en)``.
+
+    ``exprs`` is the list of sub-expressions in source order.
+    Evaluation: left-to-right, result is ``exprs[-1]``."""
+    exprs: list            # list of JNode
+
+
 @dataclass
 class IncDec(JNode):
     """P33.R3 — increment / decrement: ``i++``, ``i--``, ``++i``,
@@ -728,10 +758,13 @@ class ToyClass:
             closure = host._interp()
             base = closure.env
             frame = Env({}, base)
+            frame._is_func = True  # B04 — 构造器帧是函数级作用域：
+            # 参数绑定（kind="var"）应直接落在 frame.scope，而不是
+            # 再向外 hoist（与 _make_func 的帧语义一致）。
             frame.define("this", obj)
             frame.define("super", lambda *sa: _run_parent(sa))
             for p, a in zip(params, args):
-                frame.define(p, a)
+                frame.scope[p] = _Binding(a, "var", True)
             interp = host._interp()
             saved = interp.env
             interp.env = frame
@@ -931,7 +964,7 @@ class Parser:
         """
         return self.parse_expression_inner(min_prec)
 
-    def parse_assignment_min(self) -> JNode:
+    def parse_assignment_min(self, allow_seq: bool = True) -> JNode:
         """Parse at assignment precedence: `e = e`, `e += e`, `e -= e`.
 
         P0 (GLM report) — also handles the ternary conditional
@@ -954,6 +987,16 @@ class Parser:
         level and never descends into the assignment/ternary level,
         so the then-branch is a clean left-associative expression and
         the enclosing parser owns the ``:``.
+
+        B04 — ``allow_seq`` flag: the sequence-comma path is only
+        active at the *top level* of a statement/expression.  When
+        parsing the RHS of a declaration list, an object-literal
+        property value, or an array element, the enclosing grammar
+        rule owns the commas (declaration-list commas / property
+        commas / element commas); the sequence operator must NOT
+        swallow them.  Callers in those contexts pass
+        ``allow_seq=False`` (see ``parse_expression_decl_rhs`` /
+        ``parse_expression_obj_val`` / ``parse_expression_arr_el``).
         """
         left = self.parse_expression_min(1)
         t = self.peek()
@@ -965,14 +1008,62 @@ class Parser:
             if t.value != ":":
                 raise SyntaxError(f"expected ':' after ternary then-branch, got {t.value!r}")
             self.next()
-            else_branch = self.parse_assignment_min()  # right-associative
-            return Ternary(left, then_branch, else_branch)
-        if t.value in ("=", "+=", "-="):
+            else_branch = self.parse_assignment_min(allow_seq=allow_seq)  # right-associative
+            result = Ternary(left, then_branch, else_branch)
+        elif t.value in ("=", "+=", "-="):
             op = t.value
             self.next()
-            value = self.parse_assignment_min()
-            return Assign(left, op, value)
-        return left
+            # B04 — 赋值 RHS 恒为 allow_seq=False：序列逗号比赋值更松，
+            # 永远由 *外层* 序列循环消费（`a = b, c` → Seq(Assign(a,b), c)
+            # 而非 Assign(a, Seq(b, c))）。这里递归时显式传 False，
+            # 保证 RHS 自身不吞噬顶层逗号；嵌套括号内的序列
+            # （`a = (b, c)`）由 parse_primary 的括号路径独立处理，
+            # 不受影响。
+            value = self.parse_assignment_min(allow_seq=False)
+            result = Assign(left, op, value)
+        else:
+            result = left
+        # B04 — 序列表达式（逗号运算符）：JS 最低优先级，只在
+        # *顶层* 启用（allow_seq=True）。声明列表 / 对象属性 /
+        # 数组元素 / for-init 列表 / 调用参数上下文传
+        # allow_seq=False，逗号留给外层所属语法消费（B04 步骤 4：
+        # "不能通过直接切割源码逗号解决"）。
+        if allow_seq:
+            t2 = self.peek()
+            if t2.value == ",":
+                seq = [result]
+                while self.peek().value == ",":
+                    self.next()  # consume comma
+                    # 序列右侧：同级表达式（继承 allow_seq）。
+                    sub = self.parse_assignment_min(allow_seq=allow_seq)
+                    seq.append(sub)
+                return SeqExpr(seq)
+        return result
+
+    def parse_expression_decl_rhs(self) -> JNode:
+        """B04 — 解析 var/let/const 声明 RHS（允许三元/赋值，但
+        *不*允许序列逗号）。声明列表的逗号由 ``parse_statement`` 的
+        多声明 while 循环消费（B04 步骤 4）。"""
+        return self.parse_assignment_min(allow_seq=False)
+
+    def parse_expression_obj_val(self) -> JNode:
+        """B04 — 解析对象字面量属性值（允许三元/赋值，但不允许序列
+        逗号）。属性间逗号由 ``parse_object_lit`` 的 while 循环消费。"""
+        return self.parse_assignment_min(allow_seq=False)
+
+    def parse_expression_arr_el(self) -> JNode:
+        """B04 — 解析数组字面量元素（允许三元/赋值，但不允许序列
+        逗号）。元素间逗号由 ``parse_array_lit`` 的 while 循环消费。"""
+        return self.parse_assignment_min(allow_seq=False)
+
+    def parse_expression_arrow_body(self) -> JNode:
+        """B04 — 解析箭头函数表达式体（允许三元/赋值，但不允许顶层
+        序列逗号）。箭头体通常出现在调用参数 / 声明 RHS 等"所属
+        语法"内部，其顶层逗号应留给外层所属语法（如调用参数列表）
+        消费，而不是被序列表达式吞掉。括号内的序列
+        （``(acc + v, 0)``）由 parse_primary 的括号路径独立处理，
+        不受影响。"""
+        return self.parse_assignment_min(allow_seq=False)
 
     def parse_expression_inner(self, min_prec: int) -> JNode:
         """P12.2 — Pratt-style precedence climbing.
@@ -1181,7 +1272,7 @@ class Parser:
             # P16.1 — argument spread: `f(...xs)` records a CallSpread node.
             if self.peek().value == "...":
                 self.next()
-                args.append(CallSpread(self.parse_expression(0)))
+                args.append(CallSpread(self.parse_expression_obj_val()))
             else:
                 # P0 (agent report) — parse args at assignment level so a
                 # ternary (`c ? a : b`) inside a call arg is captured
@@ -1189,7 +1280,11 @@ class Parser:
                 # which owns the `?`/`:` handling).  The legacy
                 # parse_expression(1) stopped at binary ops and broke on
                 # a `?` in the arg list.
-                args.append(self.parse_expression(0))
+                # B04 — 调用参数走 parse_expression_obj_val()（允许
+                # 三元/赋值，但 *不*允许序列逗号），参数间逗号由本
+                # while 循环消费（B04 步骤 4：调用参数逗号由所属
+                # 语法消费，不经过序列表达式路径）。
+                args.append(self.parse_expression_obj_val())
             if self.match(","):
                 continue
             break
@@ -1235,10 +1330,14 @@ class Parser:
                     raise SyntaxError("new expects an identifier")
                 ctor_tok = self.next()
                 # Parse optional arguments.
+                # B04 — new 的参数列表是"所属语法"：逗号由下方 while
+                # 循环消费，参数自身不允许序列逗号（与 parse_arg_list
+                # 同理）。用 parse_expression_obj_val()（allow_seq=False）
+                # 解析每个参数。
                 args = []
                 if self.match("("):
                     while self.peek().value != ")":
-                        args.append(self.parse_expression(0))
+                        args.append(self.parse_expression_obj_val())
                         if not self.match(","):
                             break
                     self.expect(")")
@@ -1261,7 +1360,7 @@ class Parser:
             if params is not None:
                 return self.parse_arrow(params)
             # Otherwise: normal parenthesized expression.
-            e = self.parse_expression(1)
+            e = self.parse_expression(0)
             self.expect(")")
             return e
         # P13.2 — template literal: sequence of "tpl" text chunks interleaved
@@ -1315,10 +1414,12 @@ class Parser:
                 raise SyntaxError("new expects an identifier")
             ctor_name_tok = self.next()
             # Parse optional arguments.
+            # B04 — new 的参数列表是"所属语法"：逗号由下方 while 循环
+            # 消费，参数自身不允许序列逗号（与 parse_arg_list 同理）。
             args = []
             if self.match("("):
                 while self.peek().value != ")":
-                    args.append(self.parse_expression(0))
+                    args.append(self.parse_expression_obj_val())
                     if not self.match(","):
                         break
                 self.expect(")")
@@ -1338,7 +1439,11 @@ class Parser:
             body = self.parse_block()
             return ArrowFunc(params, body, is_block=True)
         else:
-            body = self.parse_expression(0)
+            # B04 — 箭头表达式体用 parse_expression_arrow_body()
+            # （允许三元/赋值，但 *不*允许顶层序列逗号）。箭头体
+            # 通常嵌套在调用参数等"所属语法"内部，其顶层逗号应留给
+            # 外层所属语法消费（B04 步骤 4）。括号内序列仍合法。
+            body = self.parse_expression_arrow_body()
             return ArrowFunc(params, body, is_block=False)
 
     def _try_parse_arrow_params(self) -> list | None:
@@ -1436,9 +1541,12 @@ class Parser:
             # P16.1 — array spread: ``...expr`` in element position.
             if self.peek().value == "...":
                 self.next()
-                elems.append(ArraySpread(self.parse_expression(0)))
+                elems.append(ArraySpread(self.parse_expression_arr_el()))
             else:
-                elems.append(self.parse_expression(0))
+                # B04 — 数组元素走 parse_expression_arr_el()（允许
+                # 三元/赋值，但 *不*允许序列逗号），元素间逗号由
+                # parse_array_lit 的 while 循环消费（B04 步骤 4）。
+                elems.append(self.parse_expression_arr_el())
             if self.match(","):
                 continue
             break
@@ -1462,7 +1570,10 @@ class Parser:
             # P16.1 — object spread: `{...obj}` — lexer emits a single "..." op.
             if self.peek().value == "...":
                 self.next()
-                src = self.parse_expression(0)
+                # B04 — spread 源走 parse_expression_obj_val()（允许
+                # 三元/赋值，但不允许序列逗号），属性间逗号由本 while
+                # 循环消费（B04 步骤 4：逗号由所属语法消费）。
+                src = self.parse_expression_obj_val()
                 pairs.append(("_spread_", ObjectSpread(src)))
                 if self.match(","):
                     continue
@@ -1477,7 +1588,10 @@ class Parser:
             else:
                 raise SyntaxError(f"expected property key, got {key_tok.value!r}")
             self.expect(":")
-            val = self.parse_expression(0)
+            # B04 — 对象属性值走 parse_expression_obj_val()（允许
+            # 三元/赋值，但 *不*允许序列逗号），属性间逗号由
+            # parse_object_lit 的 while 循环消费（B04 步骤 4）。
+            val = self.parse_expression_obj_val()
             pairs.append((key, val))
             if self.match(","):
                 continue
@@ -1550,19 +1664,37 @@ class Parser:
             nt = self.peek()
             if nt.value in ("{", "["):
                 return self.parse_destructuring(decl_kind)
+            # B04 — multi-variable declaration list: `var a=1, b=2;`
+            # Parse the first declaration, then loop on commas.
+            items: list = []
             name = self._expect_id().value
             value = None
             if self.match("="):
-                # P0 (GLM report) — the RHS of a declaration may be a
-                # ternary (`c ? 1 : 2`) or an assignment; parse at the
-                # lowest precedence so the full expression (including
-                # the ternary handled by parse_assignment_min) is
-                # captured.  The legacy ``parse_expression(1)`` went
-                # straight to the Pratt loop and stopped at ``?``
-                # (prec 0 < 1), raising "unexpected token '?'".
-                value = self.parse_expression(0)
+                # B04 — 声明 RHS 走 parse_expression_decl_rhs()（允许
+                # 三元/赋值，但 *不*允许序列逗号），声明列表的逗号
+                # 留给本语法的 while 循环消费（B04 步骤 4）。
+                value = self.parse_expression_decl_rhs()
+            items.append((name, value))
+            # B04 — comma-separated additional declarations
+            while self.peek().value == ",":
+                self.next()  # consume comma
+                # Next declaration in the list (could be destructuring
+                # in real JS; toy supports simple name[=value]).
+                nxt_name = self._expect_id().value
+                nxt_val = None
+                if self.match("="):
+                    # 同 RHS 理由：parse_expression_decl_rhs() 避免
+                    # 序列逗号路径，逗号留给本 while 循环。
+                    nxt_val = self.parse_expression_decl_rhs()
+                items.append((nxt_name, nxt_val))
+            if len(items) == 1:
+                # Single declaration — keep legacy LetDecl (no behavior
+                # change for existing tests).
+                self.match(";")
+                return LetDecl(name, value, decl_kind)
+            # B04 — MultiDecl for 2+ declarations
             self.match(";")
-            return LetDecl(name, value, decl_kind)
+            return MultiDecl(items, decl_kind)
         if t.value == "function":
             return self.parse_func_decl()
         # P1 (assessment report) — async function declaration:
@@ -1738,9 +1870,29 @@ class Parser:
             decl_name = self._expect_id().value
             decl_val = None
             if self.match("="):
-                decl_val = self.parse_expression(1)
+                # B04 — for-init 声明 RHS 走 parse_expression_decl_rhs()
+                # （允许三元/赋值，但 *不*允许序列逗号），for-init
+                # 列表的逗号由下方 while 循环消费（B04 步骤 4：
+                # 逗号由所属语法消费，不经过序列表达式路径）。
+                decl_val = self.parse_expression_decl_rhs()
+            # B04 — for-init 多声明：`for (var i = 0, j = 3; ...)`
+            items = [(decl_name, decl_val)]
+            while self.peek().value == ",":
+                self.next()  # consume comma
+                # 多声明项之间不允许嵌套序列：RHS 走
+                # parse_expression_decl_rhs()（允许三元/赋值，但不
+                # 允许序列逗号），for-init 列表的逗号由本 while 循环
+                # 消费（B04 步骤 4：逗号由所属语法消费）。
+                nxt_name = self._expect_id().value
+                nxt_val = None
+                if self.match("="):
+                    nxt_val = self.parse_expression_decl_rhs()
+                items.append((nxt_name, nxt_val))
             self.match(";")
-            init = LetDecl(decl_name, decl_val, decl_kind)
+            if len(items) == 1:
+                init = LetDecl(decl_name, decl_val, decl_kind)
+            else:
+                init = MultiDecl(items, decl_kind)
         elif self.peek().value != ";":
             init = self.parse_expression(0)
             self.match(";")
@@ -2177,6 +2329,26 @@ class Interpreter:
             v = self.eval(node.value) if node.value is not None else None
             self.env.define(node.name, v, kind=node.kind)
             return v
+        # B04 — multi-variable declaration list: `var a=1, b=2, c=3;`
+        # Each binding is defined in the SAME scope with the shared
+        # kind (preserves let/const block scoping + TDZ + const
+        # re-assignment limits).  Evaluate each initializer in source
+        # order.
+        if isinstance(node, MultiDecl):
+            last_v = None
+            for name, val_expr in node.items:
+                v = self.eval(val_expr) if val_expr is not None else None
+                self.env.define(name, v, kind=node.kind)
+                last_v = v
+            return last_v
+        # B04 — sequence expression: `(e1, e2, ..., en)` — lowest
+        # precedence in JS.  Evaluate each sub-expression left-to-
+        # right; the result is the last expression's value.
+        if isinstance(node, SeqExpr):
+            v = None
+            for sub in node.exprs:
+                v = self.eval(sub)
+            return v
         # P13.1 — destructuring declaration (P33.R3: kind-aware)
         if isinstance(node, DestructuringDecl):
             rhs = self.eval(node.value)
@@ -2543,6 +2715,10 @@ class Interpreter:
         for s in block.stmts:
             if isinstance(s, LetDecl) and s.kind in ("let", "const"):
                 block_env.declare_block(s.name, s.kind)
+            # B04 — MultiDecl (let/const) 每个声明都要预声明 TDZ 记录
+            elif isinstance(s, MultiDecl) and s.kind in ("let", "const"):
+                for nm, _ in s.items:
+                    block_env.declare_block(nm, s.kind)
         last: Any = None
         try:
             for s in block.stmts:

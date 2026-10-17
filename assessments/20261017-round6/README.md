@@ -361,6 +361,31 @@
 - `line_baseline`（C03 步骤 4）：未设 line-height 时基线 = y + ascent、行高 = ascent + descent；设 line-height 时基线居中行盒。
 - `runs_overlap`（C03 验收 "各片段按顺序且不重叠"）：两行 y / x 区间相交判定（用作回归断言，不应发生重叠）。
 
+## 批次 16 完成的工作项（B03 脚本异常隔离 + B04 多变量声明 / 序列表达式，纯逻辑核心）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| B03 脚本异常隔离（错误分类 + 页面级聚合） | 完成 | `toy_browser/scripting/script_error.py`（`ErrorCategory` / `ScriptPhase` / `ScriptErrorRecord` / `PageErrorAggregator`） | `tests/test_script_error.py`（16 条） |
+| B04 多变量声明 + 序列表达式（JS 引擎纯逻辑核心） | 完成 | `toy_browser/scripting/js.py`（`MultiDecl` / `SeqExpr` AST + `parse_assignment_min(allow_seq=…)` 逗号归属规则） | `tests/test_js_multi_decl.py`（15 条） |
+
+### B03 脚本异常隔离（`script_error.py`）
+- `ErrorCategory`：`NETWORK / POLICY / SCRIPT / RENDER` 四类（B03 步骤 1 "错误分类"）；`ScriptPhase`：`FETCH / PARSE / RUNTIME / EVENT` 脚本阶段。
+- `ScriptErrorRecord`：一条脚本异常记录（`nav_id` / `script_id` / `category` / `phase` / `message` / `position` / `caught` / `extra`）+ `summary()` 人类可读摘要。
+- `PageErrorAggregator`（B03 步骤 2 "页面级聚合"）：
+  - `record` / `record_uncaught_script` 登记；`continues_after_failure(script_id)` 判定"同脚本已捕获异常可继续、未捕获则中止该脚本"；
+  - `page_is_usable()` 渲染崩溃 / DOM 不可用 / 文档未提交 → 页面不可用；
+  - `has_uncaught_script_errors()` / `status_line()`（"已显示，N 个脚本失败"）/ `cli_result`（结构化结果供 CLI / 诊断区消费）；
+  - **有效脚本 → 无效脚本 → 有效脚本**顺序回归：单个脚本失败不阻断后续脚本执行（与 `js.py` 既有 `execute_scripts_in_order` 的"未捕获 throw 按脚本继续"语义对齐）。
+- **纯逻辑核心**：不触碰 GUI；真实"导航/渲染/脚本"接线与状态栏展示属后续活显示批次。
+
+### B04 多变量声明 + 序列表达式（`js.py`）
+- **AST**：`MultiDecl(items, kind)`（`var a=1, b=2` 的多声明列表）与 `SeqExpr(exprs)`（序列表达式，JS 最低优先级逗号运算符）；`MultiDecl` 求值左到右逐项定义到**同一**作用域（保持 `let`/`const` 块级作用域 + TDZ + `const` 不可重赋值，B04 步骤 2 "不合并成多个错误作用域"）。
+- **逗号归属规则（B04 步骤 4 "不能通过直接切割源码逗号解决"）**：`parse_assignment_min(allow_seq=…)` 新增标志。序列逗号路径只在**顶层表达式**（`allow_seq=True`）启用；声明列表 / 对象属性值 / 数组元素 / 调用参数 / for-init 列表 / `new` 参数 / 箭头表达式体这些**所属语法**传 `allow_seq=False`，其内部逗号由各自的 `while` 循环消费。专用助手 `parse_expression_decl_rhs` / `parse_expression_obj_val` / `parse_expression_arr_el` / `parse_expression_arrow_body` 各归其位。
+- **`allow_seq=False` 的赋值 RHS 继承该标志**：`a = b, c` 解析为 `Seq(Assign(a, b), c)` 而非 `Assign(a, Seq(b, c))`（逗号比赋值更松，序列逗号永远由最外层调用消费；括号内序列 `a = (b, c)` 由 `parse_primary` 括号路径独立处理，不受影响）。
+- **`new` 参数列表 + 对象 spread 源 + 数组元素 + 箭头表达式体** 全部改走 `allow_seq=False` 助手，修复了 B04 改造一度破坏的 `new Point(3, 4)` 参数丢失 / 对象 spread `{...{a:1}, b:2}` / `a.reduce((acc, v) => acc + v, 0)` 箭头体吞逗号等回归。
+- **构造器帧 / 类方法帧函数级作用域**：`ToyClass.__call__` 的 ctor 帧显式 `frame._is_func = True` + 参数直写 `frame.scope`（与 `_make_func` / `_make_arrow` 的帧语义一致），修复 `new C(x, y)` 构造器参数 `ReferenceError`。
+- `eval_block` TDZ 预声明对 `MultiDecl` 逐项 `declare_block`。
+
 ## 本批未完成 / 阻塞项
 
 - **C06 增量布局接入 `layout.py`**：本批落纯逻辑决策层（失效等级 +
@@ -388,14 +413,16 @@
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘 / G09 标签切换的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑
   与协议公式。
-- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
-  语义、错误分类），不在本批范围。
+- 百度等真实网站可用性：B03（脚本异常隔离）+ B04（JS 多变量声明 /
+  序列表达式）纯逻辑核心已在批次 16 落地；剩余阻断项 B01（统一导航
+  控制器）、B05（location 语义）、B06–B10（编辑 / 激活 / 生命周期 /
+  首帧 / 异步取消）的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1300/1300 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27） |
+| `py -3 test.py` | **1331/1331 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31） |
 
 ## 批次 2 关键实现说明
 
@@ -567,8 +594,8 @@
   缓存、C02 填充 / 混合 / 图片 / 字形逐阶段迁移到连续缓冲区。
 - 滚轮 / 滚动条 / G03 编辑覆盖层 / G06 resize / G10 诊断区 / G11
   键盘的 Tk 实测需有显示环境执行；本批回归覆盖纯逻辑与协议公式。
-- 百度等真实网站可用性仍受 B01–B10 阻断（JS 多变量声明、location
-  语义、错误分类），不在本批范围。
+- 百度等真实网站可用性：B03 + B04 纯逻辑核心已落地（批次 16）；剩余
+  B01 / B05 / B06–B10 的纯逻辑部分留作后续批次。
 
 ## 回归数字
 
