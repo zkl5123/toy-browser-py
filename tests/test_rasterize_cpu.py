@@ -520,6 +520,136 @@ def test_c02_refresh_canvas_cpu_fallback_to_bitmap():
     assert called["photos"] == []
 
 
+# ---------------------------------------------------------------------------
+# 批次 45 — paint_engine 命令分派直接画到 CPUCanvas（CpuImageBitmapView）
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 批次 45 — paint_engine 命令分派直接画到 CPUCanvas（CpuImageBitmapView）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_cpu_image_bitmap_view_read_write():
+    """批次 45 — CpuImageBitmapView 的 pixels 视图直接落到 CPUImage
+    RGB8 buffer（读写 round-trip，不复制 int 列表）。"""
+    from toy_browser.rendering.cpu_image import CpuImageBitmapView
+    img = CPUImage(10, 8)
+    img.buffer = bytearray([0xFF] * (img.stride * img.height))
+    view = CpuImageBitmapView(img)
+    try:
+        view.pixels[0] = 0xFF0000
+    except Exception as e:
+        raise AssertionError(f"pixels[0]= 写失败: {e!r}")
+    try:
+        assert view.pixels[0] == 0xFF0000
+    except Exception as e:
+        raise AssertionError(f"pixels[0] 读断言失败: {e!r}")
+    try:
+        assert img.get_pixel(0, 0) == (255, 0, 0)
+    except Exception as e:
+        raise AssertionError(f"get_pixel(0,0) 断言失败: {e!r}")
+    # 切片读（行 0：pixels[0] 已写 0xFF0000，pixels[1] 白底 0xFFFFFF）
+    row = view.pixels[0:10]
+    assert len(row) == 10 and row[0] == 0xFF0000 and row[1] == 0xFFFFFF
+    # fill_rect via view
+    try:
+        view.fill_rect(0, 0, 3, 2, Color(0, 0, 255, 255))
+    except Exception as e:
+        raise AssertionError(f"fill_rect 失败: {e!r}")
+    try:
+        assert img.get_pixel(0, 0) == (0, 0, 255)
+    except Exception as e:
+        raise AssertionError(f"fill_rect 后 get_pixel 断言失败: {e!r}")
+    # set_pixel via view（半透明 blend_over；白底上 50% 红色 →
+    # R 保持 255、G/B 各降到 ~128（白底不变 R 通道））
+    view.set_pixel(5, 5, Color(255, 0, 0, 128))
+    dr, dg, db = img.get_pixel(5, 5)
+    assert dr == 255 and 120 <= dg <= 135 and 120 <= db <= 135
+    # pixel_at
+    try:
+        assert view.pixel_at(1, 1) == (0, 0, 255)
+    except Exception as e:
+        raise AssertionError(f"pixel_at 断言失败: {e!r}")
+
+
+@_reg
+def test_rasterize_to_canvas_matches_rasterize():
+    """批次 45 — paint_engine.rasterize_to_canvas 与权威
+    paint_engine.rasterize 逐像素一致（混合命令：rect + border +
+    text + shadow + rounded，无 scratch Bitmap 合并层）。"""
+    from toy_browser.rendering.paint_engine import (
+        rasterize_to_canvas)
+    dl = _dl_mixed()
+    bmp = pe_rasterize(dl, 100, 90)
+    canvas = rasterize_to_canvas(dl, 100, 90)
+    diff = cpu_matches_bitmap(canvas.img, bmp)
+    assert len(diff) == 0, diff[:5]
+
+
+def _dl_mixed():
+    """混合命令 DisplayList（rect + border + text + shadow +
+    rounded + gradient，覆盖 paint_engine 主要命令分派）。"""
+    dl = DisplayList()
+    dl.commands.append(DisplayCommand(
+        kind="rect", x=5, y=5, w=30, h=20, color=Color(255, 0, 0)))
+    dl.commands.append(DisplayCommand(
+        kind="border", x=10, y=10, w=20, h=15, color=Color(0, 0, 255)))
+    dl.commands.append(DisplayCommand(
+        kind="text", x=2, y=2, w=40, h=10, text="Hi",
+        text_color=Color(0, 128, 0), font_px=10, max_width=40))
+    dl.commands.append(DisplayCommand(
+        kind="shadow", x=40, y=40, w=20, h=20,
+        color=Color(50, 50, 50, 128), radius=4,
+        shadow_offset_x=2, shadow_offset_y=2, shadow_radius=4))
+    dl.commands.append(DisplayCommand(
+        kind="rounded", x=60, y=60, w=25, h=25,
+        color=Color(255, 128, 0), radius=8))
+    dl.commands.append(DisplayCommand(
+        kind="gradient", x=5, y=50, w=30, h=20,
+        grad_c1=Color(255, 0, 0), grad_c2=Color(0, 0, 255),
+        grad_angle="to right"))
+    return dl
+
+
+@_reg
+def test_rasterize_to_canvas_odd_width_stride():
+    """批次 45 — rasterize_to_canvas 奇数宽度 + 非紧凑 stride 时
+    与 rasterize 逐像素一致（buffer stride 边界正确）。"""
+    from toy_browser.rendering.paint_engine import (
+        rasterize_to_canvas)
+    dl = _dl_mixed()
+    bmp = pe_rasterize(dl, 101, 63)
+    canvas = rasterize_to_canvas(dl, 101, 63, stride=101 * 3 + 4)
+    diff = cpu_matches_bitmap(canvas.img, bmp)
+    assert len(diff) == 0, diff[:5]
+
+
+@_reg
+def test_gui_c02_rasterize_uses_canvas_path():
+    """批次 45 — gui._c02_rasterize_cpu_image 走
+    paint_engine.rasterize_to_canvas 直接画到 CPUCanvas（消除
+    scratch Bitmap 合并层），返回的 CPUImage 与权威 rasterize 逐
+    像素一致。"""
+    from toy_browser.app.gui import TabBrowser
+    from toy_browser.rendering.paint_engine import rasterize_to_canvas
+    page = _PageStub44(width=100, height=90, content_height=90,
+                       last_dl=_dl_mixed())
+    tb = object.__new__(TabBrowser)
+    tb.tabs = [page]
+    tb.current = 0
+    tb.canvas_var = {}
+    tb.page_frames = {}
+    img = tb._c02_rasterize_cpu_image(page)
+    assert img is not None
+    canvas = rasterize_to_canvas(page._last_dl, 100, 90)
+    diff = cpu_matches_bitmap(img, canvas.img)
+    assert len(diff) == 0, diff[:5]
+    # 页面未加载（_last_dl None）时返回 None
+    page2 = _PageStub44(last_dl=None)
+    tb.tabs = [page2]
+    assert tb._c02_rasterize_cpu_image(page2) is None
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

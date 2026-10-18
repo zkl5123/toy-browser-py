@@ -27,14 +27,15 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–44（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–45（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
 loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage +
-_c02_refresh_canvas_cpu 设为默认呈现路径。完整回归
-**1824/1824**（基线 939 + 批次 1–44 新增 885）。P01–P13 GPU 系列未实施。
-逐项批次记录见
+_c02_refresh_canvas_cpu 设为默认呈现路径 +
+paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）。
+完整回归 **1828/1828**（基线 939 + 批次 1–45 新增 889）。P01–P13 GPU
+系列未实施。逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -106,6 +107,22 @@ _c02_refresh_canvas_cpu 设为默认呈现路径。完整回归
   `tests/test_rasterize_cpu.py` 新增 4 条（stub 驱动
   `object.__new__(TabBrowser)` 验证默认呈现路径优先 CPUImage + 回退
   Bitmap + bitmap is None 提前返回 + full is None 时回退 _refresh_canvas）
+- 批次 45：paint_engine 命令分派直接画到 CPUCanvas（消除 scratch
+  Bitmap 合并层）——`cpu_image.CPUImage.to_view()` 返回
+  `CpuImageBitmapView`（Bitmap 的 0xRRGGBB int 列表可写视图，直接
+  包裹 RGB8 buffer，零复制；`pixels` 返回 `_Rgb8U32List` 索引 / 切片
+  读写直接落 buffer；`set_pixel` / `pixel_at` / `fill_rect` 与 Bitmap
+  同语义，半透明走与 `Color.blend_over` 同公式的 src-over 混合）+
+  `paint_engine.rasterize_to_canvas`（命令分派直接画到 CPUCanvas，经
+  `CpuImageBitmapView` 注入既有 helper，与 `rasterize` 同一管线逐像素
+  一致）+ `_rasterize_into` 提取公共光栅化管线（Bitmap / CPUCanvas
+  两条路径共用）+ `gui._c02_rasterize_cpu_image` 改用
+  `rasterize_to_canvas`（消除 scratch Bitmap + from_bitmap 合并层），
+  `tests/test_rasterize_cpu.py` 新增 4 条（CpuImageBitmapView 视图读写
+  round-trip + rasterize_to_canvas 与 rasterize 逐像素一致（混合命令：
+  rect + border + text + shadow + rounded + gradient）+ 奇数宽度 /
+  非紧凑 stride 逐像素一致 + gui._c02_rasterize_cpu_image 走直接画
+  路径 + 页面未加载时返回 None）
 
 ### 未实施（留待后续批次）
 
@@ -113,7 +130,7 @@ _c02_refresh_canvas_cpu 设为默认呈现路径。完整回归
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
-- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径已在批次 44 落地，`paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）留后续）
+- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径已在批次 44 落地；`paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）已在批次 45 落地）
 - TTF 字形正确性修复 + DPI / 抗锯齿优化
 
 ---

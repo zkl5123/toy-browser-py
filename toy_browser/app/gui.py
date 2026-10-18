@@ -1270,23 +1270,22 @@ class TabBrowser:
     # C02 批次 40 — 活显示 rasterize 切到 CPUImage 连续 buffer
     # ------------------------------------------------------------------
     def _c02_rasterize_cpu_image(self, page) -> "Optional[CPUImage]":
-        """C02 批次 40 — 活显示呈现入口：把页面光栅化到
+        """C02 批次 45 — 活显示呈现入口：把页面光栅化到
         :class:`CPUImage`（RGB8 连续 buffer，不逐帧还原 int 列表）。
 
-        用批次 40 :func:`rasterize_to_cpu_image`（权威路径：跑已验证的
-        ``paint_engine.rasterize`` 得 Bitmap，再 ``from_bitmap`` 一次性
-        转 RGB8 buffer）；后续批次可切到 :func:`rasterize_direct`
-        （rect / border 直接落 buffer）进一步消除 scratch Bitmap。
-        取页面缓存的 ``_last_dl``（restate / initial load 时设置），
-        无缓存（未加载页面）时返回 None。
+        批次 45 起改用 :func:`paint_engine.rasterize_to_canvas`（命令
+        分派**直接画到** :class:`CPUCanvas`，消除 scratch Bitmap 合并
+        层——C02 目标"避免每次呈现又从连续缓冲区还原大 int 列表"的
+        写侧落地），取页面缓存的 ``_last_dl``（restate / initial load
+        时设置），无缓存（未加载页面）时返回 None。
         """
-        from toy_browser.rendering.rasterize_cpu import (
-            rasterize_to_cpu_image)
+        from toy_browser.rendering import paint_engine as _pe
         dl = getattr(page, "_last_dl", None)
         if dl is None:
             return None
         full_h = page.content_height or page.height
-        return rasterize_to_cpu_image(dl, page.width, full_h)
+        canvas = _pe.rasterize_to_canvas(dl, page.width, full_h)
+        return canvas.img
 
     def _c02_refresh_canvas_cpu(self, idx: int) -> None:
         """C02 批次 40 — 活显示刷新：经 CPUImage 连续 buffer 呈现

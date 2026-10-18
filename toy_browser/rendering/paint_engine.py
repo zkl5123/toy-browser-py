@@ -762,24 +762,48 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
         pass
 
 
-def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
-    bmp = Bitmap(width, height)
+def rasterize_to_canvas(dl, width: int, height: int,
+                       stride: int = 0):
+    """批次 45 — C02 活显示 rasterize 入口：命令分派直接画到
+    :class:`CPUCanvas`（RGB8 连续 buffer），**消除 scratch Bitmap
+    合并层**。
+
+    与 :func:`rasterize` 同一管线（emit → cull → 逐命令 draw →
+    clip / filter / scroll-clip 后处理），但所有命令 + 后处理直接
+    写进 :class:`CPUImage` 的 RGB8 buffer（经 :class:`
+    CpuImageBitmapView` 的 0xRRGGBB int 列表视图，不还原大 int
+    列表）。与 :func:`rasterize` 逐像素一致（回归经
+    :func:`cpu_matches_bitmap` 核对）。
+
+    * ``dl`` — :class:`DisplayList`（含 ``commands``）。
+    * 返回 :class:`CPUCanvas`（含 :attr:`CPUCanvas.img` = :class:`
+      CPUImage`），GUI 呈现走 ``img.to_ppm_bytes`` / Tk PhotoImage
+      直接消费。
+    """
+    from toy_browser.rendering.cpu_image import CpuImageBitmapView
+    from toy_browser.rendering.rasterize_cpu import CPUCanvas
+    canvas = CPUCanvas.of_size(width, height, stride)
+    # 把 view 注入所有既有 helper（它们按 bmp.width / bmp.height /
+    # bmp.pixels / bmp.fill_rect / bmp.set_pixel 读写）——直接落到
+    # CPUImage 的 RGB8 buffer，不还原大 int 列表（C02 写侧目标）。
+    _rasterize_into(dl, canvas, CpuImageBitmapView(canvas.img),
+                    width, height)
+    return canvas
+
+
+def _rasterize_into(dl, target, bmp, width: int, height: int) -> None:
+    """批次 45 — 把 *dl* 光栅化写进 *bmp*（:class:`Bitmap` 或
+    :class:`CpuImageBitmapView`），与 :func:`rasterize` 同一管线
+    （cull → 逐命令 draw → clip / filter / scroll-clip 后处理）。
+
+    *target* 仅用于类型标注（CPUCanvas 或 Bitmap），实际写入走
+    *bmp* 的 Bitmap 兼容 API（pixels / fill_rect / set_pixel）。
+    """
+    from toy_browser.typography import text as text_mod_local
     # P9.4 — collect clip-path insets from all commands for a post-pass.
-    # P34.3 — the legacy code scanned the whole command list *and* the
-    # culling loop below for the same clip regions; a 10k-node display
-    # list paid 2×21200 attribute reads.  Merge the two passes: the
-    # culling loop already visits every command that survives, so the
-    # clip-region collection can ride along in the same loop.
     clip_regions: list[tuple] = []
     for cmd in dl.commands:
-        # P34.3 — viewport culling: commands whose box does not
-        # intersect the bitmap are skipped entirely.  A zero-area
-        # box at (x, y) *does* touch the pixel at (x, y) — that is
-        # where text commands draw their first line — so the top-left
-        # corner test only rejects boxes that are *fully* outside.
-        # In a real page with scrolling, most of a 10k-node display
-        # list lies below the viewport; culling keeps the rasterizer
-        # O(visible) instead of O(total).
+        # P34.3 — viewport culling（同 rasterize 既有逻辑）。
         if cmd.x >= width or cmd.y >= height:
             continue
         if cmd.x + cmd.w < 0 or cmd.y + cmd.h < 0:
@@ -793,21 +817,14 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
             if cmd.color is not None:
                 bmp.fill_rect(cmd.x, cmd.y, cmd.w, cmd.h, cmd.color)
         elif cmd.kind == "rounded":
-            # P5.1 — rounded-rect background fill (corner clipping via per-pixel test).
             if cmd.color is not None:
                 _fill_rounded(bmp, cmd)
         elif cmd.kind == "shadow":
-            # P5.1 — soft box shadow: dilated rounded-rect with alpha ramp.
             _draw_shadow(bmp, cmd)
         elif cmd.kind == "border":
             _draw_border(bmp, cmd)
         elif cmd.kind == "text":
-            # P28 — text commands may carry their own text_color (used by
-            # form control labels); fall back to the box's fill color.
             color = cmd.text_color if cmd.text_color is not None else (cmd.color if cmd.color is not None else Color(0, 0, 0))
-            # P34.3 — skip draw_text when the command is off-screen but
-            # not culled by the top-level check (e.g. a text command with
-            # negative w/h that still touches the viewport).
             text_mod.draw_text(
                 bmp,
                 cmd.x,
@@ -822,13 +839,10 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
                 font_weight=cmd.font_weight,
             )
         elif cmd.kind == "img":
-            # P3.1 — nearest-neighbour scale the embedded pixels into the box.
             _paint_img_pixels(bmp, cmd)
         elif cmd.kind == "gradient":
-            # P9.4 — linear gradient fill (toy: 2-stop, per-pixel lerp).
             _draw_gradient(bmp, cmd)
         elif cmd.kind == "text_shadow":
-            # P9.4 — text shadow: draw the text offset with shadow color.
             color = cmd.color if cmd.color is not None else Color(0, 0, 0)
             text_mod.draw_text(
                 bmp,
@@ -847,6 +861,14 @@ def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
     _apply_filters(bmp, dl)
     # P14.1 — apply scroll-container clips as a post-pass.
     _apply_scroll_clips(bmp, dl)
+
+
+def rasterize(dl: DisplayList, width: int, height: int) -> Bitmap:
+    """既有权威路径：光栅化 *dl* 出 :class:`Bitmap`（0xRRGGBB int
+    列表），与批次 45 :func:`rasterize_to_canvas` 逐像素一致（回归
+    经 :func:`cpu_matches_bitmap` 核对）。"""
+    bmp = Bitmap(width, height)
+    _rasterize_into(dl, bmp, bmp, width, height)
     return bmp
 
 

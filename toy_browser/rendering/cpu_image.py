@@ -63,13 +63,28 @@ class CPUImage:
         i = y * self.stride + x * self._BYTES_PER_PIXEL
         return (self.buffer[i], self.buffer[i + 1], self.buffer[i + 2])
 
-    def set_pixel(self, x: int, y: int, r: int, g: int, b: int) -> None:
+    def set_pixel(self, x: int, y: int, r: int, g: int, b: int,
+                  a: int = 255) -> None:
+        """按 (r, g, b, a) 设置像素（越界 clamp 到 buffer 边界；
+        a=255 不透明直写，半透明 src-over 混合，与 ``Bitmap.set_pixel``
+        的 blend_over 同公式（255 归一：``r*a + dr*(255-a)``）。"""
+        x = int(x)
+        y = int(y)
         if x < 0 or y < 0 or x >= self.width or y >= self.height:
             return
-        i = y * self.stride + x * self._BYTES_PER_PIXEL
-        self.buffer[i] = r & 0xFF
-        self.buffer[i + 1] = g & 0xFF
-        self.buffer[i + 2] = b & 0xFF
+        i = y * self.stride + x * 3
+        dr, dg, db = self.buffer[i], self.buffer[i + 1], self.buffer[i + 2]
+        if a == 255:
+            self.buffer[i] = r & 0xFF
+            self.buffer[i + 1] = g & 0xFF
+            self.buffer[i + 2] = b & 0xFF
+            return
+        # 半透明 src-over（与 Color.blend_over 同公式：
+        # min(255, int(r*(a/255) + dr*(1-a/255)))）。
+        sa = a / 255.0
+        self.buffer[i] = min(255, int(r * sa + dr * (1.0 - sa))) & 0xFF
+        self.buffer[i + 1] = min(255, int(g * sa + dg * (1.0 - sa))) & 0xFF
+        self.buffer[i + 2] = min(255, int(b * sa + db * (1.0 - sa))) & 0xFF
 
     # ------------------------------------------------------------------
     # 从 Bitmap 转换（0xRRGGBB int 列表 → 连续 RGB8）
@@ -168,6 +183,20 @@ class CPUImage:
                     n += 1
         return n
 
+    def to_view(self) -> "CpuImageBitmapView":
+        """批次 45 — 返回 :class:`CpuImageBitmapView`（``paint.Bitmap``
+        的 0xRRGGBB int 列表**视图**，直接包裹本 buffer，不复制）。
+
+        供 ``paint_engine`` / ``typography`` 既有命令分派直接画到
+        :class:`CPUImage`（消除 scratch Bitmap 合并层——C02 目标
+        "避免每次呈现又从连续缓冲区还原大 int 列表" 的**写侧**）：
+        所有经 :meth:`pixels` 属性的读写都直接落到 RGB8 buffer。
+        注意：视图的 ``width`` / ``height`` 与 buffer 一致，但
+        :meth:`save_ppm` / :meth:`to_ppm_bytes` 等仍走 :class:`Bitmap`
+        的 int 列表语义（视图按需还原）；优先用 :meth:`CPUImage` 自身的
+        ``to_ppm_bytes`` / ``to_png_bytes`` 等 buffer 直接路径。"""
+        return CpuImageBitmapView(self)
+
     # ------------------------------------------------------------------
     # 尺寸 / 校验
     # ------------------------------------------------------------------
@@ -177,6 +206,155 @@ class CPUImage:
 
     def is_empty(self) -> bool:
         return self.width <= 0 or self.height <= 0
+
+
+# ----------------------------------------------------------------------
+# 批次 45 — Bitmap 兼容视图（直接画到 CPUImage RGB8 buffer）
+# ----------------------------------------------------------------------
+
+class CpuImageBitmapView:
+    """批次 45 — :class:`paint.Bitmap` 的 **0xRRGGBB int 列表视图**，
+    直接包裹 :class:`CPUImage` 的 RGB8 buffer（不复制、不还原大 int
+    列表）。
+
+    * ``img`` — 底层 :class:`CPUImage`。
+    * ``width`` / ``height`` — 与 ``img`` 一致。
+    * ``pixels`` — 返回**可写**的 :class:`_Rgb8U32List`（0xRRGGBB 语义，
+      读写直接落到 ``img.buffer``）。
+
+    供 ``paint_engine`` / ``typography`` 既有命令分派（按 ``bmp.pixels``
+    int 列表读写的 ``draw_text`` / ``_fill_polygon`` / ``_paint_img_pixels``
+    等）直接画到 :class:`CPUImage`——消除 scratch Bitmap 合并层。
+    兼容 :meth:`Bitmap.set_pixel` / :meth:`Bitmap.pixel_at` 同语义（越界
+    clamp / 不透明直写 / 半透明 blend_over）。
+    """
+
+    def __init__(self, img: CPUImage) -> None:
+        self.img = img
+        self.width = img.width
+        self.height = img.height
+
+    @property
+    def pixels(self):
+        """返回 :class:`_Rgb8U32List`（0xRRGGBB int 列表语义，可写，
+        直接落到 RGB8 buffer）。"""
+        if not hasattr(self, "_view"):
+            self._view = _Rgb8U32List(self.img)
+        return self._view
+
+    def set_pixel(self, x: int, y: int, color: "Color") -> None:
+        """与 :meth:`Bitmap.set_pixel` 同语义（越界 clamp + blend_over）。
+
+        直接经 :meth:`CPUImage.set_pixel` 落到 RGB8 buffer（半透明走
+        与 :class:`Color.blend_over` 同公式的 src-over 混合，保证与
+        Bitmap 路径逐像素一致）。"""
+        xi = int(x)
+        yi = int(y)
+        if xi < 0 or yi < 0 or xi >= self.width or yi >= self.height:
+            return
+        if color.a == 255:
+            self.img.set_pixel(xi, yi, color.r, color.g, color.b, 255)
+            return
+        dr, dg, db = self.img.get_pixel(xi, yi)
+        v = (dr << 16) | (dg << 8) | db
+        nv = color.blend_over(v)
+        self.img.set_pixel(xi, yi, (nv >> 16) & 0xFF, (nv >> 8) & 0xFF,
+                           nv & 0xFF, 255)
+
+    def pixel_at(self, x: int, y: int) -> tuple:
+        """与 :meth:`Bitmap.pixel_at` 同语义（返回 (r,g,b) clamp 越界）。"""
+        return self.img.get_pixel(x, y)
+
+    def fill_rect(self, x: float, y: float, w: float, h: float,
+                  color: "Color") -> None:
+        """与 :meth:`Bitmap.fill_rect` 同语义（越界 clamp + 不透明快
+        路径 / 半透明 blend_over），直接落 RGB8 buffer。"""
+        from toy_browser.rendering.cpu_image_fill import fill_rect_rgb8
+        fill_rect_rgb8(self.img, x, y, w, h,
+                       color.r, color.g, color.b, color.a)
+
+    def to_bitmap(self):
+        """转 :class:`paint.Bitmap`（0xRRGGBB int 列表）——按需一次性
+        还原（供需要独立 int 列表的消费端；视图本身零复制）。"""
+        from toy_browser.rendering.paint import Bitmap, WHITE
+        bmp = Bitmap(self.width, self.height, WHITE)
+        view = self.pixels
+        for i in range(self.width * self.height):
+            bmp.pixels[i] = view[i]
+        return bmp
+
+
+class _Rgb8U32List:
+    """批次 45 — 0xRRGGBB int 列表的**可写视图**，直接包裹
+    :class:`CPUImage` 的 RGB8 buffer（索引语义与 ``paint.Bitmap.pixels``
+    一致：``idx = y * width + x``，元素为 0x00RRGGBB u32）。
+
+    * ``__getitem__`` / ``__setitem__`` / ``__len__`` / ``__iter__`` /
+      切片（整行读，写回 buffer；整行写，逐元素解包写 buffer）。
+
+    供 ``paint_engine`` / ``typography`` 既有命令分派（按
+    ``bmp.pixels[idx]`` 读写）直接画到 :class:`CPUImage`。
+    """
+
+    def __init__(self, img: CPUImage) -> None:
+        self._img = img
+        self._w = img.width
+        self._h = img.height
+        self._stride = img.stride
+        self._buf = img.buffer
+
+    def __len__(self) -> int:
+        return self._w * self._h
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            start, stop, step = i.indices(self._w * self._h)
+            if step != 1:
+                return [self[k] for k in range(start, stop, step)]
+            out = []
+            buf = self._buf
+            stride = self._stride
+            for k in range(start, stop):
+                py, px = divmod(k, self._w)
+                off = py * stride + px * 3
+                out.append((buf[off] << 16) | (buf[off + 1] << 8)
+                           | buf[off + 2])
+            return out
+        py, px = divmod(int(i), self._w)
+        off = py * self._stride + px * 3
+        buf = self._buf
+        return (buf[off] << 16) | (buf[off + 1] << 8) | buf[off + 2]
+
+    def __setitem__(self, i, value) -> None:
+        buf = self._buf
+        stride = self._stride
+        if isinstance(i, slice):
+            start, stop, step = i.indices(self._w * self._h)
+            if step != 1 or not isinstance(value, (list, tuple)):
+                raise TypeError("_Rgb8U32List slice 赋值需连续 step=1 序列")
+            if len(value) != stop - start:
+                raise ValueError("切片长度不匹配")
+            for k in range(start, stop):
+                py, px = divmod(k, self._w)
+                off = py * stride + px * 3
+                v = value[k - start] & 0xFFFFFF
+                buf[off] = (v >> 16) & 0xFF
+                buf[off + 1] = (v >> 8) & 0xFF
+                buf[off + 2] = v & 0xFF
+            return
+        py, px = divmod(int(i), self._w)
+        off = py * stride + px * 3
+        v = int(value) & 0xFFFFFF
+        buf[off] = (v >> 16) & 0xFF
+        buf[off + 1] = (v >> 8) & 0xFF
+        buf[off + 2] = v & 0xFF
+
+    def __iter__(self):
+        for k in range(self._w * self._h):
+            yield self[k]
+
+    def __repr__(self) -> str:
+        return f"_Rgb8U32List({self._w}x{self._h})"
 
 
 # ----------------------------------------------------------------------

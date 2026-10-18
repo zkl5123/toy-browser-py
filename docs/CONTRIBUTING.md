@@ -11,7 +11,7 @@ HTML → DOM parse → CSS cascade → Layout → Paint → Rasterize → Bitmap
 ## Getting started
 
 1. Clone the repo.
-2. Run the test suite: `python test.py` (1824 tests, all pure stdlib; the
+2. Run the test suite: `python test.py` (1828 tests, all pure stdlib; the
    count grows as new R6 batches land — see [ROADMAP](ROADMAP.md)).
 3. Read [README](../README.md) for the module map, [ARCHITECTURE](ARCHITECTURE.md) for
    pipeline details, and [ROADMAP](ROADMAP.md) for the priority list.
