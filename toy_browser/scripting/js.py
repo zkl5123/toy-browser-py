@@ -4055,6 +4055,14 @@ class Host:
         # touch the wire.
         self._fetch_transport: object | None = None
         self._cancelling: bool = False
+        # B03 — structured record of script-boundary failures
+        # (parse-time / runtime SyntaxError etc. that a <script>
+        # element's execution hit and the boundary logged).  Each entry
+        # is a dict {source, kind, error} so the GUI / CLI can report
+        # "the page rendered, but N script(s) failed" WITHOUT treating
+        # it as a network / connection error (B03 step 4).  Network
+        # failures stay in the HttpClient's own error path.
+        self.script_errors: list[dict] = []
         self.globals: dict = {
             "document": self._document_obj(),
             "console": self._console_obj(),
@@ -6863,6 +6871,18 @@ class Host:
                     self.execute(code)
                 except JSUncaughtError as e:
                     self.log(f"uncaught throw (external {src}): {e.value}")
+                except _Throw as e:
+                    # B03 — a parse-time / interpreter SyntaxError,
+                    # ReferenceError, … that execute() re-raised as a
+                    # bare _Throw (not yet wrapped in JSUncaughtError)
+                    # must NOT escape the script boundary: record it
+                    # as a script error and keep running the rest of the
+                    # page so static content still renders (B03 step 3).
+                    self._record_script_error(src, e.value, "external")
+                except RecursionError as e:
+                    # B03 — runaway JS recursion that escaped the
+                    # interpreter's own depth guard.  Log and continue.
+                    self.log(f"JS recursion error (external {src}): {e}")
             else:
                 txt = el.text_content()
                 if not txt.strip():
@@ -6877,6 +6897,13 @@ class Host:
                     self.execute(txt)
                 except JSUncaughtError as e:
                     self.log(f"uncaught throw: {e.value}")
+                except _Throw as e:
+                    # B03 — inline script parse/runtime SyntaxError (the
+                    # baidu "pos 210" shape) must stay inside the
+                    # script boundary, never crash the whole page.
+                    self._record_script_error(txt, e.value, "inline")
+                except RecursionError as e:
+                    self.log(f"JS recursion error (inline): {e}")
 
         # R4 stage 1 — the legacy "undeclared fetched bodies run last"
         # tail pass is gone: external scripts now execute in document
@@ -6924,6 +6951,31 @@ class Host:
     # click_and_render: sets this and runs the handler.
     def execute_event_with_this(self, element_id: str):
         self.execute_event(element_id)
+
+    def _record_script_error(self, source: str, error_value, kind: str) -> None:
+        """B03 — record a script-boundary failure as a structured entry.
+
+        *source* is the script code (inline) or its URL (external).
+        *error_value* is the raw exception payload (a ``_Throw.value``
+        string like ``"SyntaxError: unexpected token ',' at pos 210"``).
+        *kind* is ``"inline"`` or ``"external"``.
+
+        The entry is stored on :attr:`script_errors` so the GUI / CLI
+        can surface "page rendered, N script(s) failed" instead of
+        misclassifying a script fault as a network / connection error
+        (the baidu case: a 730 KB document whose 34th inline script
+        hit a SyntaxError previously crashed the whole page and the
+        GUI reported it as ``Connection error``).  Also emits one
+        log line for observability, matching the existing ``uncaught
+        throw`` log style.
+        """
+        msg = f"[{kind} script] {error_value}"
+        self.log(msg)
+        self.script_errors.append({
+            "source": source,
+            "kind": kind,
+            "error": str(error_value),
+        })
 
     def _collect_scripts(self, root: DomNode) -> list[str]:
         out: list[str] = []
