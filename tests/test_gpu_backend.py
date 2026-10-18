@@ -198,35 +198,45 @@ def test_create_backend_default_cpu():
 
 
 @_reg
-def test_create_backend_gpu_falls_back_to_cpu():
-    """P02 + P13 — create_backend(GPU) 在 wgpu-py 不可用（本环境无
-    出站网络装不上）时自动回退 CPURenderBackend（UI 不崩，诊断可
-    解释——P02 "UI 显示 adapter / backend / fallback 状态"）。"""
+def test_create_backend_gpu_respects_environment():
+    """P02 + P13 — create_backend(GPU) 按**实测设备可用性**决定形态
+    （批次 48 接上真实 wgpu 设备后，本契约变为环境感知）：wgpu 设备
+    可用 → 返回真实 GPUBackend（P04 基础光栅化）；wgpu-py 缺失 /
+    无可用设备 → 回退 CPURenderBackend（UI 不崩，诊断可解释）。"""
+    from toy_browser.rendering.gpu import acquire_wgpu_device
     b = create_backend(BackendMode.GPU)
-    assert isinstance(b, CPURenderBackend)
-    assert b.mode == BackendMode.CPU
-    # 回退后端仍可用（逐像素权威）
-    h = b.render(_mixed_dl(), {"width": 40, "height": 20})
-    assert h.is_cpu
+    has_dev = acquire_wgpu_device() is not None
+    if has_dev:
+        # 本环境 wgpu + NVIDIA 可用 → 真实 GPU 后端（批次 48 P04）
+        assert isinstance(b, GPUBackend)
+        assert b.is_real_gpu
+        h = b.render(_mixed_dl(), {"width": 40, "height": 20})
+        assert h.texture is not None  # P04 GPU 纹理已上传
+    else:
+        # 无 wgpu 设备 → P13 CPU 回退契约
+        assert isinstance(b, CPURenderBackend)
+        assert b.mode == BackendMode.CPU
+        h = b.render(_mixed_dl(), {"width": 40, "height": 20})
+        assert h.is_cpu
 
 
 @_reg
 def test_gpu_backend_wgpu_probe():
     """P13 — GPUBackend.wgpu_available() 探测可选依赖（不创建设备，
-    避免副作用；本环境 False → 走 CPU 回退）。"""
+    避免副作用；批次 48 起 wgpu-py 可安装，探测为 bool 不崩）。"""
     assert isinstance(GPUBackend.wgpu_available(), bool)
-    # 本环境无 wgpu-py → False（但断言只验证探测不崩，不强求结果）
 
 
 @_reg
 def test_gpu_backend_present_contract():
-    """P01 — GPUBackend 存根的 present / snapshot 契约形态（与 CPU 参考
-    同签名，真实 wgpu surface present 留后续批次）。"""
+    """P01 — GPUBackend 的 present / snapshot 契约形态（与 CPU 参考
+    同签名；批次 48 起真实 wgpu 实现，设备不可用时退化存根不崩）。"""
     b = GPUBackend()
     assert b.mode == BackendMode.GPU
     fake = FrameHandle(1, 10, 10, mode="gpu")
     assert b.present(fake) is True
-    assert b.snapshot(fake) is fake.image
+    snap = b.snapshot(fake)
+    assert snap is fake.image or type(snap).__name__ == "CPUImage"
 
 
 if __name__ == "__main__":

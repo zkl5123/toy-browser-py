@@ -27,7 +27,7 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–47（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–48（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
@@ -36,10 +36,11 @@ _c02_refresh_canvas_cpu 设为默认呈现路径 +
 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap
 合并层）+ G07 文档进程真实 spawn + 活显示验收（多核收益）+
 P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑
-核心 + P13 CPU 回退）。
-完整回归 **1854/1854**（基线 939 + 批次 1–47 新增 915）。P04–P09
-GPU 真实光栅化（需 wgpu-py 可选依赖 + 活显示环境）未实施。逐项
-批次记录见
+核心 + P13 CPU 回退）+ P04 基础 GPU 光栅化（真实 wgpu 纹理
+上传 + 读回验证）。
+完整回归 **1863/1863**（基线 939 + 批次 1–48 新增 924）。P05–P09
+GPU 侧逐阶段迁移（图片纹理 / 字形 atlas / 裁剪变换透明组 /
+阴影滤镜 / tile 增量合成）+ P12 验收未实施。逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -166,7 +167,9 @@ GPU 真实光栅化（需 wgpu-py 可选依赖 + 活显示环境）未实施。�
   CPU buffer / 未来 GPU texture 统一抽象，截图 / 导出经 .image 直接
   消费不逐像素读回）+ `gpu.GPUBackend` 存根 + `gpu.create_backend`
   工厂（P13：create_backend("gpu") 在 wgpu-py 不可用时自动回退
-  CPURenderBackend，UI 不崩；真实 GPU 光栅化 P04–P09 留后续批次），
+  CPURenderBackend，UI 不崩；真实 GPU 光栅化 P04 基础图元在批次
+  48 落地（真实 wgpu 纹理上传 + 读回验证），P05–P09 GPU 侧逐阶段
+  迁移留后续批次），
   `tests/test_gpu_backend.py` 新增 14 条（BackendMode 枚举值 +
   RenderBackend 基类契约形态 + AdapterProbe 无 device_factory 时
   GPU 不可用 / CPU 恒可用 + select(GPU) 自动回退 CPU + select(CPU)
@@ -176,13 +179,50 @@ GPU 真实光栅化（需 wgpu-py 可选依赖 + 活显示环境）未实施。�
   mismatch）+ 文档生命周期 register/release + create_backend 默认
   CPU / 期望 GPU 回退 CPU + GPUBackend wgpu 探测 + present/snapshot
   契约形态）
+- 批次 48：P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）——
+  本环境已补齐 GPU 栈（wgpu-py 0.32.0 + NVIDIA RTX 3050 Laptop GPU
+  / Vulkan + PyOpenGL 3.1.10 + numpy 2.4.6），把批次 47 的
+  P01/P02/P13 契约接上真实 wgpu 光栅化首版。`gpu.acquire_wgpu_device
+  ()`（P02 实测获取 wgpu GPUDevice：`wgpu.gpu.enumerate_adapters
+  _sync()` 列出 adapter，取首个可创建设备者；wgpu-py 缺失 / 无
+  adapter / 创建失败 → None，P13 回退契约）+ `gpu.GPURasterizer`
+  （wgpu 纹理上传 / 读回核心，P04 / P05 的 GPU 侧：upload_rgba8
+  CPU RGB8 帧 → RGBA8 → GPUQueue.write_texture 上传 + read_back
+  GPUQueue.read_texture 读回 memoryview + rasterize_and_verify CPU
+  光栅化 + GPU 上传 + 读回逐像素核对，P04 验收"对照 CPU 与目标
+  截图"0 mismatch 即 GPU 侧正确）+ `gpu.GPUBackend` 升级为真实
+  wgpu 实现（批次 47 存根：render 经批次 45 的 paint_engine
+  .rasterize_to_canvas 直画 CPUImage + GPURasterizer.upload_rgba8
+  上传 wgpu 纹理，产出 FrameHandle mode=gpu + texture 字段 + C01
+  文档版本；verify_frame 经 read_back 读回逐像素核对；snapshot GPU
+  纹理读回 CPUImage；设备不可用时退化存根形态 texture=None，image
+  仍可用，UI 不崩，P13）+ `gpu.create_backend` 接上真实 wgpu 设备
+  （device 注入 / acquire_wgpu_device 实测；wgpu-py 缺失 / 无可用
+  设备仍回退 CPURenderBackend，P13 契约不变）+
+  `tests/test_gpu_backend.py` 批次 47 既有条目
+  test_create_backend_gpu_falls_back_to_cpu 更新为环境感知
+  test_create_backend_gpu_respects_environment（P02 实测设备可用
+  → 真实 GPUBackend + 纹理上传；缺失 → CPU 回退，不崩）+
+  test_gpu_backend_present_contract / test_gpu_backend_wgpu_probe
+  适配批次 48 真实 wgpu 实现，
+  `tests/test_gpu_rasterize.py` 新增 9 条（acquire_wgpu_device
+  返回设备 / None（P02 实测）+ GPUBackend is_real_gpu / device
+  属性如实报告 + render 经 rasterize_to_canvas 直画 + wgpu 纹理
+  上传产出 FrameHandle（mode=gpu + texture 字段，无 GPU 时退化
+  存根 texture=None 不崩）+ verify_frame GPU 读回逐像素与 CPU
+  权威一致（0 mismatch，P04 验收）+ snapshot GPU 纹理读回
+  CPUImage（无设备时回退 frame.image）+ GPURasterizer.upload
+  _rgba8 / read_back 已知 RGBA8 数据上传 / 读回逐字节一致（P04 /
+  P05 GPU 侧内容正确）+ create_backend GPU 设备可用时返回真实
+  GPUBackend / 缺失回退 CPU（P02 + P13）+ 注入 device 直接构造 +
+  describe 诊断串含 mode / device / documents / frame_seq）
 
 ### 未实施（留待后续批次）
 
-- P04–P09 GPU 真实光栅化（图元 / 文字 / 裁剪 / 效果 / 增量合成）需
-  wgpu-py 可选依赖 + 活显示环境，留后续批次；批次 47 已落地 P01–P13
-  第一阶段统一渲染契约 + P02 适配器探测 + P13 CPU 回退契约（可回归、
-  不破坏 1840 基线）
+- P05–P09 GPU 侧逐阶段迁移（图片纹理缓存 / 字形 atlas / 裁剪变换
+  透明组 / 阴影滤镜 / tile 增量合成）+ P12 GPU 性能与正确性验收
+  （批次 48 已落地 P04 基础 GPU 光栅化：真实 wgpu 纹理上传 + 读回
+  验证 0 mismatch；P05–P09 在 GPU 侧逐阶段推进，留后续批次）
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收已在批次 46 落地（多核收益落地到 gui 侧活显示路径；`make_multiprocessing_pool` 既有入口名保持不变，兼容既有消费端）
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）

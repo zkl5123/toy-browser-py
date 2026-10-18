@@ -115,6 +115,7 @@ from test_document_process_spawn import TESTS as _DOC_PROCESS_SPAWN_TESTS
 from test_editor_overlay import TESTS as _EDITOR_OVERLAY_TESTS
 from test_rasterize_cpu import TESTS as _RASTERIZE_CPU_TESTS
 from test_gpu_backend import TESTS as _GPU_BACKEND_TESTS
+from test_gpu_rasterize import TESTS as _GPU_RASTERIZE_TESTS
 
 def main():
     tests = []
@@ -202,6 +203,7 @@ def main():
     tests.extend(_EDITOR_OVERLAY_TESTS)
     tests.extend(_RASTERIZE_CPU_TESTS)
     tests.extend(_GPU_BACKEND_TESTS)
+    tests.extend(_GPU_RASTERIZE_TESTS)
     from test_b_series_gui_wiring import TESTS as _B_SERIES_GUI_WIRING_TESTS
     tests.extend(_B_SERIES_GUI_WIRING_TESTS)
     passed = 0
