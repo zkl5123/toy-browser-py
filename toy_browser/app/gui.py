@@ -1322,7 +1322,19 @@ class TabBrowser:
                 "module": "toy_browser.rendering.rasterize_cpu"}
 
     def _refresh_canvas(self, idx: int) -> None:
+        # 批次 44 — C02 活显示默认呈现路径：优先走 CPUImage 连续
+        # buffer（消除 scratch Bitmap 合并层 + per-frame int 列表还原）。
+        # 当 ``page._last_dl`` 可用（restate / initial load 时设置）时
+        # 经 :meth:`_c02_refresh_canvas_cpu` 呈现；``_last_dl`` 不可用
+        # （未加载页面 / 仅有 bitmap 的 about:blank 等）时回退到既有
+        # Bitmap 路径（保持 ``page.bitmap`` 契约）。
         page = self.tabs[idx]
+        if getattr(page, "_last_dl", None) is not None:
+            self._c02_refresh_canvas_cpu(idx)
+            # CPUImage 路径不产 Bitmap；滚动条同步仍走 Bitmap 路径的
+            # page.scroll_max / content_height（与 CPUImage 呈现兼容）。
+            self._sync_scrollbar(idx)
+            return
         if page.bitmap is None:
             return
         photo = self._bitmap_to_photopix(page.bitmap, idx)
@@ -1333,28 +1345,30 @@ class TabBrowser:
             return
         label: tk.Label = frame._label
         label.config(image=photo)
-        # P33.R2 — sync the vertical scrollbar's range/value with the
-        # page's scroll state.  When the content fits the viewport the
-        # scrollbar stays idle (value 0, empty range); otherwise the
-        # thumb spans value/scroll_max.
+        self._sync_scrollbar(idx)
+
+    def _sync_scrollbar(self, idx: int) -> None:
+        """P33.R2 — 同步垂直滚动条 range/value 与页面滚动状态
+        （与 CPUImage / Bitmap 两条呈现路径共用，消除重复逻辑）。"""
+        page = self.tabs[idx]
+        frame = self.page_frames.get(idx)
+        if frame is None:
+            return
         sb = getattr(frame, "_scroll", None)
-        if sb is not None:
-            try:
-                m = page.scroll_max()
-                if m > 0:
-                    # G01 — thumb range = (offset / content_height,
-                    # (offset + viewport_h) / content_height), clamped
-                    # to [0, 1].  When content fits the viewport the
-                    # scrollbar stays idle (0..1).
-                    ch = page.content_height
-                    first = min(1.0, max(0.0, page.yoffset / ch)) if ch > 0 else 0.0
-                    last = min(1.0, max(0.0,
-                                        (page.yoffset + page.height) / ch)) if ch > 0 else 1.0
-                    sb.set(first, last)
-                else:
-                    sb.set(0.0, 1.0)
-            except tk.TclError:
-                pass
+        if sb is None:
+            return
+        try:
+            m = page.scroll_max()
+            if m > 0:
+                ch = page.content_height
+                first = min(1.0, max(0.0, page.yoffset / ch)) if ch > 0 else 0.0
+                last = min(1.0, max(0.0,
+                                    (page.yoffset + page.height) / ch)) if ch > 0 else 1.0
+                sb.set(first, last)
+            else:
+                sb.set(0.0, 1.0)
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------
     # tab management

@@ -27,12 +27,13 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–41（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–44（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
-loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage。完整回归
-**1820/1820**（基线 939 + 批次 1–43 新增 881）。P01–P13 GPU 系列未实施。
+loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage +
+_c02_refresh_canvas_cpu 设为默认呈现路径。完整回归
+**1824/1824**（基线 939 + 批次 1–44 新增 885）。P01–P13 GPU 系列未实施。
 逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
@@ -94,6 +95,17 @@ loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage。完整回归
   一致 + raw_rows 与 C09 ContinuousRows 逐字节一致（奇数宽度）+
   nonwhite_count 一致 + render_document_to_cpu_image 逐像素一致 +
   with_event / with_click CPUImage 变体 + main._write_image 双形态分派）
+- 批次 44：_c02_refresh_canvas_cpu 设为默认呈现路径——`gui.py`
+  `TabBrowser._refresh_canvas` 改走 CPUImage 优先（`page._last_dl is not
+  None` → `_c02_refresh_canvas_cpu(idx)`；否则回退 `_bitmap_to_photopix`
+  + `page.bitmap`，保持 about:blank 等无 DL 场景的 Bitmap 契约）+
+  抽取 `_sync_scrollbar(idx)`（P33.R2 垂直滚动条 range/value 同步，与
+  CPUImage / Bitmap 两条呈现路径共用，消除重复逻辑）+
+  `_c02_refresh_canvas_cpu` / `_c02_rasterize_cpu_image` /
+  `_c02_stats` 保持不变（批次 40 已落地），
+  `tests/test_rasterize_cpu.py` 新增 4 条（stub 驱动
+  `object.__new__(TabBrowser)` 验证默认呈现路径优先 CPUImage + 回退
+  Bitmap + bitmap is None 提前返回 + full is None 时回退 _refresh_canvas）
 
 ### 未实施（留待后续批次）
 
@@ -101,7 +113,7 @@ loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage。完整回归
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
-- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径 + `paint_engine` 命令分派直接画到 `CPUCanvas` 留后续）
+- `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径已在批次 44 落地，`paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）留后续）
 - TTF 字形正确性修复 + DPI / 抗锯齿优化
 
 ---

@@ -406,6 +406,120 @@ def test_main_write_image_dispatch():
     assert nw_bmp == sum(1 for p in bmp.pixels if p != 0xFFFFFF)
 
 
+# ---------------------------------------------------------------------------
+# 批次 44 — _c02_refresh_canvas_cpu 设为默认呈现路径（stub 驱动）
+# ---------------------------------------------------------------------------
+
+class _PageStub44:
+    """最小 PageInstance 替身（批次 44 默认呈现路径测试用）。"""
+
+    def __init__(self, width=800, height=600, content_height=0,
+                 yoffset=0, bitmap=None, last_dl=None):
+        self.width = width
+        self.height = height
+        self.content_height = content_height
+        self.yoffset = yoffset
+        self.bitmap = bitmap
+        self._last_dl = last_dl
+        self._full_bitmap = None
+        self.title = "t"
+        self.url = "about:blank"
+        self._browser = None
+
+    def scroll_max(self):
+        return max(0, (self.content_height or self.height) - self.height)
+
+
+def _make_stub_tabbrowser44(page, dl=None):
+    """构造不跑 __init__ 的 TabBrowser stub（批次 44 默认呈现路径）。
+
+    注入最小桩属性（canvas_var / page_frames / root / _last_dl 缓存的
+    页面），验证 :meth:`_refresh_canvas` 优先走 CPUImage 路径（当
+    ``page._last_dl`` 可用）+ 回退 Bitmap 路径（``_last_dl`` 不可用）。
+    """
+    from toy_browser.app.gui import TabBrowser
+    tb = object.__new__(TabBrowser)
+    tb.tabs = [page]
+    tb.current = 0
+    tb.canvas_var: dict = {}
+    tb.page_frames: dict = {}
+    tb.root = type("R", (), {})()
+    # 桩 _bitmap_to_photopix（记录调用 + 产 fake photo）
+    called = {"bitmap": 0, "cpu": 0, "photos": []}
+    def _fake_bitmap_to_photopix(bmp, idx):
+        called["bitmap"] += 1
+        ph = f"bitmap_photo_{idx}"
+        called["photos"].append(ph)
+        return ph
+    tb._bitmap_to_photopix = _fake_bitmap_to_photopix
+    def _fake_c02_refresh(idx):
+        called["cpu"] += 1
+        ph = f"cpu_photo_{idx}"
+        called["photos"].append(ph)
+        tb.canvas_var[idx] = ph
+        return
+    tb._c02_refresh_canvas_cpu = _fake_c02_refresh
+    tb._sync_scrollbar = lambda idx: None
+    tb._ref_calls = called
+    return tb, called
+
+
+@_reg
+def test_refresh_canvas_prefers_cpuimage_when_dl_cached():
+    """批次 44 — _refresh_canvas 当 page._last_dl 可用时优先走
+    CPUImage 路径（_c02_refresh_canvas_cpu 被调用，_bitmap_to_photopix
+    不被调用）。"""
+    dl = _dl_rects()
+    page = _PageStub44(width=80, height=60, last_dl=dl)
+    tb, called = _make_stub_tabbrowser44(page)
+    tb._refresh_canvas(0)
+    assert called["cpu"] == 1, "CPUImage 路径应被调用"
+    assert called["bitmap"] == 0, "Bitmap 路径不应被调用"
+    assert called["photos"] == ["cpu_photo_0"]
+
+
+@_reg
+def test_refresh_canvas_falls_back_to_bitmap_without_dl():
+    """批次 44 — _refresh_canvas 当 page._last_dl 不可用（None）时回退
+    到既有 Bitmap 路径（_bitmap_to_photopix 被调用，CPUImage 不调用）。"""
+    bmp = pe_rasterize(_dl_rects(), 40, 30)
+    page = _PageStub44(width=40, height=30, bitmap=bmp, last_dl=None)
+    tb, called = _make_stub_tabbrowser44(page)
+    tb._refresh_canvas(0)
+    assert called["bitmap"] == 1, "Bitmap 路径应被调用"
+    assert called["cpu"] == 0, "CPUImage 路径不应被调用"
+    assert called["photos"] == ["bitmap_photo_0"]
+
+
+@_reg
+def test_refresh_canvas_bitmap_none_early_return():
+    """批次 44 — _refresh_canvas 当 _last_dl 不可用且 bitmap is None 时
+    提前返回（不产 photo，不调用任何呈现方法）。"""
+    page = _PageStub44(width=40, height=30, bitmap=None, last_dl=None)
+    tb, called = _make_stub_tabbrowser44(page)
+    tb._refresh_canvas(0)
+    assert called["bitmap"] == 0
+    assert called["cpu"] == 0
+    assert called["photos"] == []
+
+
+@_reg
+def test_c02_refresh_canvas_cpu_fallback_to_bitmap():
+    """批次 44 — _c02_refresh_canvas_cpu 当 _last_dl 不可用（full is
+    None）时回退到 _refresh_canvas（再走 Bitmap 路径）。"""
+    from toy_browser.app.gui import TabBrowser
+    page = _PageStub44(width=40, height=30, bitmap=None, last_dl=None)
+    tb, called = _make_stub_tabbrowser44(page)
+    # 真实 _c02_refresh_canvas_cpu（不用 stub）——验证 full is None 时
+    # 回退到 _refresh_canvas
+    tb._c02_refresh_canvas_cpu = TabBrowser._c02_refresh_canvas_cpu.__get__(tb)
+    tb._c02_refresh_canvas_cpu(0)
+    # _last_dl None → full None → _refresh_canvas → bitmap None → early return
+    assert called["bitmap"] == 0
+    assert called["cpu"] == 0
+    assert called["photos"] == []
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

@@ -788,7 +788,23 @@
   - `main.py` `_write_image(img, args)` / `_image_nonwhite(img)` — 双形态分派（`CPUImage` 走 `save_ppm` / `save_png` / `nonwhite_count`；`Bitmap` 走 `browser.write_ppm` / `write_png` / int 列表遍历；legacy 兼容不变）。
   - CLI 渲染调用点全部切到 `*_to_cpu_image` 变体（含 `_render_error_and_exit` 错误页）。
 - 回归：`tests/test_rasterize_cpu.py`（27 条 = 批次 40 的 19 条 + 批次 43 新增 8 条）；批次 43 新增 8 条覆盖：`CPUImage` PPM / PNG 字节与 `Bitmap` 逐字节一致 + `raw_rows` 与 C09 `ContinuousRows` 逐字节一致（奇数宽度 101×63）+ `nonwhite_count` 一致 + `render_document_to_cpu_image` 与 Bitmap 路径逐像素一致（`cpu_matches_bitmap` 空 mismatch）+ `with_event` / `with_click` CPUImage 变体 + `main._write_image` / `_image_nonwhite` 双形态分派。
-- 说明：本批补 main.py CLI 路径切 CPUImage（C02 目标"消除 int 列表中间层"落地到 CLI 侧）；`_c02_refresh_canvas_cpu` 设为默认呈现路径（gui.py 活显示侧）+ `paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）留后续批次。
+- 说明：本批补 main.py CLI 路径切 CPUImage（C02 目标"消除 int 列表
+  中间层"落地到 CLI 侧）；`_c02_refresh_canvas_cpu` 设为默认呈现路径
+  在批次 44 落地。
+
+## 批次 44 完成的工作项（_c02_refresh_canvas_cpu 设为默认呈现路径）
+
+| 工作项 | 状态 | 落点 | 回归 |
+|---|---|---|---|
+| gui.py TabBrowser 默认呈现路径切 CPUImage（`_refresh_canvas` 优先走 `_c02_refresh_canvas_cpu` + `_sync_scrollbar` 抽取共用 + `_last_dl` 不可用时回退 Bitmap） | 完成 | `toy_browser/app/gui.py` | `tests/test_rasterize_cpu.py`（31 条 = 批次 40 的 19 条 + 批次 43 的 8 条 + 批次 44 新增 4 条） |
+
+### gui.py 默认呈现路径切 CPUImage
+- 依据 C02 目标"避免每次呈现又从连续缓冲区还原大 int 列表"。本批把批次 40 落地的 `_c02_refresh_canvas_cpu`（CPUImage 连续 buffer 呈现）设为 `_refresh_canvas` 的**默认呈现路径**——当 `page._last_dl` 可用（restate / initial load 时缓存的 DisplayList）时优先走 CPUImage，消除 scratch Bitmap 合并层 + per-frame int 列表还原；`_last_dl` 不可用（未加载页面 / 仅有 `bitmap` 的 about:blank 等）时回退到既有 Bitmap 路径（保持 `page.bitmap` 契约）：
+  - `_refresh_canvas(idx)` — 改走 CPUImage 优先（`page._last_dl is not None` → `_c02_refresh_canvas_cpu(idx)`；否则回退 `_bitmap_to_photopix` + `page.bitmap`）。
+  - 抽取 `_sync_scrollbar(idx)` — P33.R2 垂直滚动条 range/value 同步（与 CPUImage / Bitmap 两条呈现路径共用，消除重复逻辑）。
+  - `_c02_refresh_canvas_cpu` / `_c02_rasterize_cpu_image` / `_c02_stats` 保持不变（批次 40 已落地）。
+- 回归：`tests/test_rasterize_cpu.py`（31 条 = 批次 40 的 19 条 + 批次 43 的 8 条 + 批次 44 新增 4 条）；批次 44 新增 4 条用 `object.__new__(TabBrowser)` 绕过 `__init__` 的 stub 驱动模式，注入最小桩属性验证 `_refresh_canvas` 优先走 CPUImage（`_last_dl` 可用时 `_c02_refresh_canvas_cpu` 被调用、`_bitmap_to_photopix` 不被调用）+ 回退 Bitmap（`_last_dl` 不可用时 `_bitmap_to_photopix` 被调用、CPUImage 不调用）+ `bitmap is None` 提前返回 + `_c02_refresh_canvas_cpu` `full is None` 时回退 `_refresh_canvas`。
+- 说明：本批补 gui.py 活显示默认呈现路径切 CPUImage（C02 目标"消除 int 列表中间层"落地到 gui 侧活显示路径）；`paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）留后续批次。
 
 ## 剩余限制（下一批次）
 
@@ -833,7 +849,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| `py -3 test.py` | **1820/1820 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复新增 10 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心新增 14 + 批次 39 G03 原生覆盖层 Tk 接线新增 23 + 批次 40 C02 活显示 rasterize 切 CPUImage 新增 19 + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装新增 23 + 批次 42 B 系列活显示 GUI 实际接线新增 6 + 批次 43 main.py CLI 路径切 CPUImage 新增 8） |
+| `py -3 test.py` | **1824/1824 通过**（基线 939 + 批次 1 新增 28 + 批次 2 新增 32 + 批次 3 新增 20 + 批次 4 G09 新增 14 + 批次 5 G07/G08 可取消网络新增 12 + 批次 6 G10 诊断/工具栏纯逻辑新增 19 + 批次 7 C01 完整 DocumentState + G11 键盘全流程新增 32 + 批次 8 G09 step 3 统一历史入口新增 12 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层新增 20 + 批次 10 C04 表单控件呈现模型 / 表格列宽行高求解 + G10 step 4/5 诊断区展开收起新增 27 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计新增 18 + 批次 12 C06 布局树构建与增量布局新增 15 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘新增 41 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归新增 44 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局新增 27 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式新增 31 + 批次 17 B01 统一导航控制器 + B05 location 导航语义新增 19 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交新增 25 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归新增 28 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏新增 26 + 批次 21 G11 键盘全流程路由层新增 23 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板新增 20 + 批次 23 G07 文档工作单元标签级编排新增 23 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径新增 15 + 批次 25 G09 step 1 统一标签会话协议层新增 20 + 批次 26 G09 step 5 会话持久化损坏文件降级解析新增 24 + 批次 27 C03 几何冻结新增 14 + 批次 28 C05 按 Document 管理的 LRU 缓存容器新增 20 + 批次 29 C02 帧版本与读写所有权新增 11 + 批次 30 C06 全量 vs 增量布局差分新增 14 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原新增 13 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区新增 21 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理新增 17 + 批次 34 G03 原生覆盖层位置同步/撤销协议新增 20 + 批次 35 G11 Tk 侧真实键盘绑定桥新增 21 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线新增 12 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复新增 10 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心新增 14 + 批次 39 G03 原生覆盖层 Tk 接线新增 23 + 批次 40 C02 活显示 rasterize 切 CPUImage 新增 19 + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装新增 23 + 批次 42 B 系列活显示 GUI 实际接线新增 6 + 批次 43 main.py CLI 路径切 CPUImage 新增 8） |
 
 ## 批次 2 关键实现说明
 
