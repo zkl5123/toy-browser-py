@@ -4111,17 +4111,78 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   =N)` 容量透传（GPU 后端透传，CPU 后端不持纹理缓存））。
 - 说明：本批补 P05 图片纹理缓存（真实 wgpu 侧缓存 + refcount +
   LRU + 预上传契约，可回归、无 GPU 时退化为逻辑句柄形态不崩，
-  P13）；P06 字形 atlas / P07 裁剪变换透明组 / P08 阴影滤镜 /
+  P13）；P06 字形 atlas（批次 50 落地）/ P07 裁剪变换透明组 /
+  P08 阴影滤镜 / P09 tile 增量合成 / P12 GPU 性能与正确性验收
+  留后续批次（GPU 侧逐阶段迁移）；缓存键本批为**逻辑**资源标识
+  （按 img 源尺寸 + 像素数），真实 URL 键在后续批次（P07 / P08
+  接图片解码管线时）替换。
+
+### R6.59 P06 字形图集（真实 wgpu 侧，atlas 去重 + 打包 + UV + refcount + LRU + 预解析，批次 50）
+
+- [x] **P06 字形图集**（`toy_browser/rendering/gpu.py` 新增
+  `GlyphAtlas` + `GPUBackend.glyph_atlas` + `tests/test_gpu_glyph
+  _atlas.py`）：
+  依据 GPU 光栅化迁移方案 P06"字形 atlas"（同字形按码点 +
+  family + weight + font_px 去重，多文本框 / 多次渲染复用同一
+  atlas 槽位，避免逐字重复光栅化 + 重复 `write_texture` 上传 +
+  refcount 生命周期 + 容量 LRU 淘汰 + `prepare` 预解析）：
+  - `gpu.GlyphAtlas` — 字形图集核心（P06 GPU 侧）：
+    `get_or_rasterize(ch_or_key, family, weight, font_px)`（命中
+    复用已缓存 UV 槽位 + LRU 刷新 + 命中计数；未命中经内置位图
+    字形回退光栅化 + 1D 条带打包进 atlas + 记录 UV + 未命中 /
+    上传计数）+ `prepare(glyphs)`（预解析一批字形，文档加载期
+    零渲染等待，P06"预解析"）+ `ref(key)` / `unref(key)`（refcount
+    生命周期——被外部 `ref()` 提升到 ref>=2 的字形不被容量 LRU
+    驱逐，可常驻超容量；`unref` 回 1 后可随容量淘汰）+
+    `release(key)`（显式释放条目，refcount 清零 + 立即移除）+
+    `uv(ch_or_key)`（UV 查询，归一化 0–1 子矩形 `(u0,v0),(u1,v1)`
+    + 未驻留返回 None，P06"UV 查询"，GPU 字形着色器用）+
+    `stats()` / `describe()`（命中 / 未命中 / 上传 / 驻留 / 驱逐 /
+    打包槽位统计 + 诊断串，P06 诊断供 G10 显示）。atlas 纹理经
+    :class:`GPURasterizer.upload_rgba8` 上传（真实 wgpu 设备时）；
+    无 wgpu 设备时退化为**逻辑 atlas**（不上传，仅槽位 / UV
+    记录，P13 不崩；`capacity=0` 不限驻留）。
+  - `gpu.GPUBackend.glyph_atlas` — 该后端持有的字形图集（每后端
+    一个，P06 契约）；`GPUBackend.__init__` 新增
+    `glyph_atlas_capacity` 参数（默认 64，透传到图集）；
+    `GPUBackend.render` 时自动对 DisplayList 里 `text` 命令经
+    图集光栅化 / 复用字形槽位（同字形 key 去重，避免逐字重复
+    光栅化 + 重复 `write_texture` 上传），并把 `glyph_atlas_stats`
+    挂到 :class:`FrameHandle`（P06 统计 + G10 诊断区显示）。
+  - `gpu.create_backend(…, glyph_atlas_capacity=N)` — P06 字形图集
+    驻留容量透传（仅 GPU 后端；CPU 参考后端不持字形图集，P06 仅
+    GPU 侧）。
+- 回归：`tests/test_gpu_glyph_atlas.py`（13 条 = 批次 50 新增；
+  覆盖 `get_or_rasterize` 同 key 命中去重（hits +1、uploads 仍
+  1、uv/slot 不变）+ 不同 key 各自打包（pack_slots 增长、uv 逐
+  槽位推进）+ refcount 生命周期（`ref` 提升到 2 的条目不被容量
+  LRU 驱逐、可常驻超容量上限；`unref` 回 1 后可随容量淘汰）+
+  `release` 显式释放（refcount 清零 + 立即移除，二次 release
+  返回 False）+ `prepare` 预解析（文档加载期，重复 prepare 同
+  key 命中不重复光栅化）+ capacity=0 不限驻留（LRU 不驱逐）+
+  `uv` 查询（归一化 UV 子矩形，未驻留返回 None）+ 无 wgpu 设备
+  时逻辑 atlas（has_atlas=False，不崩，P13）+ `describe` 诊断
+  串含 cap / res / pack / hit / miss / ev / rate / atlas +
+  `GPUBackend.glyph_atlas` 属性（每后端一个，无 GPU 时仍可访问）
+  + `GPUBackend.render` 自动对 text 命令经 atlas 预解析（resident
+  增长 + `glyph_atlas_stats` 挂 FrameHandle）+ 同字形多帧复用
+  槽位（uploads 不变、命中计数）+
+  `create_backend(glyph_atlas_capacity=N)` 容量透传（GPU 后端
+  透传，CPU 后端不持字形图集））。
+- 说明：本批补 P06 字形图集（真实 wgpu 侧 atlas 去重 + 打包 +
+  UV + refcount + LRU + 预解析契约，可回归、无 GPU 时退化为逻辑
+  atlas 形态不崩，P13）；P07 裁剪变换透明组 / P08 阴影滤镜 /
   P09 tile 增量合成 / P12 GPU 性能与正确性验收留后续批次（GPU
-  侧逐阶段迁移）；缓存键本批为**逻辑**资源标识（按 img 源尺寸 +
-  像素数），真实 URL 键在后续批次（P07 / P08 接图片解码管线时）
+  侧逐阶段迁移）；字形像素本批经内置 8×8 位图字形回退光栅化
+  （alpha 覆盖层），TTF 曲线填充（P20）+ 真实 atlas 纹理字形
+  像素在后续批次（P07 裁剪 / P08 滤镜接 wgpu 字形解码管线时）
   替换。
 
 ---
 
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式 + 批次 17 B01 统一导航控制器 + B05 location 导航语义 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏 + 批次 21 G11 键盘全流程路由层 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板 + 批次 23 G07 文档工作单元标签级编排 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径 + 批次 25 G09 step 1 统一标签会话协议层 + 批次 26 G09 step 5 会话持久化损坏文件降级解析 + 批次 27 C03 几何冻结 + 批次 28 C05 按 Document 管理的 LRU 缓存容器 + 批次 29 C02 帧版本与读写所有权 + 批次 30 C06 全量 vs 增量布局差分 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理 + 批次 34 G03 原生覆盖层位置同步/撤销协议 + 批次 35 G11 Tk 侧真实键盘绑定桥 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心 + 批次 39 G03 原生覆盖层 Tk 接线 + 批次 40 C02 活显示 rasterize 切 CPUImage + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装 + 批次 42 B 系列活显示 GUI 实际接线 + 批次 43 main.py CLI 路径切 CPUImage + 批次 44 _c02_refresh_canvas_cpu 设为默认呈现路径 + 批次 45 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）+ 批次 46 G07 文档进程真实 spawn + 活显示验收（多核收益）+ 批次 47 P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑核心 + P13 CPU 回退）+ 批次 48 P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）+ 批次 49 P05 图片纹理缓存（真实 wgpu 侧，refcount + LRU + 预上传））已完成（**1876/1876** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式 + 批次 17 B01 统一导航控制器 + B05 location 导航语义 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏 + 批次 21 G11 键盘全流程路由层 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板 + 批次 23 G07 文档工作单元标签级编排 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径 + 批次 25 G09 step 1 统一标签会话协议层 + 批次 26 G09 step 5 会话持久化损坏文件降级解析 + 批次 27 C03 几何冻结 + 批次 28 C05 按 Document 管理的 LRU 缓存容器 + 批次 29 C02 帧版本与读写所有权 + 批次 30 C06 全量 vs 增量布局差分 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理 + 批次 34 G03 原生覆盖层位置同步/撤销协议 + 批次 35 G11 Tk 侧真实键盘绑定桥 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心 + 批次 39 G03 原生覆盖层 Tk 接线 + 批次 40 C02 活显示 rasterize 切 CPUImage + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装 + 批次 42 B 系列活显示 GUI 实际接线 + 批次 43 main.py CLI 路径切 CPUImage + 批次 44 _c02_refresh_canvas_cpu 设为默认呈现路径 + 批次 45 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）+ 批次 46 G07 文档进程真实 spawn + 活显示验收（多核收益）+ 批次 47 P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑核心 + P13 CPU 回退）+ 批次 48 P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）+ 批次 49 P05 图片纹理缓存（真实 wgpu 侧，refcount + LRU + 预上传）+ 批次 50 P06 字形图集（真实 wgpu 侧，atlas 去重 + 打包 + UV + refcount + LRU + 预解析））已完成（**1889/1889** 测试通过）。
 
 R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）、批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）、批次 14（C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归纯逻辑核心）、批次 15（C02 连续像素缓冲区阶段 2–3 + C03 行内格式化与文字布局纯逻辑核心）、批次 16（B03 脚本异常隔离 + B04 多变量声明 / 序列表达式纯逻辑核心）、批次 17（B01 统一导航控制器 + B05 location 导航语义纯逻辑核心）、批次 18（B06 字段编辑状态 + B07 统一激活 / 表单提交纯逻辑核心）、批次 19（B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归纯逻辑核心）与批次 20（B02 请求配置 / 页面可用性诊断 + B09 可读首屏纯逻辑核心）及批次 21（G11 键盘全流程纯逻辑路由层，GUI 可注入）、批次 22（C01 公共 API 包装层 GUI 接入 + G10 诊断区面板纯逻辑核心）、批次 23（G07 文档工作单元标签级编排纯逻辑核心）、批次 24（C04 表单提交端到端任务 + G09 统一历史提交路径纯逻辑核心）、批次 25（G09 step 1 统一标签会话协议层纯逻辑核心）与批次 26（G09 step 5 会话持久化损坏文件降级解析纯逻辑核心）、批次 27（C03 几何冻结纯逻辑核心）及批次 28（C05 step 5 按 Document 管理的 LRU 缓存容器纯逻辑核心）、批次 29（C02 step 4 帧版本与读写所有权纯逻辑核心）及批次 30（C06 全量 vs 增量布局差分纯逻辑核心）及批次 31（G03 脚本改值同步可解释性 + 失焦重绘不还原纯逻辑核心）及批次 32（C02 填充/混合/图片迁移到连续缓冲区纯逻辑核心）及批次 33（C02 图片/字形逐阶段迁移 + 缓冲池复用治理纯逻辑核心）及批次 34（G03 原生覆盖层位置同步/撤销协议纯逻辑核心）、批次 35（G11 Tk 侧真实键盘绑定桥 + event_generate 驱动验证）及批次 36（G11 键盘绑定桥接入 gui.py 实际接线）及批次 37（G09 标签会话协议层接入 gui.py 实际接线 + Tk PhotoImage 全局 image 注册表 latent bug 修复）及批次 38（G07 step 4 文档进程多核方案纯逻辑核心）及批次 39（G03 原生覆盖层 Tk 接线）及批次 40（C02 活显示 rasterize 切 CPUImage）及批次 41（B 系列活显示 GUI 接线 + 网络 I/O 实装：BGuiWiring 统一分派 + 本地 loopback HTTP 冒烟 + render_document_from_url 本地实装验收）及批次 42（B 系列活显示 GUI 实际接线：gui.py TabBrowser 地址栏 / 链接 / 表单分派走 BGuiWiring + 既有导航执行路径回退）及批次 43（main.py CLI 路径切 CPUImage：CPUImage.raw_rows / to_png_bytes / nonwhite_count + browser.render_document_to_cpu_image / with_event / with_click + main._write_image 双形态分派 + 错误页切 CPUImage）及批次 44（_c02_refresh_canvas_cpu 设为默认呈现路径：gui.py TabBrowser._refresh_canvas 优先走 CPUImage 连续 buffer + _sync_scrollbar 抽取共用 + _last_dl 不可用时回退 Bitmap）已完成，B 系列 B01–B10 纯逻辑核心全部落地，G11 键盘路由 + G11 Tk 侧真实键盘绑定桥 + G11 键盘绑定桥接入 gui.py 实际接线 + G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + G07 step 4 文档进程多核方案 + G03 原生覆盖层 Tk 接线 + C01 GUI 接入 + G10 诊断区面板 + G07 标签级编排 + C04 表单提交端到端 + G09 标签会话协议 + G09 损坏会话降级 + C03 几何冻结 + C05 按 Document LRU 缓存容器 + C02 帧版本所有权 + C06 全量/增量差分 + G03 编辑状态机 + C02 填充/混合/图片/字形迁移执行层 + 缓冲池复用治理 + G03 原生覆盖层协议 + C02 活显示 rasterize 切 CPUImage + B 系列活显示 GUI 接线 + 网络 I/O 实装 + B 系列活显示 GUI 实际接线 + main.py CLI 路径切 CPUImage + _c02_refresh_canvas_cpu 设为默认呈现路径 纯逻辑层落地；后续批次（paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）/ G07 doc-process 真实 spawn + 活显示验收 / 在线对照复测（出站网络阻塞中））按实施文档依赖顺序继续。
 

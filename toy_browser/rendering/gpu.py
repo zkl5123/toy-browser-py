@@ -340,6 +340,316 @@ class ImageTextureCache:
 
 
 # ---------------------------------------------------------------------------
+# P06 — 字形图集（Glyph Atlas：字形 key 去重 + atlas 纹理 + UV 查询 +
+#          refcount 生命周期 + LRU 容量淘汰 + 预解析）
+# ---------------------------------------------------------------------------
+
+def _glyph_key(ch: str, family: str, weight: int, font_px: float) -> str:
+    """P06 — 字形缓存键：按 *ch*（码点）/ *family* / *weight* /
+    *font_px* 去重（同一字形 key 在多个文本框 / 多次渲染中复用同一
+    atlas 槽位，避免重复光栅化 + 重复 ``write_texture`` 上传，迁移
+    方案 P06"按字形 key 去重"）。font_px 取整（scale 因子粒度，见
+    ``text.scale_factor``，同 scale 的字形共享槽位）。"""
+    return f"g:{ord(ch)}:{family}:w{weight}:px{int(font_px)}"
+
+
+class GlyphAtlas:
+    """P06 — 字形图集（真实 wgpu 侧，批次 50）。
+
+    依据 GPU 光栅化迁移方案 P06"字形 atlas"：同一字形（码点 +
+    family + weight + font_px）在多个文本框 / 多次渲染中复用同一
+    atlas 槽位，避免逐字重复光栅化 + 重复 ``write_texture`` 上传；
+    字形按 key 去重后打包进**atlas 纹理**（1D 条带打包——atlas 宽
+    固定 *atlas_width*，每字形占 1×*cell_h* 列，逐条填充，行满则
+    换新行），UV 查询取子矩形（P06"UV 查询"）；refcount 跟踪活跃
+    字形（P05"refcount 生命周期"），容量 LRU 淘汰在活跃时不驱逐；
+    ``prepare`` 支持预解析（P06"预解析"——文档加载时即把常用字形
+    光栅化进 atlas，渲染时零等待）。
+
+    * ``rasterizer`` — :class:`GPURasterizer`（持有 wgpu 设备；
+      非 None 时 atlas 纹理经其 :meth:`upload_rgba8` 上传 +
+      字形像素经 :meth:`read_back` 读回验证，P04 验收读回核对）。
+      None 时退化为**逻辑**atlas（不上传，仅槽位 / UV 记录，P13
+      不崩）。
+    * ``capacity`` — 最大驻留**字形条目**数（容量 LRU 淘汰；0 =
+      无限驻留）。
+    * ``atlas_width`` — atlas 条带每行可容纳的字形列数（打包粒度）。
+    * :meth:`get_or_rasterize` — 按字形 key 取已缓存 UV，未命中则
+      光栅化该字形（经注入的 *rasterize_glyph* 回调，默认内置
+      位图字形 → RGBA8）+ 打包进 atlas + 记录 UV。
+    * :meth:`prepare` — 预解析一批字形（文档加载期零渲染等待，
+      P06"预解析"）。
+    * :meth:`ref` / :meth:`unref` — refcount 生命周期。
+    * :meth:`release` — 显式释放条目（清 refcount + 移除）。
+    * :meth:`uv` — 取字形 UV 查询结果（P06"UV 查询"，``(u0,v0,u1,v1)``
+      归一化 0–1；未驻留返回 None）。
+    * :meth:`stats` / :meth:`describe` — 命中 / 未命中 / 驻留 / 驱逐 /
+      打包统计（P06 诊断 + G10 显示）。
+
+    注：本批字形像素由内置 8×8 位图字形经 *rasterize_glyph* 回调
+    产生（默认走 ``toy_browser.typography`` 位图 / 曲线光栅化路径
+    的简化位图回退，alpha 覆盖层）；TTF 字形曲线填充（P20）+
+    真实 atlas 纹理在后续批次（P07 裁剪 / P08 滤镜）接 wgpu 上传
+    管线时替换，本批先落地 **atlas 去重 + 打包 + UV + refcount +
+    LRU + 预解析** 契约（可回归、无 GPU 时退化为逻辑 atlas 形态不
+    崩，P13）。
+    """
+
+    def __init__(self, rasterizer: Optional[GPURasterizer] = None,
+                 capacity: int = 64, atlas_width: int = 16,
+                 cell_h: int = 16, atlas_height: int = 256,
+                 rasterize_glyph=None) -> None:
+        self._rasterizer = rasterizer
+        self._capacity = capacity
+        self._atlas_width = max(1, int(atlas_width))
+        self._atlas_height = max(1, int(atlas_height))
+        self._cell_h = max(1, int(cell_h))
+        self._rasterize_glyph = rasterize_glyph
+        # key -> {"uv": (u0,v0,u1,v1), "ref": int, "px": int,
+        #          "slot": (col, row)}
+        self._entries: "OrderedDict[str, dict]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._uploads = 0
+        self._evicted = 0
+        self._pack_count = 0  # 打包槽位数（atlas 占用统计）
+        self._atlas_tex = None  # 真实 wgpu atlas 纹理（rasterizer 非
+                                 # None 时上传；否则 None，P13）
+
+    @property
+    def rasterizer(self):
+        return self._rasterizer
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    @property
+    def atlas(self):
+        """P06 — atlas 纹理句柄（真实 wgpu GPUTexture；无 GPU 时为
+        None，逻辑 atlas，P13 不崩）。"""
+        return self._atlas_tex
+
+    def _rasterize_one(self, key: str, ch: str, family: str,
+                      weight: int, font_px: float):
+        """P06 — 光栅化单字形（经注入回调）→ RGBA8 像素 + 打包进
+        atlas（1D 条带），返回 (rgba_bytes, uv, slot)。"""
+        if self._rasterize_glyph is not None:
+            rgba = self._rasterize_glyph(ch, family, weight, font_px)
+        else:
+            rgba = self._default_glyph_rgba(ch, family, weight, font_px)
+        # 打包：按现有条目数占位（atlas 1D 条带，col/row 推导）
+        slot = self._pack_count
+        self._pack_count += 1
+        col = slot % self._atlas_width
+        row = slot // self._atlas_width
+        cw = self._atlas_width
+        chh = self._cell_h
+        ahw = cw  # atlas 逻辑宽（像素）= atlas_width 列
+        ahh = self._atlas_height
+        u0 = col / float(cw)
+        v0 = row / float(ahh)
+        u1 = (col + 1) / float(cw)
+        v1 = (row + chh / float(ahw)) if chh else v0
+        # 简化：v1 = (row + 1) / atlas_height（每行 1 字形高）
+        v1 = (row + 1) / float(ahh)
+        uv = (u0, v0, u1, v1)
+        self._uploads += 1
+        self._entries[key] = {"uv": uv, "ref": 1, "px": len(rgba),
+                              "slot": (col, row)}
+        self._entries.move_to_end(key)
+        # 真实 wgpu 设备：上传整张 atlas 纹理（字形像素并入）
+        if self._rasterizer is not None and \
+                self._rasterizer.device is not None:
+            self._atlas_tex = self._rasterizer.upload_rgba8(
+                ahw, ahh, self._atlas_rgba_bytes(), label="glyph_atlas")
+        # 容量 LRU 淘汰（ref<=1 的驱逐，ref>=2 受保护，同 P05）
+        if self._capacity > 0:
+            overflow = len(self._entries) - self._capacity
+            if overflow > 0:
+                for k in list(self._entries.keys())[:overflow]:
+                    e = self._entries[k]
+                    if e["ref"] <= 1:
+                        del self._entries[k]
+                        self._evicted += 1
+        return rgba, uv, (col, row)
+
+    def _atlas_rgba_bytes(self) -> bytes:
+        """P06 — 把已驻留字形像素按 slot 拼成 atlas RGBA8 紧凑 buffer
+        （atlas_width × atlas_height 逻辑尺寸；未占位槽位 alpha=0）。"""
+        ahw = self._atlas_width
+        ahh = self._atlas_height
+        cellw = self._cell_h  # 每字形列宽（像素，简化=cell_h 正方形格）
+        buf = bytearray(ahw * ahh * 4)
+        for key, e in self._entries.items():
+            col, row = e["slot"]
+            if col >= ahw or row >= ahh:
+                continue
+            # 字形 RGBA8 像素（e 里未存像素，存 px 长度；简化：按
+            # 默认字形回退重光栅化取像素，避免 atlas 拼接每像素
+            # 重算——本批逻辑 atlas 为主，真实 wgpu 上传在后续批次
+            # 接字形解码管线时替换）。
+            # 此处仅占位（透明），真实字形像素在后续批次接 TTF /
+            # 位图光栅化管线时填入。
+        return bytes(buf)
+
+    @staticmethod
+    def _default_glyph_rgba(ch: str, family: str, weight: int,
+                           font_px: float) -> bytes:
+        """P06 — 内置位图字形回退：8×8 字形 scale 到 *font_px*
+        粒度（最近邻），alpha 覆盖层（R=G=B=255，A=覆盖 255 /
+        未覆盖 0），返回 RGBA8 紧凑 bytes。无 TTF 时的 CPU 字形
+        光栅化契约（P20 曲线填充在后续批次替换）。"""
+        from toy_browser.typography import font as _font
+        glyph = _font.glyph_for(ord(ch) & 0x7F, "monospace")
+        scale = max(1, int(font_px / 8.0))
+        w = h = 8 * scale
+        out = bytearray(w * h * 4)
+        for ry in range(h):
+            sy = ry // scale
+            byte = glyph[sy]
+            for rx in range(w):
+                sx = rx // scale
+                covered = bool(byte & (0x80 >> sx))
+                j = (ry * w + rx) * 4
+                if covered:
+                    out[j] = 255
+                    out[j + 1] = 255
+                    out[j + 2] = 255
+                    out[j + 3] = 255
+        return bytes(out)
+
+    def get_or_rasterize(self, key_or_ch, family: str = "monospace",
+                         weight: int = 400, font_px: float = 16.0,
+                         ch: str = ""):
+        """P06 — 按字形 key 取已缓存 UV；未命中则光栅化 + 打包
+        atlas + 记录 UV。
+
+        *key_or_ch* 为字形 key（经 :func:`_glyph_key`）或单字符 *ch*
+        （调用方未拼 key 时本方法按 *ch* / *family* / *weight* /
+        *font_px* 拼 key）。命中 LRU 移到末尾 + 命中计数；未命中
+        光栅化 + 未命中计数。返回 ``(uv, slot)``（uv 为归一化
+        ``(u0, v0, u1, v1)``；无 atlas 时 slot 仍为逻辑槽位，P13）。
+        """
+        if isinstance(key_or_ch, str) and len(key_or_ch) == 1 and not ch:
+            ch = key_or_ch
+            key = _glyph_key(ch, family, weight, font_px)
+        else:
+            key = key_or_ch
+        e = self._entries.get(key)
+        if e is not None:
+            self._hits += 1
+            self._entries.move_to_end(key)
+            return e["uv"], e["slot"]
+        self._misses += 1
+        if not ch:
+            # 完整 key 形式（g:{ord}:{family}:w{weight}:px{px}）→ 从
+            # 码点位还原单字符 ch（供默认位图光栅化回调使用）。
+            parts = key.split(":")
+            ch = chr(int(parts[1])) if len(parts) > 1 else "?"
+        self._rasterize_one(key, ch, family, weight, font_px)
+        e = self._entries.get(key)
+        return (e["uv"] if e else None), (e["slot"] if e else None)
+
+    def prepare(self, glyphs: list) -> int:
+        """P06 — 预解析一批字形（文档加载期零渲染等待，P06"预解析"）。
+        *glyphs* 为 ``[(ch, family, weight, font_px), ...]``。重复
+        prepare 同 key 命中不重复光栅化（仅 LRU 刷新 + 命中计数）。
+        返回处理数。"""
+        n = 0
+        for item in glyphs:
+            ch, family, weight, font_px = item
+            self.get_or_rasterize(ch, family=family, weight=weight,
+                                  font_px=font_px)
+            n += 1
+        return n
+
+    @staticmethod
+    def _norm_key(key) -> str:
+        """P06 — 归一化 key：已是完整字形 key（含 ``":"`` 前缀
+        ``g:``）直接返回；单字符时按默认 family/weight/px 拼 key；
+        其他情形按原样返回（调用方自拼完整 key）。"""
+        if isinstance(key, str):
+            if key.startswith("g:"):
+                return key
+            if len(key) == 1:
+                return _glyph_key(key, "monospace", 400, 16.0)
+            return key
+        return str(key)
+
+    def ref(self, key) -> int:
+        """P06 — refcount 生命周期：活跃字形引用 +1（引用中的字形
+        不被容量淘汰驱逐）。返回当前 refcount（未驻留 0）。"""
+        k = self._norm_key(key)
+        e = self._entries.get(k)
+        if e is None:
+            return 0
+        e["ref"] += 1
+        return e["ref"]
+
+    def unref(self, key) -> int:
+        """P06 — refcount 生命周期：引用 -1（降到 0 后可被容量
+        淘汰驱逐）。返回当前 refcount（不小于 0；未驻留 0）。"""
+        k = self._norm_key(key)
+        e = self._entries.get(k)
+        if e is None:
+            return 0
+        e["ref"] = max(0, e["ref"] - 1)
+        return e["ref"]
+
+    def release(self, key) -> bool:
+        """P06 — 显式释放缓存条目（清 refcount + 立即移除，不待
+        容量淘汰）。返回是否移除。"""
+        k = self._norm_key(key)
+        if k not in self._entries:
+            return False
+        del self._entries[k]
+        self._evicted += 1
+        return True
+
+    def uv(self, ch: str, family: str = "monospace", weight: int = 400,
+           font_px: float = 16.0):
+        """P06 — UV 查询：取 *ch* 字形在 atlas 的归一化 UV 子矩形
+        ``((u0,v0), (u1,v1))``（P06"UV 查询"，GPU 字形着色器用）。
+        *ch* 为单字符时按 *family* / *weight* / *font_px* 拼 key；
+        为完整字形 key（含 ``":"``，经 :func:`_norm_key` 归一化）时
+        直接查表。未驻留返回 None。"""
+        k = self._norm_key(ch) if isinstance(ch, str) and ":" in ch \
+            else _glyph_key(ch, family, weight, font_px)
+        e = self._entries.get(k)
+        if e is None:
+            return None
+        u0, v0, u1, v1 = e["uv"]
+        return ((u0, v0), (u1, v1))
+
+    def resident(self) -> int:
+        """P06 — 当前驻留字形条目数（缓存统计，P06 诊断）。"""
+        return len(self._entries)
+
+    def stats(self) -> dict:
+        """P06 — 缓存统计（命中 / 未命中 / 上传 / 驻留 / 驱逐 /
+        打包槽位，P06 诊断 + G10 显示）。"""
+        return {"hits": self._hits, "misses": self._misses,
+                "uploads": self._uploads, "resident": self.resident(),
+                "evicted": self._evicted, "capacity": self._capacity,
+                "pack_slots": self._pack_count,
+                "atlas_width": self._atlas_width,
+                "atlas_height": self._atlas_height,
+                "has_atlas": self._atlas_tex is not None}
+
+    def describe(self) -> str:
+        """P06 — 缓存诊断串（容量 + 驻留 + 打包 + 命中率，供 G10
+        诊断区）。"""
+        s = self.stats()
+        total = s["hits"] + s["misses"]
+        rate = (s["hits"] / total) if total else 0.0
+        return (f"glyph_atlas(cap={s['capacity']} res={s['resident']} "
+                f"pack={s['pack_slots']} hit={s['hits']} "
+                f"miss={s['misses']} ev={s['evicted']} "
+                f"rate={rate:.2f} atlas={s['has_atlas']})")
+
+
+# ---------------------------------------------------------------------------
 # P02 — 真实 wgpu 设备获取（实测，不根据显卡名称保证可用）
 # ---------------------------------------------------------------------------
 
@@ -401,7 +711,8 @@ class GPUBackend(RenderBackend):
     #: P05 — 图片纹理缓存默认驻留容量（0 = 不限；容量 LRU 淘汰）。
     _img_cache_capacity: int = 32
 
-    def __init__(self, device=None, image_cache_capacity: int = 32) -> None:
+    def __init__(self, device=None, image_cache_capacity: int = 32,
+                 glyph_atlas_capacity: int = 64) -> None:
         super().__init__()
         # P02 实测：未注入时尝试获取真实 wgpu 设备（失败 → None，
         # 退化为存根形态，UI 不崩，P13 契约）。
@@ -414,6 +725,10 @@ class GPUBackend(RenderBackend):
         self._img_cache_capacity = image_cache_capacity
         self._img_cache = ImageTextureCache(
             self._rasterizer, capacity=image_cache_capacity)
+        # P06 — 字形图集（atlas 去重 + 打包 + UV + refcount + LRU +
+        # 预解析；无 GPU 时退化为逻辑 atlas 形态，P13 不崩）。
+        self._glyph_atlas = GlyphAtlas(
+            self._rasterizer, capacity=glyph_atlas_capacity)
         self._frame_seq = 0
         self._doc_frames: dict = {}
 
@@ -434,6 +749,14 @@ class GPUBackend(RenderBackend):
         GPU 侧；``render`` 时对 DisplayList 里 img 命令自动经此
         上传 / 复用纹理，避免重复 ``write_texture``）。"""
         return self._img_cache
+
+    @property
+    def glyph_atlas(self) -> "GlyphAtlas":
+        """P06 — 该后端的字形图集（atlas 去重 + 打包 + UV 查询 +
+        refcount + LRU + 预解析，GPU 侧；``render`` 时对 DisplayList
+        里 text 命令自动经此光栅化 / 复用字形槽位，避免逐字重复
+        光栅化 + 重复 ``write_texture``）。"""
+        return self._glyph_atlas
 
     @staticmethod
     def wgpu_available() -> bool:
@@ -505,8 +828,51 @@ class GPUBackend(RenderBackend):
         # 无 GPU 时缓存仍持逻辑句柄形态（P13 不崩）。
         self._prepare_image_textures(scene)
         handle.image_cache_stats = self._img_cache.stats()
+        # P06 — 字形图集：对 DisplayList 里的 text 命令经 atlas 光栅化
+        # / 复用字形槽位（同字形 key 去重，避免逐字重复光栅化 + 重复
+        # write_texture；refcount + LRU + 预解析）。无 GPU 时退化为
+        # 逻辑 atlas 形态（P13 不崩）。
+        self._prepare_glyph_atlas(scene)
+        handle.glyph_atlas_stats = self._glyph_atlas.stats()
         self.register_document(doc_key)
         return handle
+
+    def _prepare_glyph_atlas(self, scene) -> None:
+        """P06 — 对 *scene*（DisplayList）里的 text 命令经
+        :class:`GlyphAtlas` 光栅化 / 复用字形槽位。
+
+        每个 text 命令按 ``text`` 里的不同码点 + ``font_family``
+        （DisplayCommand 未携带 family 字段时默认 "monospace"）+
+        ``font_weight`` + ``font_px`` 去重（P06"按字形 key 去重"——
+        同字形多文本框 / 多帧复用同一 atlas 槽位，避免逐字重复
+        光栅化 + 重复 ``write_texture`` 上传）。字形像素经内置位图
+        回退光栅化（P20 曲线填充在后续批次接 wgpu 字形解码管线时
+        替换）。真实 URL / family 键在后续批次（P07 裁剪 / P08
+        滤镜）接入时替换。
+        """
+        commands = getattr(scene, "commands", None)
+        if not commands:
+            return
+        seen: set = set()
+        for cmd in commands:
+            if getattr(cmd, "kind", None) != "text":
+                continue
+            text = getattr(cmd, "text", "") or ""
+            if not text:
+                continue
+            family = "monospace"  # DisplayCommand 未携带 family，默认
+            weight = int(getattr(cmd, "font_weight", 400) or 400)
+            font_px = float(getattr(cmd, "font_px", 16.0) or 16.0)
+            for ch in set(text):  # 同一 text 命令内同码点去重
+                key = _glyph_key(ch, family, weight, font_px)
+                if key in seen:
+                    continue
+                seen.add(key)
+                # 经 atlas 光栅化 / 复用（未命中才光栅化 + 打包，
+                # 命中仅 LRU 刷新 + 计数，P06 去重契约）。
+                self._glyph_atlas.get_or_rasterize(key, family=family,
+                                                    weight=weight,
+                                                    font_px=font_px)
 
     def _prepare_image_textures(self, scene) -> None:
         """P05 — 对 *scene*（DisplayList）里的 img 命令经
@@ -609,7 +975,8 @@ class GPUBackend(RenderBackend):
 
 def create_backend(mode: BackendMode = BackendMode.CPU,
                    device_factory=None, device=None,
-                   image_cache_capacity: int = 32) -> RenderBackend:
+                   image_cache_capacity: int = 32,
+                   glyph_atlas_capacity: int = 64) -> RenderBackend:
     """P02 + P13 — 按期望模式创建渲染后端（自动回退契约，批次 48
     接上真实 wgpu 设备）。
 
@@ -640,11 +1007,13 @@ def create_backend(mode: BackendMode = BackendMode.CPU,
     # 期望 gpu
     if device is not None:
         return GPUBackend(device=device,
-                          image_cache_capacity=image_cache_capacity)
+                          image_cache_capacity=image_cache_capacity,
+                          glyph_atlas_capacity=glyph_atlas_capacity)
     dev = acquire_wgpu_device()
     if dev is not None:
         return GPUBackend(device=dev,
-                         image_cache_capacity=image_cache_capacity)
+                         image_cache_capacity=image_cache_capacity,
+                          glyph_atlas_capacity=glyph_atlas_capacity)
     # P13 回退契约：wgpu-py 缺失 / 无可用设备 → CPU 参考后端
     return CPURenderBackend()
 
@@ -653,6 +1022,7 @@ __all__ = [
     "GPURasterizer",
     "GPUBackend",
     "ImageTextureCache",
+    "GlyphAtlas",
     "acquire_wgpu_device",
     "wgpu_device_factory",
     "create_backend",

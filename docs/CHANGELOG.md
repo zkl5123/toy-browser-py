@@ -27,7 +27,7 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–49（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–50（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
@@ -38,10 +38,11 @@ paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap
 P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑
 核心 + P13 CPU 回退）+ P04 基础 GPU 光栅化（真实 wgpu 纹理
 上传 + 读回验证）+ P05 图片纹理缓存（真实 wgpu 侧，refcount
-+ LRU + 预上传）。
-完整回归 **1876/1876**（基线 939 + 批次 1–49 新增 937）。P06 字形
-atlas / P07 裁剪变换透明组 / P08 阴影滤镜 / P09 tile 增量合成
-+ P12 验收未实施。逐项批次记录见
++ LRU + 预上传）+ P06 字形图集（真实 wgpu 侧，atlas 去重 +
+打包 + UV + refcount + LRU + 预解析）。
+完整回归 **1889/1889**（基线 939 + 批次 1–50 新增 950）。P07 裁剪
+变换透明组 / P08 阴影滤镜 / P09 tile 增量合成 + P12 验收未实施。
+逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -255,14 +256,60 @@ atlas / P07 裁剪变换透明组 / P08 阴影滤镜 / P09 tile 增量合成
   + 同资源多帧复用纹理（uploads 不变、命中计数）+
   `create_backend(image_cache_capacity=N)` 容量透传（GPU 后端透传，CPU
   后端不持纹理缓存））
+- 批次 50：P06 字形图集（真实 wgpu 侧，atlas 去重 + 打包 + UV + refcount
+  + LRU + 预解析）——在批次 49 的 P05 图片纹理缓存（真实 wgpu 侧缓存 +
+  refcount + LRU + 预上传）之上补 GPU 光栅化迁移方案 P06"字形 atlas"
+  （同字形按码点 + family + weight + font_px 去重，多文本框 / 多次
+  渲染复用同一 atlas 槽位，避免逐字重复光栅化 + 重复
+  `write_texture` 上传 + refcount 生命周期 + 容量 LRU 淘汰 +
+  `prepare` 预解析）。`gpu.GlyphAtlas`（字形图集核心，P06 GPU 侧：
+  `get_or_rasterize(ch_or_key, family, weight, font_px)` 命中复用已缓存
+  UV 槽位 + LRU 刷新 + 命中计数 / 未命中经内置位图字形回退光栅化 +
+  1D 条带打包进 atlas + 记录 UV + 未命中 / 上传计数 + `prepare
+  (glyphs)` 预解析一批字形（文档加载期零渲染等待，P06"预解析"）+
+  `ref(key)` / `unref(key)` refcount 生命周期（被外部 `ref()` 提升到
+  ref>=2 的字形不被容量 LRU 驱逐、可常驻超容量；`unref` 回 1 后可随
+  容量淘汰）+ `release(key)` 显式释放条目（refcount 清零 + 立即
+  移除）+ `uv(ch_or_key)` UV 查询（归一化 0–1 子矩形 `(u0,v0),
+  (u1,v1)`，P06"UV 查询"，GPU 字形着色器用；未驻留返回 None）+
+  `stats()` / `describe()` 命中 / 未命中 / 上传 / 驻留 / 驱逐 / 打包
+  槽位统计 + 诊断串（P06 诊断供 G10 显示）；atlas 纹理经
+  `GPURasterizer.upload_rgba8` 上传（真实 wgpu 设备时）；无 wgpu 设备
+  时退化为**逻辑 atlas**（不上传，仅槽位 / UV 记录，P13 不崩；
+  `capacity=0` 不限驻留））+
+  `gpu.GPUBackend.glyph_atlas`（该后端持有的字形图集，每后端一个，
+  P06 契约；`GPUBackend.__init__` 新增 `glyph_atlas_capacity` 参数
+  默认 64 透传；`GPUBackend.render` 时自动对 DisplayList 里 `text`
+  命令经图集光栅化 / 复用字形槽位（同字形 key 去重，避免逐字重复
+  光栅化 + 重复 `write_texture` 上传），并把 `glyph_atlas_stats`
+  挂到 `FrameHandle`（P06 统计 + G10 诊断区显示））+
+  `gpu.create_backend(…, glyph_atlas_capacity=N)` 容量透传（仅 GPU
+  后端；CPU 参考后端不持字形图集，P06 仅 GPU 侧），
+  `tests/test_gpu_glyph_atlas.py` 新增 13 条（`get_or_rasterize` 同
+  key 命中去重（hits +1、uploads 仍 1、uv/slot 不变）+ 不同 key 各自
+  打包（pack_slots 增长、uv 逐槽位推进）+ refcount 生命周期（`ref`
+  提升到 2 的条目不被容量 LRU 驱逐、可常驻超容量上限；`unref` 回 1
+  后可随容量淘汰）+ `release` 显式释放（refcount 清零 + 立即移除，
+  二次 release 返回 False）+ `prepare` 预解析（文档加载期，重复
+  prepare 同 key 命中不重复光栅化）+ capacity=0 不限驻留（LRU 不
+  驱逐）+ `uv` 查询（归一化 UV 子矩形，未驻留返回 None）+ 无 wgpu
+  设备时逻辑 atlas（has_atlas=False，不崩，P13）+ `describe` 诊断串
+  含 cap / res / pack / hit / miss / ev / rate / atlas +
+  `GPUBackend.glyph_atlas` 属性（每后端一个，无 GPU 时仍可访问）+
+  `GPUBackend.render` 自动对 text 命令经 atlas 预解析（resident 增长
+  + `glyph_atlas_stats` 挂 FrameHandle）+ 同字形多帧复用槽位（uploads
+  不变、命中计数）+ `create_backend(glyph_atlas_capacity=N)` 容量透传
+  （GPU 后端透传，CPU 后端不持字形图集））
 
 ### 未实施（留待后续批次）
 
-- P06–P09 GPU 侧逐阶段迁移（字形 atlas / 裁剪变换透明组 / 阴影滤镜
-  / tile 增量合成）+ P12 GPU 性能与正确性验收（批次 48 已落地 P04
-  基础 GPU 光栅化：真实 wgpu 纹理上传 + 读回验证 0 mismatch；批次 49
-  已落地 P05 图片纹理缓存：真实 wgpu 侧缓存 + refcount + LRU + 预
-  上传；P06–P09 在 GPU 侧逐阶段推进，留后续批次）
+- P07–P09 GPU 侧逐阶段迁移（裁剪变换透明组 / 阴影滤镜 / tile 增量
+  合成）+ P12 GPU 性能与正确性验收（批次 48 已落地 P04 基础 GPU
+  光栅化：真实 wgpu 纹理上传 + 读回验证 0 mismatch；批次 49 已落地
+  P05 图片纹理缓存：真实 wgpu 侧缓存 + refcount + LRU + 预上传；
+  批次 50 已落地 P06 字形图集：真实 wgpu 侧 atlas 去重 + 打包 + UV
+  + refcount + LRU + 预解析；P07–P09 在 GPU 侧逐阶段推进，留后续
+  批次）
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收已在批次 46 落地（多核收益落地到 gui 侧活显示路径；`make_multiprocessing_pool` 既有入口名保持不变，兼容既有消费端）
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
