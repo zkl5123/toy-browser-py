@@ -27,16 +27,19 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–46（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–47（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
 loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage +
 _c02_refresh_canvas_cpu 设为默认呈现路径 +
 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap
-合并层）+ G07 文档进程真实 spawn + 活显示验收（多核收益）。
-完整回归 **1840/1840**（基线 939 + 批次 1–46 新增 901）。P01–P13
-GPU 系列未实施。逐项批次记录见
+合并层）+ G07 文档进程真实 spawn + 活显示验收（多核收益）+
+P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑
+核心 + P13 CPU 回退）。
+完整回归 **1854/1854**（基线 939 + 批次 1–47 新增 915）。P04–P09
+GPU 真实光栅化（需 wgpu-py 可选依赖 + 活显示环境）未实施。逐项
+批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -148,10 +151,38 @@ GPU 系列未实施。逐项批次记录见
   (tab_id)`（关标签丢弃文档进程池在途身份），
   `tests/test_document_process_spawn.py` 新增 12 条（spawn 8 条 +
   gui 接线 4 条）
+- 批次 47：P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02
+  纯逻辑核心 + P13 CPU 回退）——`renderer/contracts.RenderBackend`
+  （P01 接口契约 render/present/snapshot/release_document +
+  BackendMode cpu/gpu 模式边界 + 基类默认 CPU 参考语义，不把每帧
+  强制为 Bitmap 隐含读回）+ `renderer/contracts.AdapterProbe` +
+  `Capability`（P02 适配器选择与能力探测：device_factory 可注入
+  fake 做协议回归；select 按 gpu→cpu 优先级选首个可用，无可用 GPU
+  时自动回退 CPU + reason 记录供诊断面板解释）+
+  `renderer/cpu_backend.CPURenderBackend`（P01 接口的 CPU 参考实现，
+  render 经批次 45 的 paint_engine.rasterize_to_canvas 直画
+  CPUCanvas，产出 FrameHandle mode=cpu + CPUImage + C01 文档版本，
+  逐像素权威基准）+ `rasterize_cpu.FrameHandle`（P01 呈现句柄，
+  CPU buffer / 未来 GPU texture 统一抽象，截图 / 导出经 .image 直接
+  消费不逐像素读回）+ `gpu.GPUBackend` 存根 + `gpu.create_backend`
+  工厂（P13：create_backend("gpu") 在 wgpu-py 不可用时自动回退
+  CPURenderBackend，UI 不崩；真实 GPU 光栅化 P04–P09 留后续批次），
+  `tests/test_gpu_backend.py` 新增 14 条（BackendMode 枚举值 +
+  RenderBackend 基类契约形态 + AdapterProbe 无 device_factory 时
+  GPU 不可用 / CPU 恒可用 + select(GPU) 自动回退 CPU + select(CPU)
+  直接返回 + fake device_factory GPU 可用 + describe 诊断串 +
+  CPURenderBackend.render 经 rasterize_to_canvas 直画 FrameHandle +
+  逐像素与权威 paint_engine.rasterize 一致（cpu_matches_bitmap 0
+  mismatch）+ 文档生命周期 register/release + create_backend 默认
+  CPU / 期望 GPU 回退 CPU + GPUBackend wgpu 探测 + present/snapshot
+  契约形态）
 
 ### 未实施（留待后续批次）
 
-- P01–P13 GPU 光栅化迁移方案
+- P04–P09 GPU 真实光栅化（图元 / 文字 / 裁剪 / 效果 / 增量合成）需
+  wgpu-py 可选依赖 + 活显示环境，留后续批次；批次 47 已落地 P01–P13
+  第一阶段统一渲染契约 + P02 适配器探测 + P13 CPU 回退契约（可回归、
+  不破坏 1840 基线）
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收已在批次 46 落地（多核收益落地到 gui 侧活显示路径；`make_multiprocessing_pool` 既有入口名保持不变，兼容既有消费端）
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）

@@ -318,6 +318,53 @@ def cpu_matches_cpu(a: CPUImage, b: CPUImage,
 
 
 # ---------------------------------------------------------------------------
+# 批次 47 — P01 RenderBackend 呈现句柄（GPU 接口与模式边界）
+# ---------------------------------------------------------------------------
+
+class FrameHandle:
+    """P01 — 渲染后端输出的帧句柄（CPU buffer / 未来 GPU texture 的
+    统一抽象，批次 47 先落 CPU 形态）。
+
+    依据 GPU 光栅化迁移方案 P01"GPU 接口与模式边界"：``RenderBackend
+    .render(scene, viewport, damage) -> FrameHandle``。FrameHandle
+    可以是 GPU texture 或 CPU buffer，**不能**把每个 GPU render 的
+    返回值强制要求为 Bitmap（否则每帧隐含一次读回）。
+
+    * ``frame_id`` — C01 帧版本（携带文档版本，丢弃过期结果）。
+    * ``width`` / ``height`` — 逻辑视口尺寸。
+    * ``image`` — CPU 形态的 :class:`CPUImage`（GPU 形态为 texture
+      句柄，批次 47 暂用 CPUImage 作参考实现）。
+    * ``mode`` — 产出该帧的后端模式（``"cpu"`` / ``"gpu"``）。
+
+    快照 / 呈现经 :meth:`RenderBackend.snapshot` /
+    :meth:`RenderBackend.present`；CPU 形态的 image 直接供 GUI
+    PhotoImage / PPM / PNG 导出（不逐像素读回）。
+    """
+
+    def __init__(self, frame_id: int, width: int, height: int,
+                 image=None, mode: str = "cpu",
+                 document_version: int = 0) -> None:
+        self.frame_id = frame_id
+        self.width = width
+        self.height = height
+        self.image = image
+        self.mode = mode
+        self.document_version = document_version
+
+    @property
+    def is_gpu(self) -> bool:
+        return self.mode == "gpu"
+
+    @property
+    def is_cpu(self) -> bool:
+        return self.mode == "cpu"
+
+    def __repr__(self) -> str:
+        return (f"FrameHandle(frame_id={self.frame_id} "
+                f"{self.width}x{self.height} mode={self.mode})")
+
+
+# ---------------------------------------------------------------------------
 # 烟测
 # ---------------------------------------------------------------------------
 
