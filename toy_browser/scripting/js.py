@@ -4055,6 +4055,11 @@ class Host:
         # touch the wire.
         self._fetch_transport: object | None = None
         self._cancelling: bool = False
+        # B05 — navigation-capable location global (web_api.ToyLocation)
+        # queues pending location.replace/assign/href= targets here; the
+        # render pipeline (browser.render_document_from_url) follows
+        # them with a loop guard.
+        self._pending_nav: list = []
         # B03 — structured record of script-boundary failures
         # (parse-time / runtime SyntaxError etc. that a <script>
         # element's execution hit and the boundary logged).  Each entry

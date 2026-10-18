@@ -145,8 +145,12 @@ def test_p1_navigator_hardware_concurrency():
 def test_p1_location_default_about_blank():
     host = _make_host()
     loc = host.globals["location"]
-    # Host was created without a url → about:blank
-    assert loc["hostname"] in ("blank", "")
+    # Host was created without a url → about:blank.
+    # B05 — the live location global is now a navigation-capable
+    # ToyLocation object (not a bare dict); it still exposes the same
+    # readable parts via attribute access, so the about:blank default
+    # is observed through the ``href`` property.
+    assert loc.href in ("about:blank", "")
 
 
 def test_p1_location_make_location_helper():

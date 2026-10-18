@@ -175,7 +175,15 @@ def make_navigator() -> dict:
 def make_location(url: str = "") -> dict:
     """P33.P1 — ``location`` global: a mutable dict mirroring the
     observable URL parts (href, protocol, host, hostname, port,
-    pathname, search, hash, origin)."""
+    pathname, search, hash, origin).
+
+    B05 note — this dict form is kept for *legacy consumers* (the
+    :meth:`ToyLocation.as_dict` projection matches these exact keys).
+    The navigation-capable :class:`ToyLocation` object is what the JS
+    sandbox installs as the live ``location`` global so that
+    ``location.replace(...)`` / ``location.href = …`` actually produce a
+    navigation task instead of silently writing a dict key.
+    """
     m = re.match(r"(https?)://([^/:?#]+)(?::(\d+))?(/[^?#]*)?(\?[^#]*)?(#[^>]*)?", url or "")
     if m:
         proto, host, port, path, query, frag = m.groups()
@@ -210,7 +218,7 @@ def make_history() -> dict:
 # URL / URLSearchParams — stdlib urllib-based
 # ---------------------------------------------------------------------------
 
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode, urljoin
 
 
 class ToyURL:
@@ -325,6 +333,133 @@ class ToyURLSearchParams:
 
 
 # ---------------------------------------------------------------------------
+# B05 — ToyLocation: a navigation-capable location global
+# ---------------------------------------------------------------------------
+
+
+class ToyLocation:
+    """B05 — the live ``location`` global with real navigation semantics.
+
+    Replaces the bare ``make_location`` dict as the JS sandbox's live
+    ``location`` so that ``location.replace(url)`` / ``location.assign`` /
+    ``location.href = url`` produce a *navigation task* the host /
+    pipeline can consume, instead of silently writing a dict key (the
+    round-5 assessment §4.1 "missing navigation bridge" — baidu's 227
+    byte ``location.replace(...)`` redirect page never navigated and
+    the page rendered blank).
+
+    URL parsing + same-document detection reuse
+    :class:`toy_browser.app.navigation.Location`'s semantics (stdlib
+    :func:`urllib.parse`), so ``replace`` (replaces the history item),
+    ``assign`` (new history item) and same-document hash navigation are
+    distinguished exactly as the B05 spec describes.
+
+    The produced task is a :class:`toy_browser.app.navigation.NavRequest`
+    (or a plain dict when the navigation module is unavailable) stored on
+    ``host._pending_nav`` so a renderer can follow the redirect with a
+    loop guard.  All parts are still readable via the same attribute
+    names as the legacy dict (``href``/``protocol``/``host``/…);
+    :meth:`as_dict` projects them for legacy consumers.
+    """
+
+    _PARTS = ("href", "protocol", "host", "hostname", "port",
+              "pathname", "search", "hash", "origin")
+
+    def __init__(self, host, doc_url: str = ""):
+        self._host = host
+        # B05 step 1 — the document base URL is read LAZILY from the
+        # host (``host.doc_url``) at access time, not frozen at
+        # construction: ``Host.__init__`` installs this location global
+        # *before* the pipeline sets ``host.doc_url`` (R4 stage 1), so
+        # the base must be resolved when navigation actually happens.
+        self._doc_url_fallback = doc_url
+        self._nav_cls = None
+        try:
+            from toy_browser.app.navigation import Location as _NavLoc
+            self._nav_cls = _NavLoc
+        except Exception:  # pragma: no cover — navigation is stdlib-only
+            self._nav_cls = None
+
+    # -- the effective document base URL -----------------------------------
+
+    def _base_url(self) -> str:
+        host = self._host
+        base = getattr(host, "doc_url", "") or self._doc_url_fallback
+        return base or "about:blank"
+
+    def _nav_loc(self):
+        if self._nav_cls is None:
+            return None
+        return self._nav_cls(self._base_url())
+
+    # -- readable parts (match the legacy dict keys) ----------------------
+
+    def _parts(self) -> dict:
+        nav = self._nav_loc()
+        if nav is not None:
+            return nav.as_dict()
+        return make_location(self._base_url())
+
+    def __getattr__(self, name):
+        # ``location.protocol`` / ``.host`` / … resolve to the URL part.
+        # __getattr__ only fires for *missing* attributes, so the
+        # methods (assign/replace/reload) and the href property below
+        # take precedence.
+        parts = self._parts()
+        if name in parts:
+            return parts[name]
+        raise AttributeError(f"location.{name}")
+
+    @property
+    def href(self) -> str:
+        return self._base_url()
+
+    @href.setter
+    def href(self, value: str) -> None:
+        # B05 — ``location.href = …`` is assign semantics.
+        self.assign(value)
+
+    # -- B05 step 2: navigation-producing operations ----------------------
+
+    def _emit(self, target: str, replace: bool) -> None:
+        try:
+            from toy_browser.app.navigation import NavRequest, SRC_SCRIPT
+            req = NavRequest(target=target, source=SRC_SCRIPT, replace=replace)
+        except Exception:  # pragma: no cover — navigation missing
+            req = {"target": target, "source": "script", "replace": replace}
+        host = self._host
+        pending = getattr(host, "_pending_nav", None)
+        if pending is None:
+            pending = host._pending_nav = []
+        pending.append(req)
+        host.log(f"location {'replace' if replace else 'assign'} -> {target}")
+
+    def _resolve(self, target: str) -> str:
+        nav = self._nav_loc()
+        if nav is not None:
+            return nav.resolve_target(target)
+        return urljoin(self._base_url(), target or "")
+
+    def assign(self, url: str) -> None:
+        """New history item (B05 step 3)."""
+        self._emit(self._resolve(url), replace=False)
+
+    def replace(self, url: str) -> None:
+        """Replace the current history item (the baidu redirect shape)."""
+        self._emit(self._resolve(url), replace=True)
+
+    def reload(self) -> None:
+        self._emit(self._base_url(), replace=True)
+
+    def as_dict(self) -> dict:
+        """Legacy projection — same keys as :func:`make_location`."""
+        return self._parts()
+
+    def __repr__(self) -> str:
+        return f"location({self._base_url()!r})"
+
+
+# ---------------------------------------------------------------------------
 # Registry — the function that wires all new globals into a js.Host
 # ---------------------------------------------------------------------------
 
@@ -353,7 +488,13 @@ def register_web_api(host) -> None:
     g["WebSocket"] = ToyWebSocket
     # navigator / location / history
     g["navigator"] = make_navigator()
-    g["location"] = make_location(getattr(host, "url", ""))
+    # B05 — the live location global is navigation-capable so that
+    # location.replace / assign / href= emit a navigation task the
+    # pipeline can follow (the round-5 "missing navigation bridge").
+    # doc_url is the document base URL (R4 stage 1 sets host.doc_url);
+    # fall back to host.url for legacy callers.
+    g["location"] = ToyLocation(host, getattr(host, "doc_url", "")
+                                or getattr(host, "url", ""))
     g["history"] = make_history()
     # URL / URLSearchParams
     g["URL"] = ToyURL

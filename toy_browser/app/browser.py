@@ -54,6 +54,7 @@ def render_document_from_url(
     timeout: float | None = None,
     use_cache: "str | bool" = False,
     progress: "net.LoadEventSink | None" = None,  # noqa: F821
+    max_script_redirects: int = 3,
 ) -> Bitmap:
     """P22 — load an http(s) *url* and render it, plus fetch its
     subresources (``<link rel=stylesheet>`` / ``<img src>``) against
@@ -175,7 +176,6 @@ def render_document_from_url(
     # the document's own origin, identical to the legacy value here).
     host.doc_origin = (doc_policy.doc_origin if doc_policy is not None
                        else net._origin_str(resp.final_url or url))
-    # R4 stage 1 — absolute document base URL so <script src> relative
     # attributes resolve against the pipeline's absolute-URL cache.
     host.doc_url = resp.final_url or url
     # R4 stage 3 — in-page fetch()/XMLHttpRequest reach the SAME real
@@ -185,6 +185,36 @@ def render_document_from_url(
     host._fetch_transport = net.FetchTransport(
         eff_client, base_url=resp.final_url or url)
     host.execute_scripts_in_order(script_cache, csp_directives)
+
+    # B05 — if the page's inline scripts emitted a location navigation
+    # task (location.replace / assign / href=), follow it with a loop
+    # guard: the classic baidu 227-byte page replaces
+    # https:// -> http://, which would otherwise loop forever.  We
+    # dedupe by seen-URL and cap total script-redirect hops.
+    pending = list(getattr(host, "_pending_nav", []) or [])
+    if pending and max_script_redirects > 0:
+        seen = {resp.final_url or url}
+        follow = None
+        for req in pending:
+            target = getattr(req, "target", req) if not isinstance(req, str) else req
+            if not target or target in seen:
+                continue
+            low = target.lower()
+            if not (low.startswith("http://") or low.startswith("https://")):
+                continue
+            if target == (resp.final_url or url):
+                continue  # reload: no cross-document navigation
+            seen.add(target)
+            follow = target
+            break
+        if follow is not None:
+            return render_document_from_url(
+                follow, css_text, width, height,
+                load_subresources=load_subresources, client=client,
+                timeout=timeout, use_cache=use_cache, progress=progress,
+                max_script_redirects=max_script_redirects - 1,
+            )
+
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)
     styled = css_mod.apply(
