@@ -997,10 +997,26 @@ class TabBrowser:
         self._build_statusbar()
 
         # --- initial tab ---
+        # B01 批次 55 — 启动参数经统一路由判定（本地文件 / URL / blank）。
+        # 在此之前先建 BGuiWiring（统一导航控制器 + 文档上下文），使
+        # 启动导航与后续地址栏 / 链接导航共享同一 NavigationController
+        # 语义（B01 "所有导航经单一控制器"不变式），且其 nav 的
+        # current_url 可被初始导航即时更新。
+        from toy_browser.app.b_series_wiring import BGuiWiring, resolve_initial_route
+        self._b_wiring = BGuiWiring()
         page = PageInstance()
         page._browser = self
-        if initial_path and os.path.isfile(initial_path):
-            page.load_file(initial_path, 800, 600)
+        route = resolve_initial_route(initial_path, os.path.isfile)
+        if route.route == "local_file":
+            page.load_file(route.target, 800, 600)
+            self._b_wiring.nav.current_url = page.url or "about:blank"
+        elif route.route == "url":
+            # URL 形态（http(s)/about/裸主机等）— 经统一控制器提交，
+            # 实际 I/O 走既有 load_url（不改渲染路径），控制器记录
+            # 目标 / 历史 / 地址栏语义（B01 统一入口）。
+            self._b_wiring.nav.current_url = route.target
+            self._b_wiring.nav.address_text = route.target
+            page.load_url(route.target, 800, 600)
         else:
             page.url = "about:blank"
             page.title = "about:blank"
@@ -1032,8 +1048,8 @@ class TabBrowser:
         # / :meth:`_b_dispatch_link` / :meth:`_b_dispatch_form` 走 BGuiWiring
         # （资源三态 + 任务版本门控），导航执行仍走既有
         # :meth:`_commit_navigation` / :meth:`_navigate_to`（不改呈现路径）。
-        from toy_browser.app.b_series_wiring import BGuiWiring
-        self._b_wiring = BGuiWiring()
+        # （批次 55：self._b_wiring 已提前到初始标签导航前创建，
+        # 使启动参数也经统一控制器提交——此处不再重复构造。）
 
         # G07 批次 46 — 真实 multiprocessing 文档进程池（多核收益落地）：
         # 导航 / resize / 输入经 post 投递（不阻塞 UI），事件循环经

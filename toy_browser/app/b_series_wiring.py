@@ -81,6 +81,55 @@ class BDispatchResult:
     violations: list = field(default_factory=list)
 
 
+@dataclass
+class InitialRoute:
+    """B01 批次 55 — 启动参数统一路由判定结果（纯逻辑）。
+
+    ``route`` 取值：
+    - ``"local_file"`` — 本地文件存在，走 :meth:`PageInstance.load_file`；
+    - ``"url"`` — http(s) / about 等 URL 形态，经统一导航入口提交
+      （目标在 ``target``）；
+    - ``"blank"`` — 空参数或不可识别，落到 ``about:blank``。
+
+    设计：把启动参数"该走哪条导航"的判定从 ``gui.py`` 的
+    ``TabBrowser.__init__`` 抽成可测纯逻辑，使启动 / 地址栏 / 链接
+    三类导航共享同一 :class:`NavigationController` 语义（B01 统一
+    控制器），同时**不改动既有渲染路径**（本地文件仍 ``load_file``）。
+    """
+    route: str
+    target: str = ""
+
+
+def resolve_initial_route(initial: Optional[str],
+                          is_local_file: Callable[[str], bool]) -> InitialRoute:
+    """B01 批次 55 — 启动参数统一路由（本地文件 / URL / about:blank）。
+
+    判定规则（与 :meth:`NavigationController.classify_address_input`
+    的"网址"分支同源，保证启动与地址栏入口语义一致）：
+
+    - 空 / 仅空白 → ``blank``；
+    - 本地文件存在（``is_local_file(path)`` 为真）→ ``local_file``；
+    - 绝对 URL（含 scheme，如 ``http://``/``https://``/``about:`` 等）
+      或带路径特征的裸 URL（如 ``localhost:8000``、``www.x.com``）
+      → ``url``（目标原样保留）；
+    - 其余（纯文本、相对片段）→ ``blank``（不当本地文件导航，避免
+      启动参数被误当文件路径）。
+
+    ``is_local_file`` 由调用方注入（GUI 传 ``os.path.isfile``），使
+    本函数无文件系统副作用、可直接单测。
+    """
+    from toy_browser.app.navigation import _is_url_like as _is_url_form
+    s = (initial or "").strip()
+    if not s:
+        return InitialRoute(route="blank")
+    if is_local_file(s):
+        return InitialRoute(route="local_file", target=s)
+    if _is_url_form(s):
+        return InitialRoute(route="url", target=s)
+    return InitialRoute(route="blank")
+
+
+
 class BGuiWiring:
     """B 系列活显示 GUI 接线核心。
 

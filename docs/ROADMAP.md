@@ -3056,6 +3056,33 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
   可用性诊断、B06–B10（编辑 / 激活 / 表单 / 生命周期 / 首帧 /
   异步取消）留后续批次。
 
+### R6.26b B01 启动参数统一导航入口（GUI 接线 + 纯逻辑路由判定，批次 55）
+
+- [x] **启动参数经统一控制器提交**（依据 round5 `百度真实网页访问评估
+  与改进步骤` §B01"所有导航走同一控制器"不变式）：`TabBrowser.__init__`
+  原先只把**本地文件**（`os.path.isfile`）导航，HTTPS 启动参数
+  （如 `py toy_browser https://www.baidu.com`）落 else 分支被丢弃成
+  `about:blank`，启动入口未接统一控制器。
+- [x] `navigation.py` 新增 `_is_url_like(s)`：URL 形态判定（绝对 URL /
+  `about:`/`file:` 协议 / 含路径查询 / 裸主机名；含空格=纯文本→False），
+  与 `classify_address_input` 的"网址"分支同源。
+- [x] `b_series_wiring.py` 新增 `InitialRoute` + `resolve_initial_route
+  (initial, is_local_file)`：纯逻辑启动路由（local_file / url / blank
+  三态），`is_local_file` 注入，本地文件判定**优先**于 URL 形态。
+- [x] `gui.py` `TabBrowser.__init__`：`BGuiWiring` 初始化**提前**到初始
+  标签导航之前（使启动导航可复用统一 `NavigationController`）；初始标签
+  改走 `resolve_initial_route`——local_file→既有 `load_file`（渲染不变）、
+  url→`self._b_wiring.nav` 提交（更新 current_url/address_text）+ 既有
+  `load_url`、blank→`about:blank`。
+- 回归：`tests/test_p34_r9.py`（9 条纯逻辑，不依赖 tkinter：URL 形态
+  判定 / 纯文本非 URL / 本地文件路由 / http 启动经控制器 / about:blank
+  路由 / 裸主机路由 / 纯文本回落 blank / 本地文件优先级 / 非本地 URL 形态）。
+- 验证：全量 `--full` **1914/1914 exit 0**（1905+9），渲染噪声归零。
+- 说明：本批把启动入口接到与地址栏 / 链接 / 表单相同的
+  `NavigationController` 语义，**未改动既有渲染路径**（本地文件仍
+  `load_file`、URL 仍 `load_url`）。后续真实站点端到端验证仍待
+  B02/B06/B07 与字体渲染 T01–T10 收敛。
+
 ### R6.27 B06 字段编辑状态 + B07 统一激活 / 表单提交（纯逻辑核心，批次 18）
 
 - [x] **B06 字段编辑状态**（`toy_browser/app/field_editing.py`

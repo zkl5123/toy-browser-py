@@ -81,6 +81,41 @@ def _is_localish(url: str) -> bool:
     return False
 
 
+def _is_url_like(s: str) -> bool:
+    """B01 批次 55 — 启动参数"URL 形态"判定（与 ``classify_address_input``
+    的"网址"分支同源，保证启动入口与地址栏入口语义一致）。
+
+    含空格的字符串视为普通文本（**不**是 URL 形态）。其余满足任一即
+    视为 URL 形态：
+    - 绝对 URL（含 ``://`` scheme，``http://`` / ``https://`` 等）；
+    - ``about:`` / ``file:`` / 任意 ``scheme:`` 协议形式；
+    - 含路径 / 查询特征（``/`` 或 ``?``）；
+    - 裸主机名（形如 ``localhost:8000`` / ``example.com`` /
+      ``www.baidu.com``）。
+
+    纯文本（如 ``hello world`` / ``foo bar``）**不**视为 URL 形态 ——
+    启动参数不应被误当 URL 或本地文件导航，回落 ``about:blank``。
+    """
+    s = (s or "").strip()
+    if not s:
+        return False
+    if " " in s:
+        return False  # 含空格 = 普通文本，非 URL 形态
+    if _is_absolute_url(s):
+        return True
+    low = s.lower()
+    if low.startswith("about:") or low.startswith("file:"):
+        return True
+    if "/" in s or "?" in s:
+        return True
+    # 裸主机名：``[name]:[port]`` 或 ``domain``（形如 localhost:8000 /
+    # example.com / www.baidu.com）——字母数字 . - : 组成且无其它杂字符。
+    if re.fullmatch(r"[a-zA-Z0-9.\-]+(:[0-9]+)?", s):
+        return True
+    return False
+
+
+
 @dataclass
 class NavRequest:
     """B01 步骤 1 — 导航请求对象（统一入口的最小契约）。
