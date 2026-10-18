@@ -27,15 +27,16 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–45（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–46（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
 loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage +
 _c02_refresh_canvas_cpu 设为默认呈现路径 +
-paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）。
-完整回归 **1828/1828**（基线 939 + 批次 1–45 新增 889）。P01–P13 GPU
-系列未实施。逐项批次记录见
+paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap
+合并层）+ G07 文档进程真实 spawn + 活显示验收（多核收益）。
+完整回归 **1840/1840**（基线 939 + 批次 1–46 新增 901）。P01–P13
+GPU 系列未实施。逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -123,12 +124,36 @@ paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并�
   rect + border + text + shadow + rounded + gradient）+ 奇数宽度 /
   非紧凑 stride 逐像素一致 + gui._c02_rasterize_cpu_image 走直接画
   路径 + 页面未加载时返回 None）
+- 批次 46：G07 文档进程真实 spawn + 活显示验收——`document_process
+  ._doc_process_child(cmd_q, result_q, stop_evt, close_q)`（子进程
+  worker 主循环：从 cmd_q 读 DocCommand，经 DocumentProcessWorker
+  产出 DocFrame 经 result_q 传回；close_q 关标签丢弃在途身份
+  G09 step 4；异常回写 result_q 供父进程标记回退）+
+  `document_process.DocProcessServer`（真实 multiprocessing 文档进程
+  池：start() 经 get_context("spawn") 起子进程；post() 子进程存活时
+  经 pipe 发往 worker，否则回退父进程内置同步 worker；drain()
+  非阻塞收帧；close_tab() 经 close_q 通知 worker 丢弃在途身份；
+  shutdown() 置 stop_evt + join + terminate 清理子进程；describe()
+  含 spawned 字段区分真实多核 vs 回退态）+
+  `document_process.spawn_doc_process_server()`（活显示验收入口）+
+  `document_process.make_multiprocessing_pool()` 改为返回
+  DocProcessServer（兼容既有消费端入口名）+
+  `gui.TabBrowser.__init__` 起池（`_g07_doc_server =
+  _g07_spawn_doc_server()`）+ UI 销毁钩子（`root.protocol
+  ("WM_DELETE_WINDOW", _g07_on_ui_closing)` 统一
+  `_g07_doc_server_shutdown()` 清理子进程）+ `gui._g07_post_nav` /
+  `_g07_post_resize` / `_g07_drain_frames` /
+  `_g07_doc_server_shutdown` / `_g07_describe`（活显示验收路径）+
+  `gui._g09_close_tab` 关标签时同步 `self._g07_doc_server.close_tab
+  (tab_id)`（关标签丢弃文档进程池在途身份），
+  `tests/test_document_process_spawn.py` 新增 12 条（spawn 8 条 +
+  gui 接线 4 条）
 
 ### 未实施（留待后续批次）
 
 - P01–P13 GPU 光栅化迁移方案
 - 出站网络在线对照复测（TCP 443 阻塞中）
-- G07 doc-process 真实 spawn + 活显示验收
+- G07 doc-process 真实 spawn + 活显示验收已在批次 46 落地（多核收益落地到 gui 侧活显示路径；`make_multiprocessing_pool` 既有入口名保持不变，兼容既有消费端）
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）
 - `main.py` 9 处 `paint_engine.rasterize` 调用切 CPUImage 已在批次 43 落地（CLI 路径消费 CPUImage；`_c02_refresh_canvas_cpu` 设为默认呈现路径已在批次 44 落地；`paint_engine` 命令分派直接画到 `CPUCanvas`（消除 scratch Bitmap 合并层）已在批次 45 落地）
 - TTF 字形正确性修复 + DPI / 抗锯齿优化

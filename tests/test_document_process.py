@@ -183,13 +183,21 @@ def test_pool_describe():
 
 @_reg
 def test_make_multiprocessing_pool_fallback_no_crash():
-    """make_multiprocessing_pool 在不可 spawn 环境不崩（回退路径）。"""
-    pool = __import__(
-        "toy_browser.app.document_process",
-        fromlist=["make_multiprocessing_pool"]).make_multiprocessing_pool()
-    # 不管真实 spawn 与否，池可用（post/drain 不崩）
+    """make_multiprocessing_pool（批次 46 起返回 DocProcessServer）
+    在不可 spawn 环境不崩（回退路径，post/drain 仍可用）。"""
+    mod = __import__("toy_browser.app.document_process",
+                    fromlist=["make_multiprocessing_pool"])
+    pool = mod.make_multiprocessing_pool()
+    try:
+        pool.start()
+    except Exception:
+        pass
     pool.post(DocCommand(1, DOC_CMD_NAVIGATE, {"url": "a"}, 1))
     assert len(pool.drain()) >= 0
+    try:
+        pool.shutdown()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

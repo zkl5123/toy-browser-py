@@ -3888,13 +3888,75 @@ P32.8 测试扩充（34 条 P32 测试，623 → 657）+ 修复 P30 引入的 ta
 - 说明：本批补 paint_engine 命令分派直接画到 CPUCanvas（C02 目标
   "消除 scratch Bitmap 合并层"落地到 paint_engine 写侧）；`paint_engine`
   的 `rasterize` 既有签名（返回 Bitmap）保持不变，兼容既有 CLI / 测试
-  消费端；G07 doc-process 真实 spawn + 活显示验收留后续批次。
+  消费端；G07 doc-process 真实 spawn + 活显示验收在批次 46 落地。
+
+### R6.55 G07 文档进程真实 spawn + 活显示验收（批次 46）
+
+- [x] **G07 文档进程真实 multiprocessing spawn + gui 活显示验收入口**（`toy_browser/app/document_process.py` + `toy_browser/app/gui.py`）：
+  把批次 38 落地的 `DocumentProcessPool` 纯逻辑核心（可注入
+  process / pipe，不强制真实 spawn）推进到**真实多核**——
+  依据 G07 step 4"纯 Python CPU 工作不能期待普通线程带来多核
+  加速；评估文档进程方案"，本批把 CPU 工作放进独立子进程
+  （多核收益），主线程只投递紧凑命令 + 取回紧凑帧（不序列化
+  整棵 DOM）：
+  - `document_process._doc_process_child(cmd_q, result_q, stop_evt,
+    close_q)` — 子进程 worker 主循环（真实 spawn 侧）：从 `cmd_q` 读
+    `DocCommand`，经 `DocumentProcessWorker` 产出 `DocFrame` 经
+    `result_q` 传回；`close_q` 收到关标签 tab_id 时丢弃该 tab 在途
+    身份（G09 step 4）；`stop_evt` 置位或 `cmd_q` 收到 None 退出；
+    异常回写 `result_q`（`{"error": …}`）供父进程标记回退。
+  - `document_process.DocProcessServer` — 真实 `multiprocessing`
+    文档进程池（多核收益；父线程经 pipe 投递紧凑命令 / 取回紧凑
+    帧）：`start()` 经 `get_context("spawn")` 起子进程（多核）；
+    `post()` 子进程存活时经 pipe 发往 worker（不阻塞 UI），否则
+    回退到父进程内置同步 worker（UI 不崩）；`drain()` 非阻塞收帧
+    （子进程侧经 `result_q`，回退态处理父侧暂存命令）；`close_tab()`
+    经 `close_q` 通知 worker 丢弃在途身份（G09 step 4 不泄漏）；
+    `shutdown()` 置 stop_evt + join + terminate 清理子进程（防泄漏）；
+    `describe()` 含 `spawned` 字段区分真实多核 vs 回退态。子进程
+    崩溃 / 不可用时 `on_fallback` 置位，后续调用自动回退到内置
+    同步 worker。
+  - `document_process.spawn_doc_process_server()` — 活显示验收入口：
+    起真实多核池（`multiprocessing` 不可用 / spawn 失败时返回
+    `on_fallback` 的池）。`gui.py` 在可多核环境调用本入口。
+  - `document_process.make_multiprocessing_pool()` — 既有入口名改
+    为返回 `DocProcessServer`（真实 spawn 池，兼容既有消费端入口
+    名；批次 38 起为 `DocumentProcessPool`，本批起为真实多核）。
+  - `gui.TabBrowser.__init__` 起池 + UI 销毁钩子：`_g07_doc_server =
+    _g07_spawn_doc_server()`（真实 spawn 多核池）；
+    `root.protocol("WM_DELETE_WINDOW", _g07_on_ui_closing)` 统一
+    `_g07_doc_server_shutdown()` 清理子进程（防泄漏）。
+  - `gui._g07_post_nav` / `_g07_post_resize` / `_g07_drain_frames` /
+    `_g07_doc_server_shutdown` / `_g07_describe` — 活显示验收
+    路径：导航 / resize 经 `post` 投递（不阻塞 UI，多核收益），
+    事件循环经 `drain` 取回紧凑帧（经 C01 门控后应用），诊断经
+    `describe`。
+  - `gui._g09_close_tab` 关标签时同步 `self._g07_doc_server
+    .close_tab(tab_id)`（关标签丢弃文档进程池在途身份，G09
+    step 4 不泄漏已关闭标签任务）。
+- 回归：`tests/test_document_process_spawn.py`（12 条 = spawn 8
+  条 + gui 接线 4 条；spawn 8 条覆盖：`start` + `shutdown` 生命周期
+  + 多进程投递 / 取回 + 关标签丢弃在途 + stop 标 cancelled + 回退
+  路径 + `describe` 含 spawned 字段 + `spawn_doc_process_server` /
+  `make_multiprocessing_pool` 活显示验收入口；gui 接线 4 条用
+  `object.__new__(TabBrowser)` 绕过 `__init__` 的 stub 驱动模式，
+  注入真实 `DocProcessServer` 验证 `_g07_post_nav` /
+  `_g07_post_resize` / `_g07_describe` / `_g07_doc_server_shutdown`
+  走真实 spawn 池 + `_g09_close_tab` 关标签同步丢弃文档进程池在途
+  身份）；`tests/test_document_process.py` 既有条目
+  `test_make_multiprocessing_pool_fallback_no_crash` 更新为
+  `DocProcessServer` 形态（`start` + `shutdown` 不崩）。
+- 说明：本批补 G07 文档进程真实 spawn + 活显示验收（多核收益
+  落地到 gui 侧活显示路径）；`make_multiprocessing_pool` 既有入口
+  名保持不变（返回 `DocProcessServer`），兼容既有消费端；出站
+  网络在线对照复测（TCP 443 阻塞中）+ P01–P13 GPU 光栅化迁移
+  留后续批次。
 
 ---
 
 
 
-全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式 + 批次 17 B01 统一导航控制器 + B05 location 导航语义 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏 + 批次 21 G11 键盘全流程路由层 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板 + 批次 23 G07 文档工作单元标签级编排 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径 + 批次 25 G09 step 1 统一标签会话协议层 + 批次 26 G09 step 5 会话持久化损坏文件降级解析 + 批次 27 C03 几何冻结 + 批次 28 C05 按 Document 管理的 LRU 缓存容器 + 批次 29 C02 帧版本与读写所有权 + 批次 30 C06 全量 vs 增量布局差分 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理 + 批次 34 G03 原生覆盖层位置同步/撤销协议 + 批次 35 G11 Tk 侧真实键盘绑定桥 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心 + 批次 39 G03 原生覆盖层 Tk 接线 + 批次 40 C02 活显示 rasterize 切 CPUImage + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装 + 批次 42 B 系列活显示 GUI 实际接线 + 批次 43 main.py CLI 路径切 CPUImage + 批次 44 _c02_refresh_canvas_cpu 设为默认呈现路径 + 批次 45 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层））已完成（**1828/1828** 测试通过）。
+全部 P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9 + P10 + P11 + P12 + P13 + P14 + P15 + P16 + P17 + P18 + P19 + P20 + P31 + P21 + P22 + P23 + P24 + P25 + P26 + P27 + P28 + P29 + P30 + P32 + P33.R1 + P33.R2 + P33.R3 + P33.R4 + P33.R5 + P33.R2-2 + P33.P1 + P33.P2 + P33.P3 + R6（批次 1 P0 + 批次 2 G03/G06/C02 + 批次 3 G07/G08 + 批次 4 G09 + 批次 5 G07 网络 I/O 外移 / G08 可取消 transport + 批次 6 G10 诊断/工具栏纯逻辑 + 批次 7 C01 完整 DocumentState / G11 键盘全流程 + 批次 8 G09 step 3 统一历史入口 + 批次 9 G09 step 2+4 标签生命周期 / C01 step 4 公共 API 包装层 + 批次 10 C04 表格/表单呈现模型 / G10 step 4/5 诊断区展开收起 + 批次 11 C05 样式缓存键 / 失效范围 / 命中率统计 + 批次 12 C06 布局树构建与增量布局 + 批次 13 C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘 + 批次 14 C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归 + 批次 15 C02 连续像素缓冲区阶段 2–3 + C03 行内格式化 / 文字布局 + 批次 16 B03 脚本异常隔离 + B04 多变量声明 / 序列表达式 + 批次 17 B01 统一导航控制器 + B05 location 导航语义 + 批次 18 B06 字段编辑状态 + B07 统一激活 / 表单提交 + 批次 19 B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归 + 批次 20 B02 请求配置 / 页面可用性诊断 + B09 可读首屏 + 批次 21 G11 键盘全流程路由层 + 批次 22 C01 公共 API 包装层 GUI 接入 + G10 诊断区面板 + 批次 23 G07 文档工作单元标签级编排 + 批次 24 C04 表单提交端到端任务 + G09 统一历史提交路径 + 批次 25 G09 step 1 统一标签会话协议层 + 批次 26 G09 step 5 会话持久化损坏文件降级解析 + 批次 27 C03 几何冻结 + 批次 28 C05 按 Document 管理的 LRU 缓存容器 + 批次 29 C02 帧版本与读写所有权 + 批次 30 C06 全量 vs 增量布局差分 + 批次 31 G03 脚本改值同步可解释性 + 失焦重绘不还原 + 批次 32 C02 填充/混合/图片迁移到连续缓冲区 + 批次 33 C02 图片/字形逐阶段迁移 + 缓冲池复用治理 + 批次 34 G03 原生覆盖层位置同步/撤销协议 + 批次 35 G11 Tk 侧真实键盘绑定桥 + 批次 36 G11 键盘绑定桥接入 gui.py 实际接线 + 批次 37 G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + 批次 38 G07 step 4 文档进程多核方案纯逻辑核心 + 批次 39 G03 原生覆盖层 Tk 接线 + 批次 40 C02 活显示 rasterize 切 CPUImage + 批次 41 B 系列活显示 GUI 接线 + 网络 I/O 实装 + 批次 42 B 系列活显示 GUI 实际接线 + 批次 43 main.py CLI 路径切 CPUImage + 批次 44 _c02_refresh_canvas_cpu 设为默认呈现路径 + 批次 45 paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）+ 批次 46 G07 文档进程真实 spawn + 活显示验收（多核收益））已完成（**1840/1840** 测试通过）。
 
 R1–R5 升级计划全部完成。P33.P1–P3 浏览器级缺口补全完成。P2 遗留几何 diff（D1/D2/D3）已全部消除。第五轮批次 1 P0（G01/G02/G04/G05/C01）、批次 2（G03/G06/C02）、批次 3（G07/G08）、批次 4（G09 稳定身份 + 会话持久化）、批次 5（G07 网络 I/O 外移 + G08 可取消 transport）、批次 6（G10 诊断/工具栏/状态栏纯逻辑核心）、批次 7（C01 完整 DocumentState + G11 键盘全流程纯逻辑核心）、批次 8（G09 step 3 统一历史提交入口纯逻辑核心）、批次 9（G09 step 2+4 标签生命周期 + C01 step 4 公共 API 包装层纯逻辑核心）、批次 10（C04 表格/表单呈现模型 + G10 step 4/5 诊断区展开收起纯逻辑核心）、批次 11（C05 样式缓存键 / 失效范围 / 命中率统计纯逻辑核心）、批次 12（C06 布局树构建与增量布局纯逻辑核心）、批次 13（C07 紧凑显示列表 / 可见区域裁剪 + C08 脏区域分块 / 交互重绘纯逻辑核心）、批次 14（C09 PNG 编码 / 异步导出 + C10 策略 API / 事件循环扩大回归纯逻辑核心）、批次 15（C02 连续像素缓冲区阶段 2–3 + C03 行内格式化与文字布局纯逻辑核心）、批次 16（B03 脚本异常隔离 + B04 多变量声明 / 序列表达式纯逻辑核心）、批次 17（B01 统一导航控制器 + B05 location 导航语义纯逻辑核心）、批次 18（B06 字段编辑状态 + B07 统一激活 / 表单提交纯逻辑核心）、批次 19（B08 资源与事件生命周期 + B10 异步取消 / 用户任务级回归纯逻辑核心）与批次 20（B02 请求配置 / 页面可用性诊断 + B09 可读首屏纯逻辑核心）及批次 21（G11 键盘全流程纯逻辑路由层，GUI 可注入）、批次 22（C01 公共 API 包装层 GUI 接入 + G10 诊断区面板纯逻辑核心）、批次 23（G07 文档工作单元标签级编排纯逻辑核心）、批次 24（C04 表单提交端到端任务 + G09 统一历史提交路径纯逻辑核心）、批次 25（G09 step 1 统一标签会话协议层纯逻辑核心）与批次 26（G09 step 5 会话持久化损坏文件降级解析纯逻辑核心）、批次 27（C03 几何冻结纯逻辑核心）及批次 28（C05 step 5 按 Document 管理的 LRU 缓存容器纯逻辑核心）、批次 29（C02 step 4 帧版本与读写所有权纯逻辑核心）及批次 30（C06 全量 vs 增量布局差分纯逻辑核心）及批次 31（G03 脚本改值同步可解释性 + 失焦重绘不还原纯逻辑核心）及批次 32（C02 填充/混合/图片迁移到连续缓冲区纯逻辑核心）及批次 33（C02 图片/字形逐阶段迁移 + 缓冲池复用治理纯逻辑核心）及批次 34（G03 原生覆盖层位置同步/撤销协议纯逻辑核心）、批次 35（G11 Tk 侧真实键盘绑定桥 + event_generate 驱动验证）及批次 36（G11 键盘绑定桥接入 gui.py 实际接线）及批次 37（G09 标签会话协议层接入 gui.py 实际接线 + Tk PhotoImage 全局 image 注册表 latent bug 修复）及批次 38（G07 step 4 文档进程多核方案纯逻辑核心）及批次 39（G03 原生覆盖层 Tk 接线）及批次 40（C02 活显示 rasterize 切 CPUImage）及批次 41（B 系列活显示 GUI 接线 + 网络 I/O 实装：BGuiWiring 统一分派 + 本地 loopback HTTP 冒烟 + render_document_from_url 本地实装验收）及批次 42（B 系列活显示 GUI 实际接线：gui.py TabBrowser 地址栏 / 链接 / 表单分派走 BGuiWiring + 既有导航执行路径回退）及批次 43（main.py CLI 路径切 CPUImage：CPUImage.raw_rows / to_png_bytes / nonwhite_count + browser.render_document_to_cpu_image / with_event / with_click + main._write_image 双形态分派 + 错误页切 CPUImage）及批次 44（_c02_refresh_canvas_cpu 设为默认呈现路径：gui.py TabBrowser._refresh_canvas 优先走 CPUImage 连续 buffer + _sync_scrollbar 抽取共用 + _last_dl 不可用时回退 Bitmap）已完成，B 系列 B01–B10 纯逻辑核心全部落地，G11 键盘路由 + G11 Tk 侧真实键盘绑定桥 + G11 键盘绑定桥接入 gui.py 实际接线 + G09 标签会话协议层接入 gui.py 实际接线 + Tk image 注册表修复 + G07 step 4 文档进程多核方案 + G03 原生覆盖层 Tk 接线 + C01 GUI 接入 + G10 诊断区面板 + G07 标签级编排 + C04 表单提交端到端 + G09 标签会话协议 + G09 损坏会话降级 + C03 几何冻结 + C05 按 Document LRU 缓存容器 + C02 帧版本所有权 + C06 全量/增量差分 + G03 编辑状态机 + C02 填充/混合/图片/字形迁移执行层 + 缓冲池复用治理 + G03 原生覆盖层协议 + C02 活显示 rasterize 切 CPUImage + B 系列活显示 GUI 接线 + 网络 I/O 实装 + B 系列活显示 GUI 实际接线 + main.py CLI 路径切 CPUImage + _c02_refresh_canvas_cpu 设为默认呈现路径 纯逻辑层落地；后续批次（paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap 合并层）/ G07 doc-process 真实 spawn + 活显示验收 / 在线对照复测（出站网络阻塞中））按实施文档依赖顺序继续。
 

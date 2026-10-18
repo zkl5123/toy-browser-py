@@ -335,23 +335,310 @@ class DocumentProcessPool:
 # 真实多核入口（可选；纯逻辑回归不强制 spawn）
 # ---------------------------------------------------------------------------
 
-def make_multiprocessing_pool() -> DocumentProcessPool:
-    """G07 step 4 — 用 ``multiprocessing`` 起真实文档进程的池。
+# ---------------------------------------------------------------------------
+# 批次 46 — 真实 multiprocessing spawn（多核收益 + 活显示验收入口）
+# ---------------------------------------------------------------------------
 
-    把 :class:`DocumentProcessWorker` 放进子进程（多核收益），主线程
-    经 :class:`DocumentProcessPool.post` / :meth:`drain` 取回紧凑帧。
-    ``multiprocessing`` 不可用时回退到内置同步 worker（on_fallback）。
-    活显示 / 多进程环境才真正 spawn；本批回归以注入 fake 验证协议。
+def _doc_process_child(cmd_q, result_q, stop_evt, close_q):
+    """批次 46 — 子进程 worker 主循环（真实 spawn 侧）。
+
+    从 ``cmd_q`` 读 :class:`DocCommand`，经 :class:`DocumentProcessWorker`
+    产出 :class:`DocFrame`，经 ``result_q`` 传回；``close_q`` 收到关
+    标签 tab_id 时丢弃该 tab 在途身份（G09 step 4）；``stop_evt`` 置位
+    或 ``cmd_q`` 收到 None 时退出。异常回写 ``result_q``（{"error": …}）
+    供父进程标记回退。
     """
-    pool = DocumentProcessPool()
+    import sys as _sys
     try:
+        worker = DocumentProcessWorker()
+        while True:
+            try:
+                cmd = cmd_q.get(timeout=0.2)
+            except _queue.Empty:
+                if stop_evt.is_set():
+                    break
+                continue
+            if cmd is None:
+                break
+            try:
+                frame = worker.handle(cmd)
+                result_q.put(frame)
+            except Exception as e:
+                result_q.put({"error": repr(e)})
+                break
+            # 关标签队列：非阻塞取（G09 step 4 丢弃在途身份）
+            try:
+                while True:
+                    tab_id = close_q.get_nowait()
+                    worker.drop_tab(tab_id)
+            except _queue.Empty:
+                pass
+    except Exception as e:  # 防御：子进程崩不静默
+        try:
+            result_q.put({"error": "child-crash: " + repr(e)})
+        except Exception:
+            pass
+        _sys.exit(1)
+
+
+class DocProcessServer:
+    """批次 46 — 真实 ``multiprocessing`` 文档进程（子进程持有 worker，
+    多核收益；父线程经 pipe 投递紧凑命令 / 取回紧凑帧）。
+
+    与 :class:`DocumentProcessPool` 的关系：本类是 *真实 spawn 侧*
+    的池——协议（:meth:`post` / :meth:`drain` / :meth:`close_tab` /
+    回退）与 ``DocumentProcessPool`` 一致，但 CPU 工作在**子进程**
+    （G07 step 4"纯 Python 线程无多核收益"落地）。子进程崩溃 /
+    不可用时 :attr:`on_fallback` 置位，后续调用自动回退到内置同步
+    worker（UI 不崩）。
+
+    活显示验收入口：``gui.py`` 在可多核环境用
+    :meth:`spawn_doc_process_server` 起本类，导航 / resize / 输入
+    经 :meth:`post` 投递（不阻塞 UI），事件循环经 :meth:`drain`
+    取回紧凑帧（经 C01 门控后应用），关标签经 :meth:`close_tab`
+    丢弃在途身份。
+    """
+
+    def __init__(self) -> None:
+        self._worker = DocumentProcessWorker()   # 回退用（父进程内）
+        self._stats = DocumentProcessStats()
+        self._proc = None
+        self._cmd_q = None
+        self._result_q = None
+        self._close_q = None
+        self._stop_evt = None
+        # 父侧暂存（回退态 / 子进程不可用时走内置同步）
+        self._pending_cmds: list[DocCommand] = []
+        self._pending_frames: list[DocFrame] = []
+        self._closed_tabs: set = set()
+        self._max_seq = 0
+        self._on_spawned = False
+
+    # -- 生命周期 -----------------------------------------------------------
+
+    def start(self) -> bool:
+        """真实 spawn 子进程（多核收益）。成功返回 True 并置
+        ``_on_spawned``；``multiprocessing`` 不可用 / spawn 失败返回
+        False 并置 ``on_fallback``（后续调用走内置同步 worker）。"""
         import multiprocessing as _mp
-        # 真实 spawn 时把 worker 放进子进程；此处保留协议入口
-        # （子进程管理留活显示批次，本批验证回退路径不崩）。
-        del _mp
-    except Exception:
-        pool.mark_crashed()
-    return pool
+        try:
+            ctx = _mp.get_context("spawn")
+            self._cmd_q = ctx.Queue()
+            self._result_q = ctx.Queue()
+            self._close_q = ctx.Queue()
+            self._stop_evt = ctx.Event()
+            self._proc = ctx.Process(
+                target=_doc_process_child,
+                args=(self._cmd_q, self._result_q,
+                      self._stop_evt, self._close_q),
+                daemon=True)
+            self._proc.start()
+            self._on_spawned = True
+            return True
+        except Exception:
+            # spawn 失败：清理 + 回退
+            for q in (self._cmd_q, self._result_q, self._close_q):
+                if q is not None:
+                    try:
+                        q.close()
+                    except Exception:
+                        pass
+            self._cmd_q = self._result_q = self._close_q = None
+            self._proc = None
+            self._on_spawned = False
+            self._stats.on_fallback = True
+            self._stats.worker_crashed = True
+            return False
+
+    def shutdown(self) -> None:
+        """终止子进程（置 stop_evt + join，回退态 no-op）。"""
+        if self._on_spawned:
+            try:
+                self._stop_evt.set()
+                self._cmd_q.put(None)
+            except Exception:
+                pass
+            try:
+                self._proc.join(timeout=1.0)
+            except Exception:
+                pass
+            if self._proc.is_alive():
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
+            self._on_spawned = False
+        for q in (self._cmd_q, self._result_q, self._close_q):
+            if q is not None:
+                try:
+                    q.close()
+                except Exception:
+                    pass
+            try:
+                q.join_thread()
+            except Exception:
+                pass
+        self._cmd_q = self._result_q = self._close_q = None
+        self._proc = None
+
+    def is_spawned(self) -> bool:
+        """子进程是否已真实 spawn 且存活。"""
+        return self._on_spawned and self._proc is not None \
+            and self._proc.is_alive()
+
+    # -- 查询 ---------------------------------------------------------------
+
+    @property
+    def stats(self) -> DocumentProcessStats:
+        return self._stats
+
+    def is_fallback(self) -> bool:
+        return self._stats.on_fallback
+
+    # -- 命令投递（UI 主线程 → 文档进程，轻量不阻塞） ------------------------
+
+    def post(self, cmd: DocCommand) -> bool:
+        """投递紧凑命令。已关 tab 直接丢弃（False）；子进程存活时
+        经 pipe 发往 worker（多核），否则回退到父进程内置同步暂存。"""
+        if cmd.tab_id in self._closed_tabs:
+            return False
+        self._max_seq = max(self._max_seq, cmd.seq)
+        self._stats.commands_posted += 1
+        if self.is_spawned():
+            try:
+                self._cmd_q.put(cmd, block=False)
+                return True
+            except Exception:
+                # pipe 故障 → 回退内置同步（不丢命令）
+                self._fallback_sync()
+        self._pending_cmds.append(cmd)
+        return True
+
+    # -- 帧取回（文档进程 → UI 主线程，非阻塞） ------------------------------
+
+    def drain(self) -> list[DocFrame]:
+        """非阻塞取回紧凑帧。子进程存活时经 pipe 收帧（多核）；
+        回退态处理父侧暂存命令（内置同步）。关标签帧全丢弃
+        （G09 step 4）。"""
+        frames = list(self._pending_frames)
+        self._pending_frames = []
+        if self.is_spawned():
+            # 子进程收帧
+            try:
+                while True:
+                    item = self._result_q.get_nowait()
+                    if isinstance(item, dict) and "error" in item:
+                        # 子进程报错 → 回退内置同步
+                        self._fallback_sync()
+                        break
+                    if item.tab_id in self._closed_tabs:
+                        self._stats.dropped_tab_frames += 1
+                        continue
+                    frames.append(item)
+                    self._stats.frames_drained += 1
+            except _queue.Empty:
+                pass
+        else:
+            # 回退态：父进程内置同步处理暂存命令
+            for cmd in self._pending_cmds:
+                self._pending_cmds = []
+                if cmd.tab_id in self._closed_tabs:
+                    self._stats.dropped_tab_frames += 1
+                    continue
+                frame = self._worker.handle(cmd)
+                if frame.tab_id in self._closed_tabs:
+                    self._stats.dropped_tab_frames += 1
+                    continue
+                frames.append(frame)
+                self._stats.frames_drained += 1
+        return frames
+
+    # -- 关标签（G09 step 4） ------------------------------------------------
+
+    def close_tab(self, tab_id: int) -> dict:
+        """关闭 tab：丢弃在途命令 + 帧 + 文档身份（不泄漏）。子进程
+        存活时经 close_q 通知 worker drop_tab（多核侧释放），回退态
+        直接父侧释放。"""
+        dropped_frames = 0
+        for f in self._pending_frames:
+            if f.tab_id == tab_id:
+                dropped_frames += 1
+        self._pending_frames = [f for f in self._pending_frames
+                                if f.tab_id != tab_id]
+        dropped_cmds = 0
+        for c in self._pending_cmds:
+            if c.tab_id == tab_id:
+                dropped_cmds += 1
+        self._pending_cmds = [c for c in self._pending_cmds
+                              if c.tab_id != tab_id]
+        self._closed_tabs.add(tab_id)
+        self._worker.drop_tab(tab_id)
+        if self.is_spawned():
+            try:
+                self._close_q.put(tab_id, block=False)
+            except Exception:
+                self._fallback_sync()
+        self._stats.dropped_tab_frames += dropped_frames + dropped_cmds
+        return {"dropped_frames": dropped_frames,
+                "dropped_cmds": dropped_cmds}
+
+    # -- 回退 ----------------------------------------------------------------
+
+    def _fallback_sync(self) -> None:
+        """子进程不可用（崩溃 / pipe 故障）：置 on_fallback，后续
+        post/drain 走父进程内置同步 worker（UI 不崩）。"""
+        if self._stats.on_fallback:
+            return
+        self._stats.worker_crashed = True
+        self._stats.on_fallback = True
+        self._on_spawned = False
+        # 不 terminate 子进程（可能半崩），仅切回退态；shutdown 统一清理
+
+    def mark_crashed(self) -> None:
+        """worker 进程崩溃 / 不可用：标记 + 回退到内置同步 worker。"""
+        self._fallback_sync()
+
+    # -- 诊断 ----------------------------------------------------------------
+
+    def describe(self) -> str:
+        return (f"posted={self._stats.commands_posted} "
+                f"drained={self._stats.frames_drained} "
+                f"dropped={self._stats.dropped_tab_frames} "
+                f"crashed={self._stats.worker_crashed} "
+                f"fallback={self._stats.on_fallback} "
+                f"spawned={self.is_spawned()} "
+                f"pending_cmds={len(self._pending_cmds)} "
+                f"pending_frames={len(self._pending_frames)}")
+
+
+def spawn_doc_process_server() -> DocProcessServer:
+    """批次 46 — 活显示验收入口：起真实 ``multiprocessing`` 文档进程
+    池（多核收益）。``multiprocessing`` 不可用 / spawn 失败时返回
+    ``on_fallback`` 的池（内置同步 worker，UI 不崩）。
+
+    ``gui.py`` 在可多核环境调用本入口，导航 / resize / 输入经
+    :meth:`DocProcessServer.post` 投递（不阻塞 UI），事件循环经
+    :meth:`DocProcessServer.drain` 取回紧凑帧（经 C01 门控后应用），
+    关标签经 :meth:`DocProcessServer.close_tab` 丢弃在途身份。
+    退出前经 :meth:`DocProcessServer.shutdown` 终止子进程。
+    """
+    server = DocProcessServer()
+    if not server.start():
+        # start() 已置 on_fallback；返回可回退池（后续走内置同步）
+        pass
+    return server
+
+
+def make_multiprocessing_pool() -> DocProcessServer:
+    """G07 step 4 — 真实多核入口（批次 46 落地真实 spawn）。
+
+    返回 :class:`DocProcessServer`（子进程持有 :class:`DocumentProcessWorker`，
+    多核收益）。``multiprocessing`` 不可用 / spawn 失败时返回
+    ``on_fallback`` 的池（内置同步 worker，UI 不崩）。
+    活显示验收：``gui.py`` 用 :func:`spawn_doc_process_server` 起池，
+    经 :meth:`post` / :meth:`drain` / :meth:`close_tab` 走多核路径。
+    """
+    return spawn_doc_process_server()
 
 
 if __name__ == "__main__":  # pragma: no cover - 手动烟测

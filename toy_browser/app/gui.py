@@ -1035,6 +1035,27 @@ class TabBrowser:
         from toy_browser.app.b_series_wiring import BGuiWiring
         self._b_wiring = BGuiWiring()
 
+        # G07 批次 46 — 真实 multiprocessing 文档进程池（多核收益落地）：
+        # 导航 / resize / 输入经 post 投递（不阻塞 UI），事件循环经
+        # drain 取回紧凑帧（经 C01 门控后应用），关标签经 close_tab
+        # 丢弃在途身份（G09 step 4）。multiprocessing 不可用 / spawn
+        # 失败时自动回退内置同步 worker（UI 不崩）。UI 销毁时经
+        # _g07_doc_server_shutdown 清理子进程。
+        self._g07_doc_server = self._g07_spawn_doc_server()
+        # 活显示验收入口：UI 销毁钩子统一清理子进程（防泄漏）。
+        self._g07_ui_closing = False
+
+        def _g07_on_ui_closing(_event=None):
+            if self._g07_ui_closing:
+                return
+            self._g07_ui_closing = True
+            self._g07_doc_server_shutdown()
+
+        try:
+            self.root.protocol("WM_DELETE_WINDOW", _g07_on_ui_closing)
+        except Exception:
+            pass
+
         # --- bindings ---
         self.root.bind("<Control-l>", lambda e: self._focus_address())
         self.root.bind("<Control-t>", lambda e: self._new_tab())
@@ -1320,6 +1341,59 @@ class TabBrowser:
         return {"cpu_image_path": True,
                 "module": "toy_browser.rendering.rasterize_cpu"}
 
+    # ------------------------------------------------------------------
+    # G07 批次 46 — 真实 multiprocessing 文档进程池（活显示验收入口）
+    # ------------------------------------------------------------------
+    def _g07_spawn_doc_server(self):
+        """起真实 ``multiprocessing`` 文档进程池（多核收益）。
+
+        经 :func:`toy_browser.app.document_process.spawn_doc_process_server`
+        spawn 子进程 worker；``multiprocessing`` 不可用 / spawn 失败时
+        返回 ``on_fallback`` 的池（内置同步 worker，UI 不崩）。"""
+        from toy_browser.app.document_process import spawn_doc_process_server
+        return spawn_doc_process_server()
+
+    def _g07_post_nav(self, tab_id: int, url: str, seq: int = 0) -> bool:
+        """G07 批次 46 — 经真实 spawn 池投递导航命令（不阻塞 UI，
+        多核收益；回退态走内置同步 worker）。返回是否成功投递。"""
+        from toy_browser.app.document_process import (
+            DocCommand, DOC_CMD_NAVIGATE)
+        return self._g07_doc_server.post(
+            DocCommand(tab_id=tab_id, kind=DOC_CMD_NAVIGATE,
+                       payload={"url": url}, seq=seq))
+
+    def _g07_post_resize(self, tab_id: int, w: int, h: int,
+                         seq: int = 0) -> bool:
+        """G07 批次 46 — 经真实 spawn 池投递 resize 命令（几何重算，
+        多核收益）。"""
+        from toy_browser.app.document_process import (
+            DocCommand, DOC_CMD_RESIZE)
+        return self._g07_doc_server.post(
+            DocCommand(tab_id=tab_id, kind=DOC_CMD_RESIZE,
+                       payload={"w": w, "h": h}, seq=seq))
+
+    def _g07_drain_frames(self) -> list:
+        """G07 批次 46 — 非阻塞取回文档进程的紧凑帧结果（多核侧经
+        pipe 收帧；回退态经内置同步）。供 UI 事件循环调用，经 C01
+        门控后由呈现层应用。"""
+        return self._g07_doc_server.drain()
+
+    def _g07_doc_server_shutdown(self) -> None:
+        """G07 批次 46 — UI 销毁时终止文档进程池的子进程（防泄漏）。
+
+        回退态（未真实 spawn）时 no-op；真实 spawn 态经
+        :meth:`DocProcessServer.shutdown` 置 stop_evt + join +
+        terminate（必要时）。"""
+        try:
+            self._g07_doc_server.shutdown()
+        except Exception:
+            pass
+
+    def _g07_describe(self) -> str:
+        """G07 批次 46 — 文档进程池诊断串（含 spawned 字段，区分
+        真实多核 vs 回退态）。"""
+        return self._g07_doc_server.describe()
+
     def _refresh_canvas(self, idx: int) -> None:
         # 批次 44 — C02 活显示默认呈现路径：优先走 CPUImage 连续
         # buffer（消除 scratch Bitmap 合并层 + per-frame int 列表还原）。
@@ -1415,6 +1489,12 @@ class TabBrowser:
         """
         tab_id = self._tab_ids[idx]
         res = self._g09_session.close_tab(tab_id)
+        # G07 批次 46 — 关标签同步丢弃文档进程池在途身份（子进程侧
+        # 经 close_q drop_tab，G09 step 4 不泄漏已关闭标签任务）。
+        try:
+            self._g07_doc_server.close_tab(tab_id)
+        except Exception:
+            pass
         # 同步 _tab_ids（删掉被关槽位；compact 后槽位前移）
         del self._tab_ids[idx]
         return res

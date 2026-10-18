@@ -111,6 +111,7 @@ from test_tk_keyboard_binding import TESTS as _TK_KEYBOARD_BINDING_TESTS
 from test_g11_gui_wiring import TESTS as _G11_GUI_WIRING_TESTS
 from test_g09_gui_wiring import TESTS as _G09_GUI_WIRING_TESTS
 from test_document_process import TESTS as _DOCUMENT_PROCESS_TESTS
+from test_document_process_spawn import TESTS as _DOC_PROCESS_SPAWN_TESTS
 from test_editor_overlay import TESTS as _EDITOR_OVERLAY_TESTS
 from test_rasterize_cpu import TESTS as _RASTERIZE_CPU_TESTS
 
@@ -196,6 +197,7 @@ def main():
     tests.extend(_G11_GUI_WIRING_TESTS)
     tests.extend(_G09_GUI_WIRING_TESTS)
     tests.extend(_DOCUMENT_PROCESS_TESTS)
+    tests.extend(_DOC_PROCESS_SPAWN_TESTS)
     tests.extend(_EDITOR_OVERLAY_TESTS)
     tests.extend(_RASTERIZE_CPU_TESTS)
     from test_b_series_gui_wiring import TESTS as _B_SERIES_GUI_WIRING_TESTS
