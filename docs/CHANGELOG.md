@@ -2,6 +2,9 @@
 
 All notable changes to toy-browser-py are documented in this file.
 
+> **定位说明**：本项目为真实可运行的 Python 浏览器内核（非教学玩具）。
+> 历史条目中出现的"玩具语义"为各实现阶段的如实记录，不代表项目当前定位。
+
 The project follows a milestone scheme (P33 = project 33, R1–R5 =
 roadmap milestones).
 

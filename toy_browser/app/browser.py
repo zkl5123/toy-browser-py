@@ -1,8 +1,8 @@
 """Public API: render_document() — HTML + CSS -> PPM pixels.
 
-Mirrors the Rust toy-browser's lib.rs. Runs the full pipeline:
+Runs the full pipeline:
 parse -> style -> layout -> paint -> rasterize, and (optionally) executes
-inline <script> blocks via the toy JS engine before rendering.
+inline <script> blocks via the built-in JS engine before rendering.
 """
 from __future__ import annotations
 

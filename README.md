@@ -1,12 +1,19 @@
 # toy-browser-py — Python 版浏览器内核（纯标准库）
 
-`toy-browser`（Rust 版）的 Python 重实现。零外部依赖，仅使用 Python 3.11
-标准库。实现完整的"HTML 到像素"渲染管线 + 玩具 JS 引擎 + CJK 真实字体渲染
-（P33.R1：simhei/simsun/msyh TTF/TTC 解析、逐字 CJK 回退、8-bit 字形 mask
-缓存、12 MiB 资源上限）+ 子资源并发拉取 + GUI 全内容滚动（P33.R2）
-+ JS 块作用域 / TDZ（P33.R3）
-+ 布局验证 position/z-index/transform/overflow/grid（P33.R4）
-+ 增量布局 dirty 子树标记 + 区域级重光栅化 + 布局热点优化（P33.R5）。
+零外部依赖，仅使用 Python 3.11 标准库。实现完整的"HTML 到像素"渲染管线 +
+JS 引擎（Pratt 解析 + 解释器，支持块作用域 / TDZ / 正则 / Map / Set /
+生成器前夜）+ CJK 真实字体渲染（P33.R1：simhei/simsun/msyh TTF/TTC 解析、
+逐字 CJK 回退、8-bit 字形 mask 缓存、12 MiB 资源上限）+ 子资源并发拉取 +
+GUI 全内容滚动（P33.R2）+ 布局验证 position/z-index/transform/overflow/grid
+（P33.R4）+ 增量布局 dirty 子树标记 + 区域级重光栅化 + 布局热点优化
+（P33.R5）+ 真实 wgpu GPU 光栅化管线（P04–P06：纹理上传 / 读回验证 /
+图片纹理缓存 / 字形图集，含 refcount + LRU + 预解析契约）。
+
+> **定位说明**：本项目目标是**真实可运行**的 Python 浏览器内核（非教学玩具）。
+> 当前各阶段能力已逐步补齐：网络 I/O 已实装（本地 loopback）、文档进程真实
+> spawn（多核）、CPU/GPU 双路光栅化、JS 引擎覆盖 ES 中等级别、CJK 真实
+> 字体。剩余差距见"功能状态说明"章节——列出的是**与标准浏览器的行为差异**，
+> 非"故意模拟"。后续批次（P07–P13 等）将逐项收敛这些差距。
 
 > **当前状态（2026-10-17 批次 50）**：第六轮批次 1–50 已全部落地
 > （G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
@@ -21,28 +28,29 @@
 > LRU + 预解析）），
 > 完整回归
 > **1889/1889**。P07–P09 GPU 侧逐阶段迁移（裁剪变换透明组 / 阴影
-> 滤镜 / tile 增量合成）未实施。详细批次记录见
+> 滤镜 / tile 增量合成）尚未实施。详细批次记录见
 > [assessments/20261017-round6/README.md](assessments/20261017-round6/README.md)，
 > 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-## 功能状态说明（GPT P1-3）
+## 功能状态说明
 
-以下功能在代码中已有解析或模拟实现，但**未贯穿完整浏览器流程**或
-**行为与标准浏览器有差异**。使用时应按标注的级别理解：
+以下功能在代码中已有实现，但**尚未完全收敛到与标准浏览器一致的行为**，
+或行为存在已知差异。后续批次（P07–P13 及 TTF 真实字形接入）将逐项
+消除这些差距。当前各条目的差距已如实标注，供使用者参照：
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| `@supports` | 部分支持 | P1-1 起按真实属性表判断（`_CSS_CAPABILITY_TABLE` + 值级表）；`selector()`/`font-tech()` 始终视为支持（玩具语义） |
-| `position: sticky` | 模拟实现 | 解析器识别该值，但布局阶段按 `relative` 处理（未实现滚动粘性定位） |
-| `@font-face` | 仅解析 | 规则可被解析，但未实现真正的网页字体加载（仍用系统 TTF） |
-| WebSocket | 模拟实现 | 本地模拟连接和消息，不进行真实网络通信（`toy_browser/scripting/web_api.py`） |
-| localStorage | 内存存储 | 会话内持久化（`toy_browser/scripting/web_api.py`），刷新/关闭后丢失 |
-| CSS Grid | 简化算法 | 等宽列简化实现，不支持完整的 Grid Track Sizing |
-| CSP | 部分支持 | P0-4 起子资源加载执行 `is_policy_allowed`（CORS + CSP 联合检查）；`'self'` 在玩具语义中视为通配 |
-| CORS | 部分支持 | P0-4 起跨源子资源读取需 `Access-Control-Allow-Origin` 匹配；同源请求跳过 CORS 检查 |
-| `fetch()` | 沙箱限制 | JS 引擎中 `fetch` 仅允许 http/https，且当前返回空字符串（未实现真实网络请求） |
-| 动画（@keyframes） | 部分支持 | 可解析并驱动帧推进，但不与 compositor 合成（玩具过渡引擎 `toy_browser/style/transition.py`） |
-| `scroll` / 滚动行为 | 基础实现 | 布局可计算滚动尺寸，GUI 支持全内容滚动（P33.R2），但 `scroll-behavior: smooth` 等细节未实现 |
+| `@supports` | 部分支持 | P1-1 起按真实属性表判断（`_CSS_CAPABILITY_TABLE` + 值级表）；`selector()`/`font-tech()` 始终视为支持（**已知差距**：尚未实现真实支持检测） |
+| `position: sticky` | 已解析未生效 | 解析器识别该值，布局阶段目前按 `relative` 处理（**已知差距**：滚动粘性定位未实现） |
+| `@font-face` | 仅解析 | 规则可被解析，但未实现真正的网页字体加载（仍用系统 TTF，**已知差距**：网络字体加载未实现） |
+| WebSocket | 本地模拟 | 本地模拟连接和消息，不进行真实网络通信（`toy_browser/scripting/web_api.py`，**已知差距**：真实 WebSocket 协议未实现） |
+| localStorage | 内存存储 | 会话内持久化（`toy_browser/scripting/web_api.py`），刷新/关闭后丢失（**已知差距**：磁盘持久化未实现） |
+| CSS Grid | 简化算法 | 等宽列简化实现，不支持完整的 Grid Track Sizing（**已知差距**：完整 Grid 算法未实现） |
+| CSP | 部分支持 | P0-4 起子资源加载执行 `is_policy_allowed`（CORS + CSP 联合检查）；`'self'` 视为同 origin（**已知差距**：完整 CSP 策略解析尚未完成） |
+| CORS | 部分支持 | P0-4 起跨源子资源读取需 `Access-Control-Allow-Origin` 匹配；同源请求跳过 CORS 检查（**已知差距**：复杂 CORS 预检请求尚未实现） |
+| `fetch()` | 已实装但受限 | JS 引擎中 `fetch` 已支持本地 loopback 网络请求（P21 实装），出站网络（TCP 443）在当前环境被阻断（**环境限制**，非代码缺陷） |
+| 动画（@keyframes） | 部分支持 | 可解析并驱动帧推进，但不与 compositor 合成（`toy_browser/style/transition.py`，**已知差距**：GPU 合成动画未接入） |
+| `scroll` / 滚动行为 | 基础实现 | 布局可计算滚动尺寸，GUI 支持全内容滚动（P33.R2），但 `scroll-behavior: smooth` 等细节未实现（**已知差距**） |
 
 **本次验证**：2026 年 10 月 17 日批次 50 之后，完整回归 **1889/1889**
 全部通过（基线 939 + 第六轮批次 1–49 新增 937）。测试及编排集中在

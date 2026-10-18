@@ -1334,7 +1334,7 @@ class TabBrowser:
         if frame is None:
             return
         label: tk.Label = frame._label
-        label.config(image=photo)
+        self._safe_set_image(label, photo, idx)
 
     def _c02_stats(self) -> dict:
         """C02 批次 40 — 诊断（当前 CPUImage 呈现路径可用）。"""
@@ -1394,6 +1394,43 @@ class TabBrowser:
         真实多核 vs 回退态）。"""
         return self._g07_doc_server.describe()
 
+    def _destroy_named_images(self) -> None:
+        """P37/G09 — 幂等清理 canvas_var 中持有的命名 Tk PhotoImage。
+
+        ``_bitmap_to_photopix`` / ``_c02_refresh_canvas_cpu`` 用显式名
+        （``toytab_{idx}`` / ``toytab_c02_{idx}``）创建 image；这些名字在
+        **全局 Tcl 注册表**里唯一。Tk PhotoImage 无 ``destroy()``（只有
+        widget 才有），清理方式是丢弃 Python 强引用 + 强制 GC，让 Tcl
+        侧同名 image 随 C 层对象释放而注销；否则关标签 →
+        ``_rebuild_tabs`` 时同名重建（或后续 ``label.config(image=photo)``
+        命中已失效引用）会触发
+        ``_tkinter.TclError: image "toytab_N" doesn't exist``。
+        """
+        import gc
+        # 丢弃 Python 引用（局部别名 + dict），再 GC 释放 C 层 image 对象，
+        # 让全局 Tcl 注册表里的同名 image 注销，避免同名冲突。
+        self.canvas_var.clear()
+        gc.collect()
+
+    def _safe_set_image(self, label: tk.Label, photo: tk.PhotoImage,
+                         idx: int) -> None:
+        """P37/G09 — 幂等地把 PhotoImage 设到 label。
+
+        image 在 Tcl 注册表里已失效（``image "toytab_N" doesn't exist``）
+        时不再 ``config``，避免反复触发 ``_on_tab_changed →
+        _refresh_canvas`` 回调的 ``_tkinter.TclError`` stderr 噪声；同时
+        把 canvas_var 里该 idx 的失效引用移除，避免后续再次命中。
+        """
+        try:
+            label.config(image=photo)
+        except tk.TclError:
+            # 失效 image：回退到"无 image"，保证 UI 不崩，并清除脏引用。
+            try:
+                label.config(image="")
+            except tk.TclError:
+                pass
+            self.canvas_var.pop(idx, None)
+
     def _refresh_canvas(self, idx: int) -> None:
         # 批次 44 — C02 活显示默认呈现路径：优先走 CPUImage 连续
         # buffer（消除 scratch Bitmap 合并层 + per-frame int 列表还原）。
@@ -1417,7 +1454,7 @@ class TabBrowser:
         if frame is None:
             return
         label: tk.Label = frame._label
-        label.config(image=photo)
+        self._safe_set_image(label, photo, idx)
         self._sync_scrollbar(idx)
 
     def _sync_scrollbar(self, idx: int) -> None:
@@ -1470,7 +1507,7 @@ class TabBrowser:
         for w in self.notebook.winfo_children():
             w.destroy()
         self.page_frames.clear()
-        self.canvas_var.clear()
+        self._destroy_named_images()
         for i, page in enumerate(self.tabs):
             self._ensure_page_frame(i)
         self.current = 0

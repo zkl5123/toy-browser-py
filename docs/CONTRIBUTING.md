@@ -1,8 +1,8 @@
 # Contributing to toy-browser-py
 
-Thanks for your interest in contributing! This is a toy browser engine
-written in pure Python (standard library only) that mirrors the
-architecture of a real browser pipeline:
+Thanks for your interest in contributing! This is a Python browser engine
+written in pure Python (standard library only) that mirrors the architecture
+of a real browser pipeline:
 
 ```
 HTML → DOM parse → CSS cascade → Layout → Paint → Rasterize → Bitmap

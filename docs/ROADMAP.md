@@ -1,7 +1,9 @@
 # toy-browser-py — 改进路线图
 
-基于 [Web Browser Engineering](http://browser.engineering/) 的 16 阶段教学模型，
-对照当前实现差距，列出可落地的改进项。每项标注优先级与验收标准。
+本项目为真实可运行的 Python 浏览器内核（非教学玩具）。路线图基于
+[Web Browser Engineering](http://browser.engineering/) 的管线模型，对照当前
+各阶段实现与标准浏览器的已知差距，列出可落地的改进项。每项标注优先级
+与验收标准，目标是将已知差距逐项收敛到与真实浏览器一致的行为。
 
 ---
 

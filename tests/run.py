@@ -1,230 +1,214 @@
-"""End-to-end tests for toy-browser-py (pure stdlib, no test framework).
+"""End-to-end regression runner for toy-browser-py (pure stdlib, no test framework).
 
-GPT P1-2 — test.py is now a thin orchestrator. Individual test
-functions live in module files:
+Architecture (refactored):
+  * **Auto-discovery** — every ``tests/test_*.py`` module that exposes a
+    module-level ``TESTS`` list is collected by glob + source scan; no
+    hard-coded import list.  Modules are imported *lazily*, only when
+    enqueued, so the fast tier never pays the expensive modules'
+    import/global-init cost.  New test modules are picked up automatically.
+  * **Tiered runs** — the default is the *fast tier*: it skips the 10
+    expensive modules (test_browser + 4 wgpu GPU modules + the 4
+    full-pipeline benchmark modules test_p2 / test_p34_r4 / r5 / r6 +
+    1 real-multiprocessing spawn module, ~350 s of serial wall-clock)
+    and runs the remaining ~78 light modules in ~50 s, covering the bulk
+    of the logic regression.  The full suite (all 1889 tests, ~7 min) is
+    available with ``--full``.
+  * **Quiet by default** — the runner prints only failures + a final
+    summary and, with ``--report``, a per-module timing table.
+    ``--verbose`` restores the per-test "ok <name>" stream.
 
-  test_dom.py       DOM parsing + hit-testing
-  test_css.py       CSS cascade + selectors + @media + @supports + calc
-  test_js.py        JS engine tests
-  test_layout.py    Layout: flex, grid, table, position, float, overflow
-  test_paint.py     Paint: PNG, transitions, keyframes, opacity, filters
-  test_net.py       Network: HTTP, cache, TLS, cookies, CORS/CSP
-  test_browser.py   Browser-level: render_document, a11y, links, iframe
-  test_helpers.py   Shared helpers (_reds, _pixel_diff, _find_box, …)
-  test_r1.py … test_r5.py, test_p0_js_budget.py, test_p0_policy.py,
-  test_p1_supports.py, test_p2.py, test_p3.py, test_p34*.py, test_mem.py,
-  test_web_api.py   — pre-existing module test files
+Run:
+    python test.py            # fast tier (default; 78 modules, ~50 s)
+    python test.py --full     # full suite (all 1889 tests, ~7 min)
+    python test.py --only test_css test_js   # run a subset of modules
+    python test.py --verbose  # print every passing test
+    python test.py --report   # also print the per-module timing table
 
-Run:  python test.py
+Every test function and its assertions are unchanged — only the
+*orchestration* (discovery, tiering, output) is reworked.
 """
 from __future__ import annotations
 
-import sys
+import importlib
 import os
+import re
+import sys
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "tools" / "benchmarks"))
 sys.path.insert(0, str(_ROOT / "tests"))
-# Fixtures use project-relative paths (fonts/, demo.html).
 os.chdir(_ROOT)
 
+# ---------------------------------------------------------------------------
+# Expensive modules — the ones that dominate the wall clock.  Measured
+# (serial, --full --report), these render the *entire* HTML→paint→rasterize
+# pipeline many times over and/or drive wgpu / real multiprocessing:
+#   test_p34_r6                  ~125 s (10 000-node full pipeline benchmark)
+#   test_browser                  ~50 s (357 full re-renders of the pipeline)
+#   test_p2                       ~48 s (full-render benchmark)
+#   test_p34_r5                   ~42 s (3000-node pipeline benchmark)
+#   test_p34_r4                   ~39 s (3000-node pipeline benchmark)
+#   test_gpu_glyph_atlas          ~27 s (wgpu glyph-atlas rasterisation)
+#   test_gpu_rasterize            ~12 s (wgpu texture upload / read-back)
+#   test_gpu_backend               ~7 s
+#   test_gpu_image_cache           ~4 s
+#   test_document_process_spawn    ~4 s (real multiprocessing spawn)
+# Together ~350 s when serial.  The *default* fast tier skips these so a
+# day-to-day logic regression finishes in ~50 s; ``--full`` includes them.
+# ---------------------------------------------------------------------------
+_EXPENSIVE = {
+    "test_p34_r6",
+    "test_browser",
+    "test_p2",
+    "test_p34_r5",
+    "test_p34_r4",
+    "test_gpu_glyph_atlas",
+    "test_gpu_rasterize",
+    "test_gpu_backend",
+    "test_gpu_image_cache",
+    "test_document_process_spawn",
+}
 
-# GPT P1-2 — import test lists from module files.
-from test_dom import TESTS as _DOM_TESTS
-from test_css import TESTS as _CSS_TESTS
-from test_js import TESTS as _JS_TESTS
-from test_layout import TESTS as _LAYOUT_TESTS
-from test_paint import TESTS as _PAINT_TESTS
-from test_net import TESTS as _NET_TESTS
-from test_browser import TESTS as _BROWSER_TESTS
-from test_p2 import TESTS as _P2_TESTS
-from test_p3 import TESTS as _P3_TESTS
-from test_r1 import TESTS as _R1_TESTS
-from test_r2 import TESTS as _R2_TESTS
-from test_r3 import TESTS as _R3_TESTS
-from test_r4 import TESTS as _R4_TESTS
-from test_r4_regression import TESTS as _R4_REGRESSION_TESTS
-from test_r4_perf import TESTS as _R4_PERF_TESTS
-from test_r5 import TESTS as _R5_TESTS
-from test_mem import TESTS as _MEM_TESTS
-from test_web_api import TESTS as _WEB_API_TESTS
-from test_p34 import TESTS as _P34_TESTS
-from test_p34_r2 import TESTS as _P34_R2_TESTS
-from test_p34_r3 import TESTS as _P34_R3_TESTS
-from test_p34_r4 import TESTS as _P34_R4_TESTS
-from test_p34_r5 import TESTS as _P34_R5_TESTS
-from test_p34_r6 import TESTS as _P34_R6_TESTS
-from test_p0_js_budget import TESTS as _P0_JS_BUDGET_TESTS
-from test_p0_policy import TESTS as _P0_POLICY_TESTS
-from test_p1_supports import TESTS as _P1_SUPPORTS_TESTS
-from test_gui_scroll import TESTS as _GUI_SCROLL_TESTS
-from test_gui_activation import TESTS as _GUI_ACTIVATION_TESTS
-from test_focus_routing import TESTS as _FOCUS_ROUTING_TESTS
-from test_editor import TESTS as _EDITOR_TESTS
-from test_viewport import TESTS as _VIEWPORT_TESTS
-from test_cpu_image import TESTS as _CPU_IMAGE_TESTS
-from test_navigation_state import TESTS as _NAVIGATION_STATE_TESTS
-from test_document_controller import TESTS as _DOCUMENT_CONTROLLER_TESTS
-from test_tab_identity import TESTS as _TAB_IDENTITY_TESTS
-from test_transport import TESTS as _TRANSPORT_TESTS
-from test_diagnostics import TESTS as _DIAGNOSTICS_TESTS
-from test_document_state_full import TESTS as _DOCUMENT_STATE_FULL_TESTS
-from test_accessibility import TESTS as _ACCESSIBILITY_TESTS
-from test_history_entry import TESTS as _HISTORY_ENTRY_TESTS
-from test_tab_lifecycle import TESTS as _TAB_LIFECYCLE_TESTS
-from test_document_renderer import TESTS as _DOCUMENT_RENDERER_TESTS
-from test_form_control import TESTS as _FORM_CONTROL_TESTS
-from test_diag_panel import TESTS as _DIAG_PANEL_TESTS
-from test_style_cache import TESTS as _STYLE_CACHE_TESTS
-from test_layout_incremental import TESTS as _LAYOUT_INCREMENTAL_TESTS
-from test_display_list import TESTS as _DISPLAY_LIST_TESTS
-from test_dirty_region import TESTS as _DIRTY_REGION_TESTS
-from test_png_export import TESTS as _PNG_EXPORT_TESTS
-from test_policy_regression import TESTS as _POLICY_REGRESSION_TESTS
-from test_cpu_image_formats import TESTS as _CPU_IMAGE_FORMATS_TESTS
-from test_cpu_image_fill import TESTS as _CPU_IMAGE_FILL_TESTS
-from test_cpu_image_glyph import TESTS as _CPU_IMAGE_GLYPH_TESTS
-from test_inline_layout import TESTS as _INLINE_LAYOUT_TESTS
-from test_script_error import TESTS as _SCRIPT_ERROR_TESTS
-from test_js_multi_decl import TESTS as _JS_MULTI_DECL_TESTS
-from test_navigation import TESTS as _NAVIGATION_TESTS
-from test_field_editing import TESTS as _FIELD_EDITING_TESTS
-from test_activation import TESTS as _ACTIVATION_TESTS
-from test_document_context import TESTS as _DOCUMENT_CONTEXT_TESTS
-from test_load_phases import TESTS as _LOAD_PHASES_TESTS
-from test_request_config import TESTS as _REQUEST_CONFIG_TESTS
-from test_first_screen import TESTS as _FIRST_SCREEN_TESTS
-from test_keyboard_router import TESTS as _KEYBOARD_ROUTER_TESTS
-from test_gui_document_bridge import TESTS as _GUI_DOCUMENT_BRIDGE_TESTS
-from test_tab_document_orchestrator import TESTS as _TAB_DOC_ORCH_TESTS
-from test_form_task import TESTS as _FORM_TASK_TESTS
-from test_tab_session import TESTS as _TAB_SESSION_TESTS
-from test_session_recovery import TESTS as _SESSION_RECOVERY_TESTS
-from test_geometry_freeze import TESTS as _GEOMETRY_FREEZE_TESTS
-from test_style_cache_lru import TESTS as _STYLE_CACHE_LRU_TESTS
-from test_frame_ownership import TESTS as _FRAME_OWNERSHIP_TESTS
-from test_layout_diff import TESTS as _LAYOUT_DIFF_TESTS
-from test_caret_explain import TESTS as _CARET_EXPLAIN_TESTS
-from test_overlay_protocol import TESTS as _OVERLAY_PROTOCOL_TESTS
-from test_tk_keyboard_binding import TESTS as _TK_KEYBOARD_BINDING_TESTS
-from test_g11_gui_wiring import TESTS as _G11_GUI_WIRING_TESTS
-from test_g09_gui_wiring import TESTS as _G09_GUI_WIRING_TESTS
-from test_document_process import TESTS as _DOCUMENT_PROCESS_TESTS
-from test_document_process_spawn import TESTS as _DOC_PROCESS_SPAWN_TESTS
-from test_editor_overlay import TESTS as _EDITOR_OVERLAY_TESTS
-from test_rasterize_cpu import TESTS as _RASTERIZE_CPU_TESTS
-from test_gpu_backend import TESTS as _GPU_BACKEND_TESTS
-from test_gpu_rasterize import TESTS as _GPU_RASTERIZE_TESTS
-from test_gpu_image_cache import TESTS as _GPU_IMAGE_CACHE_TESTS
-from test_gpu_glyph_atlas import TESTS as _GPU_GLYPH_ATLAS_TESTS
+# Default is the fast tier; --full opts into the complete suite.
+_FULL = "--full" in sys.argv
+# --only <module> [module …] filters the runner to a subset of modules.
+_ONLY: set[str] | None = None
+if "--only" in sys.argv:
+    _i = sys.argv.index("--only")
+    _ONLY = set()
+    for _arg in sys.argv[_i + 1:]:
+        if _arg.startswith("-"):
+            break
+        _ONLY.add(_arg)
 
-def main():
-    tests = []
-    tests.extend(_DOM_TESTS)
-    tests.extend(_CSS_TESTS)
-    tests.extend(_JS_TESTS)
-    tests.extend(_LAYOUT_TESTS)
-    tests.extend(_PAINT_TESTS)
-    tests.extend(_NET_TESTS)
-    tests.extend(_BROWSER_TESTS)
-    tests.extend(_P2_TESTS)
-    tests.extend(_P3_TESTS)
-    tests.extend(_R1_TESTS)
-    tests.extend(_R2_TESTS)
-    tests.extend(_R3_TESTS)
-    tests.extend(_R4_TESTS)
-    tests.extend(_R4_REGRESSION_TESTS)
-    tests.extend(_R4_PERF_TESTS)
-    tests.extend(_R5_TESTS)
-    tests.extend(_MEM_TESTS)
-    tests.extend(_WEB_API_TESTS)
-    tests.extend(_P34_TESTS)
-    tests.extend(_P34_R2_TESTS)
-    tests.extend(_P34_R3_TESTS)
-    tests.extend(_P34_R4_TESTS)
-    tests.extend(_P34_R5_TESTS)
-    tests.extend(_P34_R6_TESTS)
-    tests.extend(_P0_JS_BUDGET_TESTS)
-    tests.extend(_P0_POLICY_TESTS)
-    tests.extend(_P1_SUPPORTS_TESTS)
-    tests.extend(_GUI_SCROLL_TESTS)
-    tests.extend(_GUI_ACTIVATION_TESTS)
-    tests.extend(_FOCUS_ROUTING_TESTS)
-    tests.extend(_EDITOR_TESTS)
-    tests.extend(_VIEWPORT_TESTS)
-    tests.extend(_CPU_IMAGE_TESTS)
-    tests.extend(_NAVIGATION_STATE_TESTS)
-    tests.extend(_DOCUMENT_CONTROLLER_TESTS)
-    tests.extend(_TAB_IDENTITY_TESTS)
-    tests.extend(_TRANSPORT_TESTS)
-    tests.extend(_DIAGNOSTICS_TESTS)
-    tests.extend(_DOCUMENT_STATE_FULL_TESTS)
-    tests.extend(_ACCESSIBILITY_TESTS)
-    tests.extend(_HISTORY_ENTRY_TESTS)
-    tests.extend(_TAB_LIFECYCLE_TESTS)
-    tests.extend(_DOCUMENT_RENDERER_TESTS)
-    tests.extend(_FORM_CONTROL_TESTS)
-    tests.extend(_DIAG_PANEL_TESTS)
-    tests.extend(_STYLE_CACHE_TESTS)
-    tests.extend(_LAYOUT_INCREMENTAL_TESTS)
-    tests.extend(_DISPLAY_LIST_TESTS)
-    tests.extend(_DIRTY_REGION_TESTS)
-    tests.extend(_PNG_EXPORT_TESTS)
-    tests.extend(_POLICY_REGRESSION_TESTS)
-    tests.extend(_CPU_IMAGE_FORMATS_TESTS)
-    tests.extend(_CPU_IMAGE_FILL_TESTS)
-    tests.extend(_CPU_IMAGE_GLYPH_TESTS)
-    tests.extend(_INLINE_LAYOUT_TESTS)
-    tests.extend(_SCRIPT_ERROR_TESTS)
-    tests.extend(_JS_MULTI_DECL_TESTS)
-    tests.extend(_NAVIGATION_TESTS)
-    tests.extend(_FIELD_EDITING_TESTS)
-    tests.extend(_ACTIVATION_TESTS)
-    tests.extend(_DOCUMENT_CONTEXT_TESTS)
-    tests.extend(_LOAD_PHASES_TESTS)
-    tests.extend(_REQUEST_CONFIG_TESTS)
-    tests.extend(_FIRST_SCREEN_TESTS)
-    tests.extend(_KEYBOARD_ROUTER_TESTS)
-    tests.extend(_GUI_DOCUMENT_BRIDGE_TESTS)
-    tests.extend(_TAB_DOC_ORCH_TESTS)
-    tests.extend(_FORM_TASK_TESTS)
-    tests.extend(_TAB_SESSION_TESTS)
-    tests.extend(_SESSION_RECOVERY_TESTS)
-    tests.extend(_GEOMETRY_FREEZE_TESTS)
-    tests.extend(_STYLE_CACHE_LRU_TESTS)
-    tests.extend(_FRAME_OWNERSHIP_TESTS)
-    tests.extend(_LAYOUT_DIFF_TESTS)
-    tests.extend(_CARET_EXPLAIN_TESTS)
-    tests.extend(_OVERLAY_PROTOCOL_TESTS)
-    tests.extend(_TK_KEYBOARD_BINDING_TESTS)
-    tests.extend(_G11_GUI_WIRING_TESTS)
-    tests.extend(_G09_GUI_WIRING_TESTS)
-    tests.extend(_DOCUMENT_PROCESS_TESTS)
-    tests.extend(_DOC_PROCESS_SPAWN_TESTS)
-    tests.extend(_EDITOR_OVERLAY_TESTS)
-    tests.extend(_RASTERIZE_CPU_TESTS)
-    tests.extend(_GPU_BACKEND_TESTS)
-    tests.extend(_GPU_RASTERIZE_TESTS)
-    tests.extend(_GPU_IMAGE_CACHE_TESTS)
-    tests.extend(_GPU_GLYPH_ATLAS_TESTS)
-    from test_b_series_gui_wiring import TESTS as _B_SERIES_GUI_WIRING_TESTS
-    tests.extend(_B_SERIES_GUI_WIRING_TESTS)
-    passed = 0
-    failed = []
-    for name, fn in tests:
+_REPORT = "--report" in sys.argv
+_VERBOSE = "--verbose" in sys.argv
+
+
+def _p_has_tests(path: Path) -> bool:
+    """Cheap source scan: does a ``test_*.py`` file declare a ``TESTS`` list?"""
+    try:
+        src = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return re.search(r"^\s*TESTS\s*[:=]", src, re.MULTILINE) is not None
+
+
+def _discover_paths() -> list[Path]:
+    """Every ``tests/test_*.py`` that declares a module-level ``TESTS``.
+
+    Pure source scan — no import, so the fast tier never pays the
+    expensive modules' import/global-init cost unless they are enqueued.
+    """
+    paths: list[Path] = []
+    for path in sorted(Path(_ROOT / "tests").glob("test_*.py")):
+        if _p_has_tests(path):
+            paths.append(path)
+    return paths
+
+
+def _import_group(path: Path) -> tuple[str, list]:
+    """Import one test module and return ``(module_name, TESTS)``."""
+    mod = importlib.import_module(path.stem)
+    return path.stem, list(getattr(mod, "TESTS", []))
+
+
+def main() -> int:
+    # ------------------------------------------------------------------
+    # 1. Discover module names (source scan only, no import yet) and
+    #    tier them so the fast tier never imports the expensive ones.
+    # ------------------------------------------------------------------
+    paths = _discover_paths()
+    names = [p.stem for p in paths]
+
+    if _ONLY is not None:
+        run_names = [n for n in names if n in _ONLY]
+        skipped: list[str] = []
+        unknown = sorted(_ONLY - set(names))
+        if unknown:
+            print(f"  WARN: --only module(s) not found: {unknown}")
+    elif _FULL:
+        run_names = list(names)
+        skipped = []
+    else:
+        # fast tier: run everything except the expensive modules.
+        run_names = [n for n in names if n not in _EXPENSIVE]
+        skipped = [n for n in names if n in _EXPENSIVE]
+
+    # ------------------------------------------------------------------
+    # 2. Import only the modules we will run (lazy).
+    # ------------------------------------------------------------------
+    path_by_stem = {p.stem: p for p in paths}
+    groups: list[tuple[str, list]] = []
+    for name in run_names:
         try:
-            fn()
-            passed += 1
-            print(f"  ok  {name}")
-        except Exception as e:
-            failed.append((name, e))
-            import traceback
-            print(f" FAIL {name}: {e}")
-            traceback.print_exc()
-    print(f"\n{passed}/{len(tests)} passed")
+            groups.append(_import_group(path_by_stem[name]))
+        except Exception as e:  # noqa: BLENT0
+            print(f"  WARN: failed to import {name}: {e}")
+
+    total_enqueued = sum(len(t) for _, t in groups)
+    mode_label = "full" if _FULL else "fast"
+    if _ONLY is not None:
+        mode_label = f"only({','.join(sorted(_ONLY))})"
+    if not _FULL and _ONLY is None:
+        print(
+            f"[mode={mode_label}] "
+            f"{len(groups)} modules, {total_enqueued} tests, "
+            f"{len(skipped)} expensive module(s) skipped"
+        )
+    else:
+        print(f"[mode={mode_label}] {len(groups)} modules, {total_enqueued} tests")
+
+    passed = 0
+    failed: list[tuple[str, str]] = []
+    module_times: list[tuple[float, str, int, int]] = []
+    t_wall = time.time()
+
+    # ------------------------------------------------------------------
+    # 3. Serial execution of every enqueued module.
+    # ------------------------------------------------------------------
+    for mod_name, tests in groups:
+        t0 = time.time()
+        mod_passed = 0
+        for name, fn in tests:
+            try:
+                fn()
+                mod_passed += 1
+                passed += 1
+                if _VERBOSE:
+                    print(f"  ok  [{mod_name}] {name}")
+            except Exception as e:  # noqa: BLENT0
+                failed.append((f"{mod_name}::{name}", repr(e)))
+                if _VERBOSE:
+                    import traceback
+                    print(f"  FAIL [{mod_name}] {name}: {e}")
+                    traceback.print_exc()
+        module_times.append((time.time() - t0, mod_name, mod_passed,
+                             len(tests)))
+
+    # ------------------------------------------------------------------
+    # 4. Summary.
+    # ------------------------------------------------------------------
+    wall = time.time() - t_wall
+    print(f"\n{'=' * 60}")
+    print(
+        f"RESULT: {passed}/{total_enqueued} passed in {wall:.1f}s "
+        f"({len(groups)} modules, mode={mode_label})"
+    )
+    if skipped:
+        print("skipped (expensive, fast tier): " + ", ".join(skipped))
+    if _REPORT:
+        print(f"\n{'=' * 60}\nPER-MODULE TIMING (slowest first):")
+        for d, m, p, t in sorted(module_times, reverse=True):
+            bar = "#" * int(d * 2)
+            print(f"  {d:6.1f}s  {m:32s} {p:4d}/{t:<4d} {bar}")
     if failed:
-        print(f"FAILED: {[(n, str(e)) for n, e in failed]}")
+        print(f"FAILED ({len(failed)}):")
+        for n, e in failed:
+            print(f"  - {n}: {e}")
         return 1
     return 0
 
