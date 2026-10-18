@@ -27,7 +27,7 @@ CLI 与 GUI 的 10 个 HTTP 任务均通过。产出 GUI 改进建议、GPU 光�
 - 百度真实网页访问评估：`assessments/20261016-round5/docs/百度真实网页访问评估与改进步骤.md`
 - 页面与字体渲染改进方案：`assessments/20261016-round5/docs/页面与字体渲染改进方案.md`
 
-## R6 — 第六轮批次 1–48（2026-10-17，回溯补录）
+## R6 — 第六轮批次 1–49（2026-10-17，回溯补录）
 
 *按 [逐项改进实施方案](../assessments/20261016-round5/docs/逐项改进实施方案.md)
 落地 G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
@@ -37,10 +37,11 @@ paint_engine 命令分派直接画到 CPUCanvas（消除 scratch Bitmap
 合并层）+ G07 文档进程真实 spawn + 活显示验收（多核收益）+
 P01–P13 GPU 光栅化迁移第一阶段（统一渲染契约 + P01/P02 纯逻辑
 核心 + P13 CPU 回退）+ P04 基础 GPU 光栅化（真实 wgpu 纹理
-上传 + 读回验证）。
-完整回归 **1863/1863**（基线 939 + 批次 1–48 新增 924）。P05–P09
-GPU 侧逐阶段迁移（图片纹理 / 字形 atlas / 裁剪变换透明组 /
-阴影滤镜 / tile 增量合成）+ P12 验收未实施。逐项批次记录见
+上传 + 读回验证）+ P05 图片纹理缓存（真实 wgpu 侧，refcount
++ LRU + 预上传）。
+完整回归 **1876/1876**（基线 939 + 批次 1–49 新增 937）。P06 字形
+atlas / P07 裁剪变换透明组 / P08 阴影滤镜 / P09 tile 增量合成
++ P12 验收未实施。逐项批次记录见
 [assessments/20261017-round6/README.md](../assessments/20261017-round6/README.md)。*
 
 ### 批次 1–20（纯逻辑核心 + GUI 接线骨架）
@@ -216,13 +217,52 @@ GPU 侧逐阶段迁移（图片纹理 / 字形 atlas / 裁剪变换透明组 /
   P05 GPU 侧内容正确）+ create_backend GPU 设备可用时返回真实
   GPUBackend / 缺失回退 CPU（P02 + P13）+ 注入 device 直接构造 +
   describe 诊断串含 mode / device / documents / frame_seq）
+- 批次 49：P05 图片纹理缓存（真实 wgpu 侧，refcount + LRU + 预上传）——
+  在批次 48 的 P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）
+  之上补 GPU 光栅化迁移方案 P05"图片纹理与缓存"（同资源按 URL / 资源
+  key 去重，多框 / 多次渲染复用同一 wgpu 纹理，避免重复
+  `write_texture` 上传 + refcount 生命周期 + 容量 LRU 淘汰 +
+  `prepare` 预上传）。`gpu.ImageTextureCache`（图片纹理缓存核心，P05
+  GPU 侧：`get_or_upload(key, w, h, rgba)` 命中复用已缓存纹理 + LRU
+  刷新 + 命中计数 / 未命中经 `GPURasterizer.upload_rgba8` 上传新建 +
+  未命中 / 上传计数 + `prepare(images)` 预上传一批图片纹理（文档
+  加载期零渲染等待，P05"预上传"）+ `ref(key)` / `unref(key)` refcount
+  生命周期（被外部 `ref()` 提升到 ref>=2 的纹理不被容量 LRU 驱逐、
+  可常驻超容量；`unref` 回 1 后可随容量淘汰）+ `release(key)` 显式
+  释放条目（refcount 清零 + 立即移除）+ `stats()` / `describe()`
+  命中 / 未命中 / 上传 / 驻留 / 驱逐统计 + 诊断串（P05 诊断供 G10
+  显示）；无 wgpu 设备时缓存仍持**逻辑句柄形态**（`get_or_upload`
+  返回 None，不崩，P13；`capacity=0` 不限驻留））+
+  `gpu.GPUBackend.image_cache`（该后端持有的图片纹理缓存，每后端一个，
+  P05 契约；`GPUBackend.__init__` 新增 `image_cache_capacity` 参数
+  默认 32 透传；`GPUBackend.render` 时自动对 DisplayList 里 `img`
+  命令经缓存上传 / 复用源纹理（同资源 key 去重，避免重复
+  `write_texture` 上传），并把 `image_cache_stats` 挂到 `FrameHandle`
+  （P05 统计 + G10 诊断区显示））+
+  `gpu.create_backend(…, image_cache_capacity=N)` 容量透传（仅 GPU
+  后端；CPU 参考后端不持纹理缓存，P05 仅 GPU 侧），
+  `tests/test_gpu_image_cache.py` 新增 13 条（`get_or_upload` 同 key
+  命中去重（hits +1、uploads 仍 1、resident 1）+ 不同 key 各自上传
+  （resident 随 key 增长）+ refcount 生命周期（`ref` 提升到 2 的条目
+  不被容量 LRU 驱逐、可常驻超容量上限；`unref` 回 1 后可随容量淘汰）
+  + `release` 显式释放（refcount 清零 + 立即移除，二次 release 返回
+  False）+ `prepare` 预上传（文档加载期，重复 prepare 同 key 命中不
+  重复上传）+ capacity=0 不限驻留（LRU 不驱逐）+ 无 wgpu 设备时逻辑
+  句柄形态（`get_or_upload` 返回 None，不崩，P13）+ `describe` 诊断串
+  含 cap / res / hit / miss / ev / rate + `GPUBackend.image_cache` 属性
+  （每后端一个，无 GPU 时仍可访问）+ `GPUBackend.render` 自动对 img
+  命令经缓存预上传（resident 增长 + `image_cache_stats` 挂 FrameHandle）
+  + 同资源多帧复用纹理（uploads 不变、命中计数）+
+  `create_backend(image_cache_capacity=N)` 容量透传（GPU 后端透传，CPU
+  后端不持纹理缓存））
 
 ### 未实施（留待后续批次）
 
-- P05–P09 GPU 侧逐阶段迁移（图片纹理缓存 / 字形 atlas / 裁剪变换
-  透明组 / 阴影滤镜 / tile 增量合成）+ P12 GPU 性能与正确性验收
-  （批次 48 已落地 P04 基础 GPU 光栅化：真实 wgpu 纹理上传 + 读回
-  验证 0 mismatch；P05–P09 在 GPU 侧逐阶段推进，留后续批次）
+- P06–P09 GPU 侧逐阶段迁移（字形 atlas / 裁剪变换透明组 / 阴影滤镜
+  / tile 增量合成）+ P12 GPU 性能与正确性验收（批次 48 已落地 P04
+  基础 GPU 光栅化：真实 wgpu 纹理上传 + 读回验证 0 mismatch；批次 49
+  已落地 P05 图片纹理缓存：真实 wgpu 侧缓存 + refcount + LRU + 预
+  上传；P06–P09 在 GPU 侧逐阶段推进，留后续批次）
 - 出站网络在线对照复测（TCP 443 阻塞中）
 - G07 doc-process 真实 spawn + 活显示验收已在批次 46 落地（多核收益落地到 gui 侧活显示路径；`make_multiprocessing_pool` 既有入口名保持不变，兼容既有消费端）
 - `gui.py` 活显示调用 BGuiWiring 实际接线已在批次 42 落地（导航执行仍走既有路径，不改呈现层）

@@ -8,17 +8,18 @@
 + 布局验证 position/z-index/transform/overflow/grid（P33.R4）
 + 增量布局 dirty 子树标记 + 区域级重光栅化 + 布局热点优化（P33.R5）。
 
-> **当前状态（2026-10-17 批次 48）**：第六轮批次 1–48 已全部落地
+> **当前状态（2026-10-17 批次 49）**：第六轮批次 1–49 已全部落地
 > （G01–G11 / C01–C10 / B01–B10 各项纯逻辑核心 + GUI 接线 + 本地
 > loopback 网络 I/O 实装 + main.py CLI 路径切 CPUImage +
 > _c02_refresh_canvas_cpu 设为默认呈现路径 + paint_engine 命令分派
 > 直接画到 CPUCanvas（消除 scratch Bitmap 合并层）+ G07 文档进程
 > 真实 spawn + 活显示验收（多核收益）+ P01–P13 GPU 光栅化迁移
 > 第一阶段（统一渲染契约 + P01/P02 纯逻辑核心 + P13 CPU 回退）+
-> P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）），
+> P04 基础 GPU 光栅化（真实 wgpu 纹理上传 + 读回验证）+
+> P05 图片纹理缓存（真实 wgpu 侧，refcount + LRU + 预上传）），
 > 完整回归
-> **1863/1863**。P05–P09 GPU 侧逐阶段迁移（图片纹理 / 字形 atlas /
-> 裁剪变换透明组 / 阴影滤镜 / tile 增量合成）未实施。详细批次记录见
+> **1876/1876**。P06–P09 GPU 侧逐阶段迁移（字形 atlas / 裁剪变换
+> 透明组 / 阴影滤镜 / tile 增量合成）未实施。详细批次记录见
 > [assessments/20261017-round6/README.md](assessments/20261017-round6/README.md)，
 > 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -41,13 +42,13 @@
 | 动画（@keyframes） | 部分支持 | 可解析并驱动帧推进，但不与 compositor 合成（玩具过渡引擎 `toy_browser/style/transition.py`） |
 | `scroll` / 滚动行为 | 基础实现 | 布局可计算滚动尺寸，GUI 支持全内容滚动（P33.R2），但 `scroll-behavior: smooth` 等细节未实现 |
 
-**本次验证**：2026 年 10 月 17 日批次 48 之后，完整回归 **1863/1863**
-全部通过（基线 939 + 第六轮批次 1–48 新增 924）。测试及编排集中在
+**本次验证**：2026 年 10 月 17 日批次 49 之后，完整回归 **1876/1876**
+全部通过（基线 939 + 第六轮批次 1–49 新增 937）。测试及编排集中在
 `tests/`，根目录 `test.py` 为启动入口。历史验证记录（939 项基线）见
 [assessments/structure-20261016/docs/验证记录.md](assessments/structure-20261016/docs/验证记录.md)；
 模块目录见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)；
 分轮评估见 [assessments/README.md](assessments/README.md)；
-当前进度见 [docs/ROADMAP.md](docs/ROADMAP.md) R6.40–R6.57 各节。
+当前进度见 [docs/ROADMAP.md](docs/ROADMAP.md) R6.40–R6.58 各节。
 
 ## 架构
 

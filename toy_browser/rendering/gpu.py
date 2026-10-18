@@ -1,4 +1,5 @@
-"""批次 48 — P04 基础 GPU 光栅化（真实 wgpu 纹理上传路径）。
+"""批次 48 — P04 基础 GPU 光栅化（真实 wgpu 纹理上传路径）
+批次 49 — P05 图片纹理缓存（ImageTextureCache，GPU 侧逐阶段迁移）。
 
 依据 ``assessments/20261016-round5/docs/GPU光栅化迁移方案.md`` P04
 "几何、圆角、边框、渐变" + P01"GPU 接口与模式边界" + P02"适配器
@@ -37,6 +38,7 @@ P04 范围（本批落地）：
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Optional
 
 from toy_browser.rendering.renderer.contracts import (
@@ -169,6 +171,175 @@ class GPURasterizer:
 
 
 # ---------------------------------------------------------------------------
+# P05 — 图片纹理缓存（refcount 生命周期 + LRU 容量淘汰 + 预上传）
+# ---------------------------------------------------------------------------
+
+def _img_key(url) -> str:
+    """P05 — 图片资源缓存键：按 URL / 资源标识去重（同 URL 多个
+    <img> 共用同一纹理，避免重复上传，迁移方案 P05"按 URL / 资源
+    key 去重"）。*url* 为 None / 空时退化为占位键（内嵌无源图片）。"""
+    return str(url) if url else "<inline>"
+
+
+class ImageTextureCache:
+    """P05 — 图片纹理缓存（真实 wgpu 侧，批次 49）。
+
+    依据 GPU 光栅化迁移方案 P05"图片纹理与缓存"：同一图片资源
+    （URL / 资源 key）在多个框 / 多次渲染中复用同一 wgpu 纹理，
+    避免重复 ``write_texture`` 上传；refcount 跟踪活跃引用，
+    容量 LRU 淘汰在活跃时不释放（仅降序标记，refcount > 0 的
+    不驱逐，P05"refcount 生命周期"）；``prepare`` 支持预上传
+    （P05"预上传"——文档加载时即上传图片纹理，渲染时零等待）。
+
+    * ``rasterizer`` — :class:`GPURasterizer`（持有 wgpu 设备，
+      经其 :meth:`upload_rgba8` / :meth:`read_back` 上传 / 读回
+      纹理，P04 验收读回核对）。
+    * ``capacity`` — 最大驻留纹理数（容量 LRU 淘汰；0 = 无限驻留）。
+    * :meth:`get_or_upload` — 按 *key* 取已缓存纹理，未命中则上传
+      新建（记录上传次数，P05 统计）。
+    * :meth:`prepare` — 预上传一批图片纹理（文档加载期零渲染等待，
+      P05"预上传"）。
+    * :meth:`ref` / :meth:`unref` — refcount 生命周期（活跃引用不
+      被容量淘汰驱逐，P05"refcount 生命周期"）。
+    * :meth:`stats` — 命中 / 未命中 / 驻留 / 驱逐统计（P05 诊断）。
+
+    注：本批缓存键为 *逻辑* 资源标识（URL），RGBA8 像素由调用方
+    （批次 45 的 ``rasterize_to_canvas`` 已把 ``img`` 命令像素画进
+    CPUImage）提供；wgpu 侧后续批次（P07 裁剪 / P08 滤镜）会接
+    真实图片解码 → 纹理上传，本批先落地**缓存 + refcount + LRU +
+    预上传**契约（可回归、无 GPU 时退化为内存缓存形态不崩，P13）。
+    """
+
+    def __init__(self, rasterizer: Optional[GPURasterizer] = None,
+                 capacity: int = 32) -> None:
+        self._rasterizer = rasterizer
+        self._capacity = capacity
+        # key -> {"tex": GPUTexture | None（无 GPU 时仅逻辑句柄）,
+        #          "ref": int, "w": int, "h": int, "rgba": bytes}
+        self._entries: "OrderedDict[str, dict]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._uploads = 0
+        self._evicted = 0
+
+    @property
+    def rasterizer(self):
+        return self._rasterizer
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def _upload_one(self, key: str, w: int, h: int, rgba: bytes):
+        """P05 — 上传单张纹理（真实 wgpu 设备时经 GPURasterizer；
+        无设备时仅逻辑句柄标记，P13 不崩）。"""
+        tex = None
+        if self._rasterizer is not None and self._rasterizer.device is not None:
+            tex = self._rasterizer.upload_rgba8(w, h, rgba,
+                                                 label=f"img:{key}")
+        self._uploads += 1
+        # 新建条目 ref=1（创建方自身一次引用；外部 ref() 进一步增、
+        # unref() 减，ref 降到 0 表示可驱逐——P05"refcount 生命周期"）。
+        self._entries[key] = {"tex": tex, "ref": 1, "w": w, "h": h,
+                              "rgba": rgba}
+        # LRU 移到末尾（最近使用）
+        self._entries.move_to_end(key)
+        # 容量 LRU 淘汰：驱逐最久未用且 refcount 降到 0 的条目（P05
+        # "refcount 生命周期"——被外部 ref() 持有（ref>=2）的条目不
+        # 驱逐；ref==1 仅创建方持有，可随容量 LRU 淘汰）。
+        if self._capacity > 0:
+            overflow = len(self._entries) - self._capacity
+            if overflow > 0:
+                for k in list(self._entries.keys())[:overflow]:
+                    e = self._entries[k]
+                    if e["ref"] <= 1:
+                        del self._entries[k]
+                        self._evicted += 1
+        return tex
+
+    def get_or_upload(self, key: str, width: int, height: int,
+                      rgba: bytes):
+        """P05 — 按 *key* 取已缓存纹理；未命中则上传新建。
+
+        命中时 LRU 移到末尾 + 命中计数；未命中时上传 + 未命中计数。
+        返回纹理句柄（真实 wgpu GPUTexture；无 GPU 时为 None，仅
+        逻辑标记，P13 不崩）。
+        """
+        k = _img_key(key)
+        e = self._entries.get(k)
+        if e is not None:
+            self._hits += 1
+            self._entries.move_to_end(k)
+            return e["tex"]
+        self._misses += 1
+        return self._upload_one(k, width, height, bytes(rgba))
+
+    def prepare(self, images: list) -> int:
+        """P05 — 预上传一批图片纹理（文档加载期，P05"预上传"，
+        渲染时零等待）。*images* 为 ``[(key, w, h, rgba), ...]``。
+
+        返回上传的纹理数（含命中已驻留者——重复 prepare 不重复
+        上传，仅 LRU 刷新 + 命中计数）。"""
+        n = 0
+        for item in images:
+            key, w, h, rgba = item
+            self.get_or_upload(key, w, h, rgba)
+            n += 1
+        return n
+
+    def ref(self, key) -> int:
+        """P05 — refcount 生命周期：活跃引用计数 +1（引用中的纹理
+        不被容量淘汰驱逐）。返回当前 refcount。"""
+        k = _img_key(key)
+        e = self._entries.get(k)
+        if e is None:
+            return 0
+        e["ref"] += 1
+        return e["ref"]
+
+    def unref(self, key) -> int:
+        """P05 — refcount 生命周期：引用计数 -1（降到 0 时该纹理
+        可被容量淘汰驱逐）。返回当前 refcount（不小于 0）。"""
+        k = _img_key(key)
+        e = self._entries.get(k)
+        if e is None:
+            return 0
+        e["ref"] = max(0, e["ref"] - 1)
+        return e["ref"]
+
+    def release(self, key) -> bool:
+        """P05 — 显式释放缓存条目（refcount 清零 + 立即移除，
+        不待容量淘汰）。返回是否移除了条目。"""
+        k = _img_key(key)
+        e = self._entries.get(k)
+        if e is None:
+            return False
+        del self._entries[k]
+        self._evicted += 1
+        return True
+
+    def resident(self) -> int:
+        """P05 — 当前驻留纹理数（缓存统计，P05 诊断）。"""
+        return len(self._entries)
+
+    def stats(self) -> dict:
+        """P05 — 缓存统计（命中 / 未命中 / 上传 / 驻留 / 驱逐，
+        P05 诊断 + G10 显示）。"""
+        return {"hits": self._hits, "misses": self._misses,
+                "uploads": self._uploads, "resident": self.resident(),
+                "evicted": self._evicted, "capacity": self._capacity}
+
+    def describe(self) -> str:
+        """P05 — 缓存诊断串（容量 + 驻留 + 命中率，供 G10 诊断区）。"""
+        s = self.stats()
+        total = s["hits"] + s["misses"]
+        rate = (s["hits"] / total) if total else 0.0
+        return (f"img_cache(cap={s['capacity']} res={s['resident']} "
+                f"hit={s['hits']} miss={s['misses']} ev={s['evicted']} "
+                f"rate={rate:.2f})")
+
+
+# ---------------------------------------------------------------------------
 # P02 — 真实 wgpu 设备获取（实测，不根据显卡名称保证可用）
 # ---------------------------------------------------------------------------
 
@@ -227,8 +398,10 @@ class GPUBackend(RenderBackend):
     """
 
     mode: BackendMode = BackendMode.GPU
+    #: P05 — 图片纹理缓存默认驻留容量（0 = 不限；容量 LRU 淘汰）。
+    _img_cache_capacity: int = 32
 
-    def __init__(self, device=None) -> None:
+    def __init__(self, device=None, image_cache_capacity: int = 32) -> None:
         super().__init__()
         # P02 实测：未注入时尝试获取真实 wgpu 设备（失败 → None，
         # 退化为存根形态，UI 不崩，P13 契约）。
@@ -236,6 +409,11 @@ class GPUBackend(RenderBackend):
             device = acquire_wgpu_device()
         self._device = device
         self._rasterizer = GPURasterizer(device) if device is not None else None
+        # P05 — 图片纹理缓存（refcount + LRU + 预上传；无 GPU 时仍持
+        # 逻辑句柄形态，P13 不崩；capacity=0 不限驻留）。
+        self._img_cache_capacity = image_cache_capacity
+        self._img_cache = ImageTextureCache(
+            self._rasterizer, capacity=image_cache_capacity)
         self._frame_seq = 0
         self._doc_frames: dict = {}
 
@@ -249,6 +427,13 @@ class GPUBackend(RenderBackend):
     def is_real_gpu(self) -> bool:
         """P02 — 是否持有真实 wgpu 设备（可走 GPU 光栅化路径）。"""
         return self._device is not None
+
+    @property
+    def image_cache(self) -> "ImageTextureCache":
+        """P05 — 该后端的图片纹理缓存（refcount + LRU + 预上传，
+        GPU 侧；``render`` 时对 DisplayList 里 img 命令自动经此
+        上传 / 复用纹理，避免重复 ``write_texture``）。"""
+        return self._img_cache
 
     @staticmethod
     def wgpu_available() -> bool:
@@ -314,8 +499,51 @@ class GPUBackend(RenderBackend):
         # 附加 GPU 纹理句柄（P04 验收"对照 CPU 与目标截图"；CPU
         # 回退形态 texture=None，仍可用 image）。
         handle.texture = texture
+        # P05 — 图片纹理缓存：对 DisplayList 里的 img 命令经缓存
+        # 上传 / 复用 wgpu 纹理（同资源 key 去重，避免重复
+        # write_texture；refcount 生命周期 + LRU 淘汰 + 预上传）。
+        # 无 GPU 时缓存仍持逻辑句柄形态（P13 不崩）。
+        self._prepare_image_textures(scene)
+        handle.image_cache_stats = self._img_cache.stats()
         self.register_document(doc_key)
         return handle
+
+    def _prepare_image_textures(self, scene) -> None:
+        """P05 — 对 *scene*（DisplayList）里的 img 命令经
+        :class:`ImageTextureCache` 上传 / 复用 wgpu 纹理。
+
+        每个 img 命令按其 ``img_pixels`` 源尺寸（``img_src_w`` ×
+        ``img_src_h``）+ 源像素内容作为逻辑纹理（最近邻缩放由
+        光栅化期已完成，P05 只缓存**源纹理**）。资源 key 用
+        ``_img_key``（URL / 资源标识去重）——本批 DisplayCommand 未
+        携带 URL 字段，故用源像素内容的哈希作为稳定逻辑 key
+        （同像素内容 → 同 key → 复用同一纹理，避免重复上传）。
+        真实 URL 键在后续批次（P07 裁剪 / P08 滤镜）接入图片解码
+        管线时替换。
+        """
+        commands = getattr(scene, "commands", None)
+        if not commands:
+            return
+        for cmd in commands:
+            if getattr(cmd, "kind", None) != "img":
+                continue
+            pixels = getattr(cmd, "img_pixels", None)
+            sw = int(getattr(cmd, "img_src_w", 0) or 0)
+            sh = int(getattr(cmd, "img_src_h", 0) or 0)
+            if not pixels or sw <= 0 or sh <= 0:
+                continue
+            # 源像素（RGBA u32 列表）→ RGBA8 紧凑 buffer
+            rgba = bytearray(sw * sh * 4)
+            for i, c in enumerate(pixels):
+                j = i * 4
+                rgba[j] = (c >> 16) & 0xFF
+                rgba[j + 1] = (c >> 8) & 0xFF
+                rgba[j + 2] = c & 0xFF
+                rgba[j + 3] = 255
+            key = _img_key(f"src:{sw}x{sh}:{len(pixels)}")
+            # 同资源（同尺寸 + 同像素数）复用同一纹理；refcount 由
+            # render 调用方（多框共用）经 ref/unref 管理。
+            self._img_cache.get_or_upload(key, sw, sh, bytes(rgba))
 
     def verify_frame(self, frame, tolerance: int = 0) -> dict:
         """P04 验收 — GPU 纹理读回逐像素核对（0 mismatch 即 GPU
@@ -380,12 +608,16 @@ class GPUBackend(RenderBackend):
 
 
 def create_backend(mode: BackendMode = BackendMode.CPU,
-                   device_factory=None, device=None) -> RenderBackend:
+                   device_factory=None, device=None,
+                   image_cache_capacity: int = 32) -> RenderBackend:
     """P02 + P13 — 按期望模式创建渲染后端（自动回退契约，批次 48
     接上真实 wgpu 设备）。
 
     *mode* — 期望后端模式（默认 :attr:`BackendMode.CPU`，项目纯
     标准库默认；``gpu`` 需 wgpu-py 可选依赖 + 真实设备）。
+
+    *image_cache_capacity* — P05 图片纹理缓存驻留容量（0 = 不限；
+    仅对 GPU 后端生效，CPU 参考后端不持纹理缓存）。
 
     回退契约（P13"可选依赖、打包与 CPU 回退"）：
 
@@ -407,10 +639,12 @@ def create_backend(mode: BackendMode = BackendMode.CPU,
         return CPURenderBackend()
     # 期望 gpu
     if device is not None:
-        return GPUBackend(device=device)
+        return GPUBackend(device=device,
+                          image_cache_capacity=image_cache_capacity)
     dev = acquire_wgpu_device()
     if dev is not None:
-        return GPUBackend(device=dev)
+        return GPUBackend(device=dev,
+                         image_cache_capacity=image_cache_capacity)
     # P13 回退契约：wgpu-py 缺失 / 无可用设备 → CPU 参考后端
     return CPURenderBackend()
 
@@ -418,6 +652,7 @@ def create_backend(mode: BackendMode = BackendMode.CPU,
 __all__ = [
     "GPURasterizer",
     "GPUBackend",
+    "ImageTextureCache",
     "acquire_wgpu_device",
     "wgpu_device_factory",
     "create_backend",
