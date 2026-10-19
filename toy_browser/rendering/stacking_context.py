@@ -342,3 +342,38 @@ def z_sort_key(bx) -> int:
     本可测子集：z_index 默认 0（auto），仅定位元素可用。
     """
     return int(getattr(bx, "z_index", 0) or 0)
+
+
+def emit_sort_key(cmd) -> tuple:
+    """R7-C02 §5 — emit_commands 的 7 层 stacking context 排序键。
+
+    把一条 DisplayCommand 映射到 7 层元组（与 :func:`paint_order`
+    的层号一致）：
+
+    * ``_layer < 0``  → ``(1, z)``  负 z 定位（最负先绘制）
+    * ``_layer == 0`` → ``(0, 0)``  非定位内容（块级背景/边框 + 行内
+      混排，保持 DOM 序——本可测子集不做背景/行内层拆分，避免
+      打乱既有 DOM 顺序回归）
+    * ``_layer > 0``  → ``(7, z)``  正 z 定位（最大后绘制）
+
+    退化契约（关键）：无 stacking context 创建条件（无负 z 定位）
+    时，本键退化为 ``_layer`` 的单调映射（_layer=0→(0,0)、_layer>0
+    →(7,·)，z 序保留），与既有 ``sort(key=_layer)`` 的相对顺序**完
+    全一致**（向后兼容，不破坏现有 1900+ 项测试）。仅当存在**负
+    z 定位元素**时排序产生预期内差异（CSS 2.1 §9.6.1：负 z 子画
+    在背景/边框之上、内容之下；旧 ``_layer`` 排序把负 z 画在最底
+    层，本接线修正此缺陷）。
+
+    ``cmd`` 只需有 ``_layer`` 属性（DisplayCommand 形态）；缺失按
+    默认值退化（不崩 P13）。
+    """
+    layer = int(getattr(cmd, "_layer", 0) or 0)
+    if layer < 0:
+        # 负 z 定位：层 1（z 越大越靠近 0 越先画，用 -layer 稳定排序）。
+        return (1, -layer)
+    if layer > 0:
+        # 正 z 定位：层 7（z 越大越后画，保持 z 序）。
+        return (7, layer)
+    # layer == 0：非定位内容（背景/边框/行内混排，本可测子集不拆层，
+    # 保持 DOM 序以向后兼容）。
+    return (0, 0)

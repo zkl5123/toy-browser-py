@@ -4238,3 +4238,98 @@ def hit_test(root: LayoutBox, mx: float, my: float) -> Optional[LayoutBox]:
 def hit_test_with_dom(root: LayoutBox, mx: float, my: float) -> Optional[Node]:
     bx = hit_test(root, mx, my)
     return bx.dom if bx else None
+
+
+def hit_test_sc(root: LayoutBox, mx: float, my: float) -> Optional[LayoutBox]:
+    """R7-C02 §5 — stacking context 坐标同源的 hit-test。
+
+    先经 :func:`hit_test` 在 CSS 文档坐标空间找到候选 box，再经
+    :mod:`toy_browser.rendering.stacking_context` 的
+    :func:`coordinate_inverse` 累加路径上 transform:translate +
+    scroll 偏移做命中坐标补偿（渲染侧 ``_tag_scroll`` 把子 box 的
+    命令坐标减去 ``scroll_left/top``，命中测试须同步补偿同一偏移，
+    否则 scroll 容器内的点击落到错位元素——审计 §5 C02 第 5 点
+    "绘制顺序与 hit-test 同源"）。
+
+    退化契约：当命中路径上无 transform/scroll 偏移时（常见情形），
+    ``coordinate_inverse`` 返回 identity，``hit_test_sc`` 等价裸
+    ``hit_test``（向后兼容既有 100% 缩放、无滚动容器页面的全部
+    命中行为）。
+
+    本可测子集：仅 translate + scroll 累加；真实 transform 矩阵
+    （scale/rotate/skew）留活 GPU 批次。
+    """
+    cand = hit_test(root, mx, my)
+    if cand is None:
+        return None
+    # 经 stacking context 坐标栈做命中补偿（identity 退化不改变坐标）。
+    try:
+        from toy_browser.rendering import stacking_context as _sc
+    except ImportError:
+        # stacking_context 未接（旧环境）时退化裸 hit_test（向后兼容）。
+        return cand
+    sc_root = _sc.build_stacking_context_tree(root)
+    # 把 cand box 映射到其 SC 节点（cand 自身若创建 SC，用自身；
+    # 否则用最近创建 SC 的祖先——cand 绘制层归属该祖先 SC）。
+    sc_target = _find_sc_for_box(sc_root, cand)
+    if sc_target is None:
+        return cand
+    inv = _sc.coordinate_inverse(sc_root, sc_target)
+    if inv.is_identity:
+        # identity——无偏移，等价裸 hit_test（向后兼容主路径）。
+        return cand
+    # 补偿命中坐标：渲染侧 _tag_scroll 把子命令减 (scroll_left,
+    # scroll_top) + transform，命中须加回同一偏移才能落到同一 box。
+    adj_x = mx + inv.sx + inv.tx
+    adj_y = my + inv.sy + inv.ty
+    return hit_test(root, adj_x, adj_y) or cand
+
+
+def _find_sc_for_box(sc_root, box) -> "Optional[object]":
+    """在 SC 树中找到"包含 ``box`` 的最深 stacking context 节点"。
+
+    - box 自身创建 SC → 返回自身节点（``node.box is box``）。
+    - box 不创建 SC（如 scroll 容器的 content）→ 返回最近创建 SC
+      的祖先节点（该祖先 SC 的子绘制层包含 box，坐标逆变换须走
+      祖先路径）。
+
+    实现：DFS 遍历 SC 树；一个 SC 节点 N 是 box 的祖先节点当且仅当
+    ``N.box`` 在 box 的 LayoutBox 祖先链上（含 box 自身）。取 DFS 序
+    中**最深层**（最后更新）的匹配 SC 即"包含 box 的最深 SC"。
+
+    复杂度：O(SC 节点数 × box 祖先链长)。
+    """
+    def _box_ancestor_chain(bx, limit=256):
+        """box 的祖先链（含自身），LayoutBox 的 parent 属性向上爬。
+
+        返回 **list**（非 set）——某些测试 mock（SimpleNamespace）
+        的 box 不可哈希，用 list 做 ``in`` 判定（O(n)，n ≤ 链长 ≤
+        深度）兼容不可哈希 box（P13 不崩）。
+        """
+        chain = []
+        cur = bx
+        n = 0
+        while cur is not None and n < limit:
+            chain.append(cur)
+            cur = getattr(cur, 'parent', None)
+            n += 1
+        return chain
+
+    target_chain = _box_ancestor_chain(box)
+    best = None
+    best_depth = -1
+
+    def _dfs(node, depth):
+        nonlocal best, best_depth
+        # node.box 在 box 的祖先链（含自身）上？list 线性判定（兼容
+        # 不可哈希 box）；SC 节点数 ≤ 元素数，祖先链长 ≤ 深度，
+        # 本可测子集 < 10^4 × 10^2 = 10^6 步，P13 可接受。
+        if any(nb is node.box for nb in target_chain):
+            if depth > best_depth:
+                best = node
+                best_depth = depth
+        if depth < 256:
+            for child in node.children:
+                _dfs(child, depth + 1)
+    _dfs(sc_root, 0)
+    return best

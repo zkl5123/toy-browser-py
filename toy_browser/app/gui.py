@@ -566,6 +566,15 @@ class PageInstance:
         else:
             doc_x, doc_y = float(x), float(y) + self.yoffset
         hit = _layout_mod.hit_test(root, float(doc_x), float(doc_y))
+        # R7-C02 §5 — stacking context 坐标同源：若页面含 transform/
+        # scroll 容器（SC 路径偏移非 identity），经 hit_test_sc 累加
+        # 路径偏移做命中补偿（渲染侧 _tag_scroll 减同一偏移）。
+        # 无偏移时 hit_test_sc 退化等价裸 hit_test（向后兼容主路径）。
+        try:
+            hit = _layout_mod.hit_test_sc(root, float(doc_x), float(doc_y))
+        except AttributeError:
+            # 旧 layout 模块（无 hit_test_sc）退化裸 hit_test。
+            hit = _layout_mod.hit_test(root, float(doc_x), float(doc_y))
         if hit is None or hit.dom is None:
             return None
         # R7-U01 — build the index map (DOM node → element-order index).

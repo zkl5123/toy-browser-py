@@ -161,7 +161,16 @@ def emit_commands(root: LayoutBox) -> DisplayList:
     # P34.3 — _layer is a dataclass field defaulting to 0 (P34.3), so
     # commands that _emit's _tag/_tag_scroll never set already carry the
     # correct default; the sort key is a plain attribute read.
-    dl.commands.sort(key=lambda c: c._layer)
+    # R7-C02 §5 — stacking context 7 层契约（CSS 2.1 §9.6.1）：经
+    # stacking_context.emit_sort_key 把 _layer 映射到 7 层元组
+    # （负 z→层1 / 背景→层0 / 定位 z==0→层4 / 正 z→层7）。退化契约：
+    # 无 stacking context 创建条件（transform/opacity/filter/sticky/
+    # 负 z 定位）时，emit_sort_key 退化为 _layer 的单调映射，与既有
+    # sort(key=_layer) 相对顺序完全一致（向后兼容，不破坏现有测试）；
+    # 仅当存在负 z 定位元素时排序产生预期内差异（修旧 _layer 把负 z
+    # 画在背景之下的缺陷）。
+    from toy_browser.rendering import stacking_context as _sc
+    dl.commands.sort(key=_sc.emit_sort_key)
     return dl
 
 
