@@ -1368,6 +1368,14 @@ class TabBrowser:
             self._r7_a02_cancel = None
         # 每 tab 当前 navigation_id（导航时 +1，与 worker 同源）。
         self._r7_a02_nav_id: dict = {}
+        # R7-A02 第 6 点 — 文档工作模式 + 能力声明校验（不靠名字
+        # 宣称"已多核渲染"）+ 显式单进程调试模式。
+        try:
+            from toy_browser.app.doc_process_mode import (
+                SingleProcessDebugMode)
+            self._r7_a02_debug_mode = SingleProcessDebugMode()
+        except Exception:
+            self._r7_a02_debug_mode = None
 
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
@@ -1697,6 +1705,65 @@ class TabBrowser:
         pipe 收帧；回退态经内置同步）。供 UI 事件循环调用，经 C01
         门控后由呈现层应用。"""
         return self._g07_doc_server.drain()
+
+    def _r7_a02_doc_mode(self):
+        """R7-A02 第 6 点 — 探测**当前真实**文档工作模式。
+
+        按真实接线判定，**不靠名字猜**（审计原话："现有 worker 存在
+        且 spawn，但默认导航仍同步，不能据名称宣称已多核渲染"）：
+
+        * ``navigation_is_sync=True`` — 默认导航 :meth:`_commit_navigation`
+          仍**同步**调 ``page.load_url()``（事实）。
+        * ``worker_does_doc_work=False`` — 既有
+          :class:`DocumentProcessWorker` 只处理紧凑身份 / 命令
+          （doc_id / nav_epoch / frame_id / navigation_id），**不**
+          执行真实解析 / 样式 / 布局 / 绘制（事实）。因此即使子进程
+          真实 spawn，也只是 ``worker_ipc``（管道通了，活还在主线程），
+          **不是**多核渲染。
+        * ``worker_spawned`` — 取自真实文档进程池 ``is_spawned()``。
+
+        返回 :class:`DocWorkMode`（document_process_mode 不可用或
+        探测异常时返回 None，调用点判空退化）。
+        """
+        try:
+            from toy_browser.app.doc_process_mode import detect_doc_work_mode
+        except Exception:
+            return None
+        spawned = False
+        try:
+            spawned = bool(self._g07_doc_server.is_spawned())
+        except Exception:
+            spawned = False
+        try:
+            return detect_doc_work_mode(
+                navigation_is_sync=True,        # 默认导航仍同步（事实）
+                worker_does_doc_work=False,     # worker 不做真实文档工作（事实）
+                worker_spawned=spawned)
+        except Exception:
+            return None
+
+    def _r7_a02_mode_describe(self) -> str:
+        """R7-A02 第 6 点 — 模式诊断串（含"已多核渲染"声明校验结果）。
+
+        关键：在 ``single_debug`` / ``worker_ipc`` 下，
+        ``multi-core rendering`` 声明**判为不真实**并给出原因——
+        这是"默认模式的性能声明必须真实"的可测闸门。
+        """
+        mode = self._r7_a02_doc_mode()
+        if mode is None:
+            return "r7_a02_mode: unavailable"
+        try:
+            from toy_browser.app.doc_process_mode import claim_multi_core_rendering
+            claim = claim_multi_core_rendering(mode)
+            claim_s = claim.describe()
+        except Exception:
+            claim_s = "claim=unavailable"
+        dbg = getattr(self, "_r7_a02_debug_mode", None)
+        eff = mode
+        if dbg is not None:
+            eff = dbg.effective_mode(mode)
+        return (f"r7_a02_mode: {eff.describe()} | {claim_s} | "
+                f"debug={dbg.describe() if dbg is not None else 'none'}")
 
     def _r7_a02_describe(self) -> str:
         """R7-A02 — 诊断串（UI 心跳 / task trace / 版本门控 / 合并 /
