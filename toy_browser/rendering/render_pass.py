@@ -179,6 +179,9 @@ class SoftwareRenderPass:
             font_weight=int(getattr(cmd, "font_weight", 400) or 400),
             font_family=getattr(cmd, "font_family", "monospace") or "monospace",
             direction=getattr(cmd, "direction", "ltr") or "ltr",
+            # R7-T01 §4 — CSS white-space（空白折叠 + 断行机会，
+            # 经 typography.text.wrap + grapheme.WhiteSpacePolicy）。
+            white_space=getattr(cmd, "white_space", "normal") or "normal",
         )
 
 

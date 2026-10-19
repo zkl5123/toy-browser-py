@@ -202,6 +202,11 @@ class LayoutBox:
     border_color: object = None
     font_px: float = DEFAULT_FONT_PX
     text_align: str = "left"
+    # R7-T01 — 行内文字书写方向（"ltr" | "rtl"），由 CSS `direction`
+    # 驱动。绘制层据此为每行文本做 Unicode bidi 视觉重排（阿语/
+    # 希伯来 RTL 文档下内嵌 LTR run 保持正向、LTR 文档下内嵌 RTL
+    # run 内部反向）。"ltr" 时重排为恒等，不影响既有 LTR 渲染。
+    direction: str = "ltr"
     explicit_height: Optional[float] = None
     explicit_width: Optional[float] = None
     # P0 (agent report) — box-sizing: "border-box" makes explicit
@@ -364,6 +369,11 @@ class LayoutBox:
     word_break: str = ""      # "normal" | "break-all" | "keep-all" | ""
     overflow_wrap: str = ""   # "normal" | "break-word" | ""
     hyphens: str = ""        # "none" | "auto" | "manual" | ""
+    # R7-T01 §4 — CSS white-space ("normal" | "nowrap" | "pre" |
+    # "pre-wrap" | "pre-line")。驱动 text 命令的空白折叠 + 断行机会
+    # （经 typography.text.wrap + grapheme.WhiteSpacePolicy）。默认
+    # "normal"（与既有行为一致，向后兼容）。
+    white_space: str = "normal"
     # P16.4 — CSS scroll-snap-type (toy: stored)
     scroll_snap_type: str = ""  # "none" | "x mandatory" | "y proximity" | ...
     # P26.4 — CSS min/max width/height constraints (toy: stored, clamped at finalize).
@@ -853,6 +863,8 @@ def build_box(sn: StyledNode, parent_font_px: float,
     color = sn.color()
     border_color = sn.get_color("border-color", _DEFAULT_BORDER_COLOR)
     text_align = sn.text_align()
+    # R7-T01 — CSS `direction` (ltr | rtl)，默认 ltr；驱动绘制层 bidi 重排。
+    direction = sn.get_keyword("direction", "ltr") or "ltr"
 
     # P28 — default border for form controls: even without a CSS
     # border-width, checkbox/radio/select/text-input/file/textarea/button
@@ -1593,6 +1605,15 @@ def build_box(sn: StyledNode, parent_font_px: float,
     else:
         text_rendering = "auto"
 
+    # R7-T01 §4 — CSS white-space（"normal" | "nowrap" | "pre" |
+    # "pre-wrap" | "pre-line"）。驱动 text 命令的空白折叠 + 断行
+    # 机会（经 typography.text.wrap + grapheme.WhiteSpacePolicy），
+    # 并保证断行机会不落在 Unicode 字素 cluster 中间。
+    white_space = sn.get_keyword("white-space", "normal")
+    white_space = white_space.strip().lower()
+    if white_space not in ("normal", "nowrap", "pre", "pre-wrap", "pre-line"):
+        white_space = "normal"
+
     # P9.4 — clip-path: inset(T R B L) + background linear-gradient toy.
     import re as _re2
 
@@ -1826,6 +1847,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
         font_family=font_family,
         font_weight=font_weight,
         text_align=text_align,
+        direction=direction,
         explicit_height=explicit_h,
         explicit_width=explicit_w,
         box_sizing=box_sizing,
@@ -1921,6 +1943,8 @@ def build_box(sn: StyledNode, parent_font_px: float,
         word_break=word_break,
         overflow_wrap=overflow_wrap,
         hyphens=hyphens,
+        # R7-T01 §4 — CSS white-space（空白折叠 + 断行机会语义）。
+        white_space=white_space,
         scroll_snap_type=scroll_snap_type,
         opacity=opacity,
         overflow_hidden=overflow_hidden,

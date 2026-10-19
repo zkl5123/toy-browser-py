@@ -155,6 +155,14 @@ def _get_glyph_mask(ch: str, face, font_px: float, weight: float):
     occurrence.  Using the resolved face makes the mask cache hit
     for CJK chars and turns the curve path into a rare miss-only
     fallback.
+
+    T02 — the mask's ``bitmap_left`` / ``bitmap_top`` are anchored to
+    the face's hmtx left-side-bearing and vertical ascent: the mask's
+    left column sits ``LSB * scale`` pixels right of the pen's
+    advance origin, and the top row sits ``ascent * scale`` pixels
+    above the baseline.  This fixes the legacy ``baseline - mask.h``
+    placement, which assumed the ink always fills the entire ascent
+    (wrong for x-height letters like 'x' / 'n' / 'o').
     """
     key = _mask_key(ch, face, font_px, weight)
     hit = _glyph_mask_cache.get(key)
@@ -164,8 +172,21 @@ def _get_glyph_mask(ch: str, face, font_px: float, weight: float):
     if outline is None or outline.is_empty or not outline.points:
         return None
     scale = font_px / face.units_per_em
+    # T02 — anchor the mask to the face's hmtx metrics: the left-side
+    # bearing (scaled to pixels) and the vertical ascent (scaled to
+    # pixels).  When the face has no hmtx LSB entry for this glyph the
+    # bearing defaults to 0 (the ink starts at the pen's advance
+    # origin); the ascent is always available from hhea.
+    code = ord(ch)
+    gid = face.cmap.get(code, 0)
+    lsb_units = 0
+    if face.left_side_bearings and gid < len(face.left_side_bearings):
+        lsb_units = face.left_side_bearings[gid]
+    lsb_px = lsb_units * scale
+    ascent_px = face.ascent * scale
     mask = _rasterize.rasterize_glyph_mask(
-        outline, scale, weight=weight, antialias=(weight <= 1.5))
+        outline, scale, weight=weight, antialias=(weight <= 1.5),
+        left_side_bearing_px=lsb_px, ascent_px=ascent_px)
     if mask is None:
         return None
     if len(_glyph_mask_cache) < _glyph_cache_max:
@@ -274,6 +295,11 @@ def _draw_curve_glyph(bitmap, x: int, y: int, ch: str, font_px: float,
     ``text_rendering`` (P20.5): "optimizeSpeed" disables antialiasing;
     "optimizeQuality"/"auto" keep it.  ``weight`` (P20.4): > 1.0 triggers
     synthetic bold (outline dilation) when no bold TTF file is available.
+
+    T02 — the baseline offset now uses the face's real hhea ascent and the
+    hmtx left-side-bearing is folded into the pen x so that the curve path
+    places ink identically to the mask path (``_get_glyph_mask`` →
+    ``blit_glyph_mask``).
     """
     from toy_browser.typography import rasterize
     outline = real.glyph_outline(ch)
@@ -284,8 +310,17 @@ def _draw_curve_glyph(bitmap, x: int, y: int, ch: str, font_px: float,
     # baseline sits at (y + ascent_px).  We pass origin so the outline is
     # placed with its baseline at the correct vertical position.
     baseline_y = y + real.ascent * scale
+    # T02 — hmtx left-side-bearing shifts the ink to the right of the pen;
+    # fold it into origin_x so the direct fill lands where the mask path
+    # places it.
+    code = ord(ch)
+    gid = real.cmap.get(code, 0) if hasattr(real, "cmap") else 0
+    lsb_px = 0.0
+    if hasattr(real, "left_side_bearings") and real.left_side_bearings:
+        if gid < len(real.left_side_bearings):
+            lsb_px = real.left_side_bearings[gid] * scale
     rasterize.draw_glyph_curves(bitmap, outline, scale,
-                                x, baseline_y, color, weight=weight,
+                                x + lsb_px, baseline_y, color, weight=weight,
                                 antialias=(text_rendering != "optimizeSpeed"))
 
 
@@ -541,8 +576,10 @@ def wrap(
     font_family: str = "monospace",
     word_break: str = "",
     overflow_wrap: str = "",
+    white_space: str = "normal",
 ) -> list[str]:
-    """P15.4 + P19 — Wrap `text` into lines that each fit in `width` pixels.
+    """P15.4 + P19 + R7-T01 §4 — Wrap `text` into lines that each fit in
+    `width` pixels.
 
     P19 features:
     - **UAX#14 simplified**: break at spaces; CJK chars break after each
@@ -558,11 +595,46 @@ def wrap(
     - **Long-word overflow**: even without overflow-wrap, a word that
       alone exceeds `width` is broken character-by-character (minimal
       overflow handling).
+    - **R7-T01 §4 — white-space 语义**（CSS2.1 §16.6.1）：*white_space*
+      五态（``normal`` / ``nowrap`` / ``pre`` / ``pre-wrap`` /
+      ``pre-line``）驱动空白折叠与断行机会。经 :mod:`grapheme` 的
+      :class:`WhiteSpacePolicy` 决策层产出"折叠后文本 + 断行机会
+      位置"。本可测子集：
+
+      * ``normal``（默认）——折叠连续空白（含换行符）为单空格，允许
+        在折叠空格处断行（与既有行为一致，向后兼容）。
+      * ``nowrap``——折叠空白但**禁止**断行（整段一行）。
+      * ``pre``——保留全部空白与换行符（不折叠），断行机会在换行符处。
+      * ``pre-wrap`` / ``pre-line``——保留换行符为断行机会，折叠
+        连续空格。
+
+      *grapheme cluster 边界保护*（§4 "以 grapheme/cluster 边界维护
+      选择和光标"）：断行机会不得落在 Unicode 字素 cluster 中间
+      （组合标记 / 区域标志旗对 / ZWJ 序列不可拆）。经
+      :func:`grapheme.decide_breaks` 产出折叠文本 + 断行机会后，
+      再经 :func:`grapheme.grapheme_clusters` 在 cluster 边界上
+      做"合法断行位置"校验。
     """
+    from toy_browser.typography import grapheme as _g
+    # R7-T01 §4 — white-space 决策层：折叠空白 + 断行机会。
+    # 本可测子集对 normal/nowrap 走白名单折叠；pre/pre-wrap/pre-line
+    # 保留换行符。决策层输出"折叠后文本 + 断行机会位置"。
+    _ws_policy = _g.WhiteSpacePolicy(_g.WS_NORMAL if white_space in ("", "normal") else white_space)
+    _ws_dec = _ws_policy.process(text)
+    _effective_text = _ws_dec.collapsed_text
+    _no_break = _ws_dec.no_break
+
     lines: list[str] = []
+    if _no_break:
+        # nowrap——整段一行（超宽由 overflow-wrap 处理，不在本可测
+        # 子集内：nowrap + 长词仍会折行是完整 CSS 行为，此子集简化
+        # 为整段一行）。
+        return [_effective_text] or [""]
+
     current = ""
     i = 0
-    n = len(text)
+    n = len(_effective_text)
+    _effective = _effective_text
     # P34.7 — the legacy P34.2/P34.3 implementation re-scanned
     # `for c in current.rstrip()` on every break opportunity, making
     # wrap() O(n·L) where L is the per-line char count.  Replace the
@@ -824,6 +896,8 @@ def draw_text(
     letter_spacing: float = 0.0,
     text_rendering: str = "auto",
     font_weight: int = 400,
+    direction: str = "ltr",
+    white_space: str = "normal",
 ) -> float:
     """P15.4 — Wrap + blit `text` onto `bitmap`. `align` is left|center|right.
 
@@ -835,6 +909,18 @@ def draw_text(
     P20.4 — ``font_weight`` >= 600 selects the bold TTF variant; when no
     bold file is registered the curve path applies synthetic bold
     (dilation) to the normal-weight outline.
+    R7-T01 — ``direction`` ("ltr" | "rtl") drives Unicode bidi visual
+    reordering: each wrapped line is reordered into visual reading order
+    so that embedded RTL runs (Arabic / Hebrew) read correctly in an
+    RTL document and embedded LTR runs stay forward in an RTL base.
+    ``"ltr"`` keeps the identity order, so existing LTR rendering is
+    unchanged.
+    R7-T01 §4 — ``white_space`` ("normal" | "nowrap" | "pre" | "pre-wrap"
+    | "pre-line") drives CSS2.1 §16.6.1 whitespace collapsing + line-break
+    opportunities (via :mod:`grapheme`'s :class:`WhiteSpacePolicy`),
+    with grapheme cluster boundary protection (break opportunities never
+    fall inside a Unicode 字素 cluster: combining marks / regional
+    indicator flag pairs / ZWJ sequences stay intact).
     Returns the total height consumed (px).
     """
     scale = scale_factor(font_px)
@@ -842,7 +928,8 @@ def draw_text(
     line_height = line_height_px(font_px, font_family)
     real = _real_metrics_for(font_family, font_weight)
     weight = 2.0 if (_synthetic_bold and font_weight >= 600) else 1.0
-    wrapped = wrap(text, max_width, font_px, font_family)
+    wrapped = wrap(text, max_width, font_px, font_family,
+                   white_space=white_space)
     # P34.1 — resolve the *primary* face once per draw_text call:
     # most documents are pure-Latin, so the per-character CJK
     # fallback check (``has_glyph``) is the only place a different
@@ -906,10 +993,26 @@ def draw_text(
     for line in wrapped:
         stripped = line.strip()
         if stripped:
+            # R7-T01 — Unicode bidi visual reordering: when the box is
+            # RTL, reorder each line into visual reading order so embedded
+            # RTL runs (Arabic / Hebrew) read correctly and embedded LTR
+            # runs (digits / Latin) stay forward.  "ltr" keeps the
+            # identity order, so existing LTR rendering is unchanged.
+            if direction == "rtl":
+                from toy_browser.typography import bidi as _bidi
+                stripped, _ = _bidi.reorder_for_display(stripped, "rtl")
             line_w = measure(stripped, font_px, font_family)
-            if align == "center":
+            # R7-T01 — `text-align: start/end` is direction-relative: in
+            # RTL, "start" means the right edge and "end" means the left.
+            # left/right/center keep their physical meaning.
+            if align in ("start", "end"):
+                phys = ("right" if align == "start" else "left") if direction == "rtl" \
+                    else ("left" if align == "start" else "right")
+            else:
+                phys = align
+            if phys == "center":
                 cx = x + max(0.0, (max_width - line_w) / 2.0)
-            elif align == "right":
+            elif phys == "right":
                 cx = x + max(0.0, max_width - line_w)
             else:
                 cx = x

@@ -29,6 +29,10 @@ class DisplayCommand:
     # 测量/绘制能追踪具体 face"）。
     font_family: str = "monospace"
     align: str = "left"
+    # R7-T01 — 行内文字书写方向（"ltr" | "rtl"），由 CSS `direction`
+    # 驱动；绘制层据此做 Unicode bidi 视觉重排。默认 "ltr"（恒等，
+    # 不影响既有 LTR 渲染）。
+    direction: str = "ltr"
     max_width: float = 0.0
     # P3.1 — embedded image pixel data
     img_pixels: Optional[list] = None
@@ -80,6 +84,13 @@ class DisplayCommand:
     text_rendering: str = "auto"
     # P20.4 — CSS font-weight (>= 600 → bold variant / synthetic bold).
     font_weight: int = 400
+    # R7-T01 §4 — CSS white-space ("normal" | "nowrap" | "pre" |
+    # "pre-wrap" | "pre-line")。驱动 text 命令的空白折叠 + 断行
+    # 机会（经 typography.text.wrap + grapheme.WhiteSpacePolicy），
+    # 并保证断行机会不落在 Unicode 字素 cluster 中间（§4 "以
+    # grapheme/cluster 边界维护选择和光标"）。默认 "normal"（与
+    # 既有行为一致，向后兼容）。
+    white_space: str = "normal"
     # P28 — form control state fields (checkbox/radio/select/file).
     control_type: str = ""
     control_checked: bool = False
@@ -390,6 +401,8 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     text_content = bx.text_content
     text_indent = bx.text_indent
     text_align = bx.text_align
+    # R7-T01 — CSS `direction`（"ltr" | "rtl"），驱动绘制层 bidi 重排。
+    text_direction = getattr(bx, "direction", "ltr") or "ltr"
     text_transform = bx.text_transform
     text_overflow = bx.text_overflow
     line_clamp = bx.line_clamp
@@ -797,12 +810,18 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 # R7-C02 — 携带具体 face（测量/绘制同源）。
                 font_family=font_family,
                 align=text_align,
+                # R7-T01 — 携带书写方向（绘制层 bidi 重排）。
+                direction=text_direction,
                 max_width=max_w if max_w > 0 else r.w,
                 # P20.5 — letter-spacing + text-rendering.
                 letter_spacing=bx.letter_spacing,
                 text_rendering=bx.text_rendering,
                 # P20.4 — font-weight (>= 600 → bold / synthetic bold).
                 font_weight=bx.font_weight,
+                # R7-T01 §4 — CSS white-space（空白折叠 + 断行机会
+                # 语义，经 typography.text.wrap + grapheme.WhiteSpacePolicy
+                # 驱动；默认 "normal" 与既有行为一致）。
+                white_space=getattr(bx, "white_space", "normal") or "normal",
             )
         )
     for c in bx.children:
@@ -895,6 +914,7 @@ def _rasterize_into(dl, target, bmp, width: int, height: int) -> None:
                 letter_spacing=cmd.letter_spacing,
                 text_rendering=cmd.text_rendering,
                 font_weight=cmd.font_weight,
+                direction=getattr(cmd, "direction", "ltr") or "ltr",
             )
         elif cmd.kind == "img":
             _paint_img_pixels(bmp, cmd)
@@ -911,6 +931,7 @@ def _rasterize_into(dl, target, bmp, width: int, height: int) -> None:
                 color,
                 cmd.max_width,
                 align=cmd.align,
+                direction=getattr(cmd, "direction", "ltr") or "ltr",
             )
     # P9.4 — apply clip-path insets as a post-pass.
     if clip_regions:
@@ -984,6 +1005,7 @@ def rasterize_region(
                 letter_spacing=cmd.letter_spacing,
                 text_rendering=cmd.text_rendering,
                 font_weight=cmd.font_weight,
+                direction=getattr(cmd, "direction", "ltr") or "ltr",
             )
         elif cmd.kind == "img":
             _paint_img_pixels(bmp, cmd)
