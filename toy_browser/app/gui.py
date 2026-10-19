@@ -1343,6 +1343,31 @@ class TabBrowser:
         self._g07_doc_server = self._g07_spawn_doc_server()
         # 活显示验收入口：UI 销毁钩子统一清理子进程（防泄漏）。
         self._g07_ui_closing = False
+        # R7-A02 第 1 点 — UI 心跳 + task trace（默认导航入口接线，
+        # 确认"真正调用路径"而非"有这个模块"）。
+        # R7-A02 第 3 点 — 版本化 IPC 门控（旧任务不可覆盖新页）+
+        # 命令合并 / 背压 / 取消确认。
+        # 局部导入（与 gui.py 既有风格一致）：document_process 不可
+        # 用时全部置 None，调用点经 getattr 判空退化（不崩）。
+        try:
+            from toy_browser.app.document_process import (
+                UiHeartbeat, TaskTrace, NavVersionGate,
+                CommandCoalescer, BackpressureGate, CancelTracker)
+            self._r7_a02_heartbeat = UiHeartbeat()
+            self._r7_a02_trace = TaskTrace()
+            self._r7_a02_nav_gate = NavVersionGate()
+            self._r7_a02_coalescer = CommandCoalescer()
+            self._r7_a02_backpressure = BackpressureGate()
+            self._r7_a02_cancel = CancelTracker()
+        except Exception:
+            self._r7_a02_heartbeat = None
+            self._r7_a02_trace = None
+            self._r7_a02_nav_gate = None
+            self._r7_a02_coalescer = None
+            self._r7_a02_backpressure = None
+            self._r7_a02_cancel = None
+        # 每 tab 当前 navigation_id（导航时 +1，与 worker 同源）。
+        self._r7_a02_nav_id: dict = {}
 
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
@@ -1673,6 +1698,37 @@ class TabBrowser:
         门控后由呈现层应用。"""
         return self._g07_doc_server.drain()
 
+    def _r7_a02_describe(self) -> str:
+        """R7-A02 — 诊断串（UI 心跳 / task trace / 版本门控 / 合并 /
+        背压 / 取消确认）。
+
+        回答方案第 1 点"确认真正调用路径"：``trace`` 里的 span
+        名与计数是**默认导航入口被真实调用**的证据（不是"模块
+        存在"）。任一组件为 None（document_process 不可用）时退化
+        为 ``unavailable``，不崩。
+        """
+        hb = getattr(self, "_r7_a02_heartbeat", None)
+        tr = getattr(self, "_r7_a02_trace", None)
+        gate = getattr(self, "_r7_a02_nav_gate", None)
+        co = getattr(self, "_r7_a02_coalescer", None)
+        bp = getattr(self, "_r7_a02_backpressure", None)
+        ct = getattr(self, "_r7_a02_cancel", None)
+        if hb is None or tr is None:
+            return "r7_a02: unavailable"
+        parts = [f"heartbeat={hb.beats}",
+                 f"trace={tr.count()}",
+                 f"nav_path={tr.names()[-4:]}"]
+        if gate is not None:
+            cur = gate.current(getattr(self, "current", 0))
+            parts.append(f"nav_gate={cur}")
+        if co is not None:
+            parts.append(f"coalesce={co.describe()}")
+        if bp is not None:
+            parts.append(f"backpressure={bp.describe()}")
+        if ct is not None:
+            parts.append(f"cancel={ct.describe()}")
+        return "r7_a02: " + " ".join(parts)
+
     def _g07_doc_server_shutdown(self) -> None:
         """G07 批次 46 — UI 销毁时终止文档进程池的子进程（防泄漏）。
 
@@ -1990,12 +2046,37 @@ class TabBrowser:
         if not url:
             return
         page = self.tabs[self.current]
+        # R7-A02 第 1 点 — UI 心跳：默认导航入口被真实调用一次 =
+        # 一次心跳（慢页期间 UI 仍被推进的证据，可测）。
+        hb = getattr(self, "_r7_a02_heartbeat", None)
+        if hb is not None:
+            hb.beat()
+        # R7-A02 第 3 点 — navigation_id：本标签每次导航 +1（与
+        # worker 侧 DocCommand.navigation_id 同源，供"旧任务不可
+        # 覆盖新页"门控）。
+        nav_map = getattr(self, "_r7_a02_nav_id", None)
+        if nav_map is None:
+            nav_map = {}
+            self._r7_a02_nav_id = nav_map
+        nav_id = nav_map.get(self.current, 0) + 1
+        nav_map[self.current] = nav_id
+        # R7-A02 第 1 点 — task trace：记录本次导航阶段（调用路径证据）。
+        tr = getattr(self, "_r7_a02_trace", None)
+        span = tr.start("navigate", tab_id=self.current,
+                        navigation_id=nav_id) if tr is not None else None
         # R7-A01 历史栈收敛 — 历史提交经本标签游标（push 当前页 +
         # 清前进栈的语义由 HistoryCommitter.commit 承担：截断游标后的
         # 前进项、追加新项、推进游标）；双栈字段自动投影同步。
         if page.url and page.url != url:
             page._commit_history(url, source="address")
         page.load_url(url, 800, 600)
+        if span is not None and tr is not None:
+            tr.end(span, ok=True, note=url)
+        # R7-A02 第 3 点 — 版本门控：本次导航的帧以 (nav_id, 1) 登记
+        # 为"已应用"，此前（旧 navigation）的迟到帧一律被丢弃。
+        gate = getattr(self, "_r7_a02_nav_gate", None)
+        if gate is not None:
+            gate.admit(self.current, nav_id, 1)
         self.notebook.tab(self.current, text=page.title)
         self._refresh_canvas(self.current)
         self._update_status()

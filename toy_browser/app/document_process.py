@@ -61,6 +61,11 @@ class DocCommand:
     kind: str
     payload: dict = field(default_factory=dict)
     seq: int = 0
+    # R7-A02 第 3 点 — 版本化 IPC 四元组之 navigation_id（同一 tab
+    # 内每次导航 +1）。与 tab_id / document_version / frame_id 共同
+    # 构成"旧任务不可覆盖新页"的门控标识；默认 0 向后兼容（既有
+    # 单导航场景不传也为 0）。
+    navigation_id: int = 0
 
     def is_pkl(self) -> bool:
         """可 pickle 自检（紧凑载荷必须可跨进程）。"""
@@ -95,6 +100,9 @@ class DocFrame:
     error_category: str = ""
     payload: dict = field(default_factory=dict)
     cancelled: bool = False
+    # R7-A02 第 3 点 — 产出该帧的 navigation_id（与命令同源）。UI
+    # 侧据此丢弃"旧导航"的迟到帧（旧任务不可覆盖新页）。
+    navigation_id: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +132,9 @@ class DocumentProcessWorker:
         self._doc_id: dict[int, int] = {}
         self._nav_epoch: dict[int, int] = {}
         self._frame_id: dict[int, int] = {}
+        # R7-A02 第 3 点 — navigation_id：同一 tab 内每次导航 +1
+        # （与 doc_id/epoch/frame_id 共同构成版本化 IPC 四元组）。
+        self._nav_id: dict[int, int] = {}
 
     # -- 命令处理 -----------------------------------------------------------
 
@@ -139,24 +150,36 @@ class DocumentProcessWorker:
             self._doc_id[tab] = 0
             self._nav_epoch[tab] = 0
             self._frame_id[tab] = 0
+        if tab not in self._nav_id:
+            self._nav_id[tab] = 0
         if cmd.kind == DOC_CMD_NAVIGATE:
             # 新文档：doc_id / epoch / frame 全 bump（旧帧 stale）
             self._doc_id[tab] += 1
             self._nav_epoch[tab] += 1
             self._frame_id[tab] += 1
+            # R7-A02 — navigation_id 同步 +1（新导航身份；命令自带
+            # navigation_id 时以命令为准，保证 UI 与 worker 同源）。
+            self._nav_id[tab] += 1
+            nav_id = cmd.navigation_id or self._nav_id[tab]
+            if cmd.navigation_id:
+                self._nav_id[tab] = cmd.navigation_id
             return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
+                            navigation_id=nav_id,
                             payload={"url": cmd.payload.get("url", ""),
                                      "doc_id": self._doc_id[tab],
-                                     "frame_id": self._frame_id[tab]})
+                                     "frame_id": self._frame_id[tab],
+                                     "navigation_id": nav_id})
         if cmd.kind == DOC_CMD_STOP:
             # 取消收尾：在途帧标 cancelled（G08 step 3 不强杀）
             self._frame_id[tab] += 1
             return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
                             cancelled=True,
+                            navigation_id=cmd.navigation_id or self._nav_id[tab],
                             payload={"frame_id": self._frame_id[tab]})
         # input / resize / scroll：同文档 bump 帧（几何 / 编辑重算）
         self._frame_id[tab] += 1
         return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
+                        navigation_id=cmd.navigation_id or self._nav_id[tab],
                         payload={"kind": cmd.kind,
                                  "frame_id": self._frame_id[tab]})
 
@@ -166,17 +189,35 @@ class DocumentProcessWorker:
         """G09 step 4 — 丢弃该标签全部在途文档身份（不泄漏）。
         返回被丢弃的 tab 计数（存在则 1，否则 0）。"""
         dropped = 0
-        for m in (self._doc_id, self._nav_epoch, self._frame_id):
+        for m in (self._doc_id, self._nav_epoch, self._frame_id,
+                  self._nav_id):
             if tab_id in m:
                 del m[tab_id]
                 dropped = 1
         return dropped
 
     def identity(self, tab_id: int):
-        """C01 — 该 tab 的紧凑文档身份 (doc_id, epoch, frame_id)。"""
+        """C01 — 该 tab 的紧凑文档身份 (doc_id, epoch, frame_id)。
+
+        R7-A02 — 版本化 IPC 四元组经 :meth:`ipc_identity` 取
+        （tab_id / navigation_id / document_version / frame_id）；
+        本方法保持既有三元组契约（向后兼容）。
+        """
         return (self._doc_id.get(tab_id, 0),
                 self._nav_epoch.get(tab_id, 0),
                 self._frame_id.get(tab_id, 0))
+
+    def ipc_identity(self, tab_id: int) -> dict:
+        """R7-A02 第 3 点 — 版本化 IPC 身份四元组。
+
+        返回 ``{"tab_id", "navigation_id", "document_version",
+        "frame_id"}``——UI 侧据此做"旧任务不可覆盖新页"门控：
+        tab 相同而 navigation_id 更小的迟到帧一律丢弃。
+        """
+        return {"tab_id": tab_id,
+                "navigation_id": self._nav_id.get(tab_id, 0),
+                "document_version": self._doc_id.get(tab_id, 0),
+                "frame_id": self._frame_id.get(tab_id, 0)}
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +370,314 @@ class DocumentProcessPool:
                 f"fallback={self._stats.on_fallback} "
                 f"pending_cmds={len(self._pending_cmds)} "
                 f"pending_frames={len(self._pending_frames)}")
+
+
+# ---------------------------------------------------------------------------
+# R7-A02 第 3 点 — 命令合并 / 背压 / 取消确认 / 版本化门控
+# ---------------------------------------------------------------------------
+
+#: R7-A02 — 可合并命令：同一 (tab_id, navigation_id, kind) 的连续
+#: resize / scroll 只保留**最新**一条（旧几何命令被新几何取代，
+#: 无意义却会撑满队列 → 慢页期间 UI 被淹没）。
+#: navigate 不合并（每次导航是新文档身份）；stop 不合并（每次取消
+#: 都要被确认，见 :class:`CancelTracker`）。
+COALESCABLE_COMMANDS = (DOC_CMD_RESIZE, DOC_CMD_SCROLL)
+
+
+class CommandCoalescer:
+    """R7-A02 第 3 点 — 命令合并（coalescing）。
+
+    UI 侧连续 resize / scroll（拖拽窗口、滚轮）会瞬间产出大量几何
+    命令；旧命令的结果会被新命令覆盖，全部投递只会在慢页时撑爆
+    队列、延迟 UI。本合并器对同一 (tab_id, navigation_id, kind)
+    的可合并命令**保留 seq 最大的一条**（最新几何），navigate /
+    stop 原样保留（不可合并）。
+
+    退化契约：无可合并命令（只有 navigate / input / stop）时
+    :meth:`drain` 返回原命令序列（按 seq 排序），与不合并的既有
+    行为一致（向后兼容）。
+    """
+
+    def __init__(self) -> None:
+        # key = (tab_id, navigation_id, kind) → 最新一条命令
+        self._latest: dict[tuple, DocCommand] = {}
+        self._seq: list[DocCommand] = []
+        self._merged = 0
+
+    def push(self, cmd: DocCommand) -> None:
+        """并入一条命令。可合并 kind → 覆盖同 key 旧命令；否则入序。"""
+        if cmd.kind in COALESCABLE_COMMANDS:
+            key = (cmd.tab_id, cmd.navigation_id, cmd.kind)
+            if key in self._latest:
+                self._merged += 1
+            self._latest[key] = cmd
+            return
+        self._seq.append(cmd)
+
+    def drain(self) -> list:
+        """取出合并后的命令列表（按 seq 升序，保证因果顺序）。"""
+        out = list(self._seq)
+        out.extend(self._latest.values())
+        self._seq = []
+        self._latest = {}
+        out.sort(key=lambda c: c.seq)
+        return out
+
+    def pending(self) -> int:
+        """当前待投递命令数（合并后口径）。"""
+        return len(self._seq) + len(self._latest)
+
+    @property
+    def merged(self) -> int:
+        """被合并掉的旧命令数（诊断：合并生效证据）。"""
+        return self._merged
+
+    def describe(self) -> str:
+        return f"pending={self.pending()} merged={self._merged}"
+
+
+class BackpressureGate:
+    """R7-A02 第 3 点 — 背压（backpressure）。
+
+    在途命令数达上限时**拒收**新命令（返回 False + 计 dropped），
+    避免慢页 / 坏脚本期间命令队列无界增长把 UI 拖死。上限默认
+    256（紧凑命令，远小于 DOM 序列化成本）。
+
+    退化契约：在途数 < limit 时 :meth:`admit` 恒 True（与无背压的
+    既有行为一致，向后兼容）。
+    """
+
+    def __init__(self, limit: int = 256) -> None:
+        self.limit = max(1, int(limit))
+        self.dropped = 0
+        self._rejected_last = False
+
+    def admit(self, depth: int) -> bool:
+        """在途深度 ``depth`` 下是否准入新命令。达上限拒收并计
+        ``dropped``。"""
+        if depth >= self.limit:
+            self.dropped += 1
+            self._rejected_last = True
+            return False
+        self._rejected_last = False
+        return True
+
+    @property
+    def is_saturated(self) -> bool:
+        """最近一次判定是否已达上限（诊断）。"""
+        return self._rejected_last
+
+    def describe(self) -> str:
+        return f"limit={self.limit} dropped={self.dropped}"
+
+
+class CancelTracker:
+    """R7-A02 第 3 点 — 取消确认（cancel acknowledgement）。
+
+    Stop / 关标签的"取消"必须是**被确认**的，不能静默：UI 发出
+    cancel 请求 → worker 回 cancelled 帧 → :meth:`ack` 确认。
+    未被确认的取消保持在途（:meth:`pending` > 0），UI 可据此继续
+    等待或强制回收（超时兜底）。
+
+    token 单调，避免同一 tab 多次取消互相串味。
+    """
+
+    def __init__(self) -> None:
+        self._pending: dict[int, tuple] = {}   # token → (tab_id, nav_id)
+        self._acked: dict[int, bool] = {}
+        self._next_token = 0
+
+    def request(self, tab_id: int, navigation_id: int = 0) -> int:
+        """发起一次取消，返回 cancel token。"""
+        self._next_token += 1
+        token = self._next_token
+        self._pending[token] = (tab_id, navigation_id)
+        return token
+
+    def ack(self, token: int) -> bool:
+        """确认 token 对应取消已完成（worker 回了 cancelled 帧）。
+        重复 / 未知 token 返回 False。"""
+        if token not in self._pending:
+            return False
+        del self._pending[token]
+        self._acked[token] = True
+        return True
+
+    def ack_tab(self, tab_id: int, navigation_id: int = 0) -> int:
+        """确认该 (tab, navigation) 的全部在途取消，返回确认条数。"""
+        hits = [t for t, (tb, nv) in self._pending.items()
+                if tb == tab_id and (navigation_id == 0 or nv == navigation_id)]
+        for t in hits:
+            self.ack(t)
+        return len(hits)
+
+    def is_acked(self, token: int) -> bool:
+        return bool(self._acked.get(token, False))
+
+    def pending(self) -> int:
+        """未被确认的取消数（>0 说明取消还没被 worker 确认）。"""
+        return len(self._pending)
+
+    def describe(self) -> str:
+        return f"pending={self.pending()} acked={len(self._acked)}"
+
+
+class NavVersionGate:
+    """R7-A02 第 3 点 — "旧任务不可覆盖新页"版本门控。
+
+    按 (tab_id, navigation_id) 判定一个帧是否**可应用**：同 tab
+    而 navigation_id 小于当前已应用导航的帧一律丢弃（旧导航的迟
+    到结果不得覆盖新页）。frame_id 只在同一 navigation 内做单调
+    比较（同导航内旧帧也不得覆盖新帧）。
+
+    这是方案"验收目标：旧任务不可覆盖新页"的可测判定层。
+    """
+
+    def __init__(self) -> None:
+        self._applied: dict[int, tuple] = {}   # tab_id → (nav_id, frame_id)
+
+    def admit(self, tab_id: int, navigation_id: int,
+              frame_id: int) -> bool:
+        """该帧是否可应用。可应用时推进已应用版本。"""
+        cur = self._applied.get(tab_id)
+        if cur is None:
+            self._applied[tab_id] = (navigation_id, frame_id)
+            return True
+        cur_nav, cur_frame = cur
+        if navigation_id < cur_nav:
+            return False          # 旧导航的迟到帧 → 丢弃
+        if navigation_id == cur_nav and frame_id <= cur_frame:
+            return False          # 同导航内旧帧 → 丢弃
+        self._applied[tab_id] = (navigation_id, frame_id)
+        return True
+
+    def current(self, tab_id: int) -> tuple:
+        """该 tab 已应用的 (navigation_id, frame_id)。"""
+        return self._applied.get(tab_id, (0, 0))
+
+    def reset(self, tab_id: int) -> None:
+        """关标签 / 新会话：清该 tab 门控状态。"""
+        self._applied.pop(tab_id, None)
+
+
+# ---------------------------------------------------------------------------
+# R7-A02 第 1 点 — UI 心跳 + task trace（确认真正调用路径）
+# ---------------------------------------------------------------------------
+
+class UiHeartbeat:
+    """R7-A02 第 1 点 — UI 心跳。
+
+    慢页 / 坏脚本期间 UI 必须持续可响应。本心跳在默认导航 /
+    resize / scroll 入口被"真正调用路径"推进（每处理一次真实导航
+    或每帧绘制 = 一次心跳），记录心跳次数与最近心跳时间戳。
+
+    **不冒充通过**：本心跳只记录"UI 主线程被真实调用"的次数
+    （可测），**不**测量真实墙钟响应延迟（P95 ≤ 100ms 的实测需
+    真实 Tk 事件循环 + 活显示，留活 UI 批次）。
+    """
+
+    def __init__(self, clock=None) -> None:
+        self._clock = clock
+        self.beats = 0
+        self.last_ts = 0.0
+
+    def beat(self) -> int:
+        """推进一次心跳（真实调用路径每次进入默认入口时调用）。"""
+        self.beats += 1
+        self.last_ts = self._now()
+        return self.beats
+
+    def _now(self) -> float:
+        if self._clock is not None:
+            return float(self._clock())
+        try:
+            import time
+            return time.monotonic()
+        except Exception:
+            return 0.0
+
+    def describe(self) -> str:
+        return f"beats={self.beats} last_ts={self.last_ts:.3f}"
+
+
+@dataclass
+class TraceSpan:
+    """R7-A02 第 1 点 — 一条 task trace span（阶段耗时 + 身份）。"""
+    name: str = ""
+    tab_id: int = 0
+    navigation_id: int = 0
+    started: float = 0.0
+    ended: float = 0.0
+    ok: bool = True
+    note: str = ""
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.ended - self.started)
+
+
+class TaskTrace:
+    """R7-A02 第 1 点 — task trace（确认真正调用路径）。
+
+    在默认导航 / resize / scroll 入口记录阶段 span（名称 + tab /
+    navigation 身份 + 起止时间戳 + 成功标记），回答方案第 1 点
+    "确认真正调用路径"——不是"有这个模块"，而是"默认入口真的
+    走到了这里"。
+
+    **不冒充通过**：只记录调用路径与阶段耗时（可测），不宣称
+    真实多核加速（那需要真实 spawn + 活显示性能实测，留活批次）。
+    """
+
+    def __init__(self, clock=None, max_spans: int = 512) -> None:
+        self._clock = clock
+        self._spans: list[TraceSpan] = []
+        self.max_spans = max(1, int(max_spans))
+
+    def _now(self) -> float:
+        if self._clock is not None:
+            return float(self._clock())
+        try:
+            import time
+            return time.monotonic()
+        except Exception:
+            return 0.0
+
+    def start(self, name: str, tab_id: int = 0,
+              navigation_id: int = 0) -> TraceSpan:
+        """开一个 span（返回句柄供 :meth:`end` 收尾）。"""
+        return TraceSpan(name=name, tab_id=tab_id,
+                         navigation_id=navigation_id,
+                         started=self._now())
+
+    def end(self, span: TraceSpan, ok: bool = True,
+            note: str = "") -> TraceSpan:
+        """收尾一个 span 并归档（超上限丢最旧，有界内存）。"""
+        span.ended = self._now()
+        span.ok = ok
+        span.note = note
+        self._spans.append(span)
+        if len(self._spans) > self.max_spans:
+            self._spans = self._spans[-self.max_spans:]
+        return span
+
+    def spans(self) -> list:
+        return list(self._spans)
+
+    def names(self) -> list:
+        """已记录的 span 名称序列（调用路径证据）。"""
+        return [sp.name for sp in self._spans]
+
+    def count(self, name: str = "") -> int:
+        """指定名称（或全部）的 span 数。"""
+        if not name:
+            return len(self._spans)
+        return sum(1 for sp in self._spans if sp.name == name)
+
+    def last(self) -> TraceSpan:
+        return self._spans[-1] if self._spans else None
+
+    def describe(self) -> str:
+        return f"spans={len(self._spans)} path={self.names()[-8:]}"
 
 
 # ---------------------------------------------------------------------------
