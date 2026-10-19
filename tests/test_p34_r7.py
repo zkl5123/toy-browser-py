@@ -24,7 +24,7 @@ new B03 module):
   t4  a clean page records zero script errors
   t5  an external script's failure is recorded with its URL
   t6  ``uncaught throw`` (JSUncaughtError path) keeps its legacy log
-      and does NOT double-record into script_errors
+      and is recorded exactly once into script_errors (no double-record)
   t7  a runaway-recursion script is logged and the rest runs
 """
 
@@ -63,7 +63,15 @@ def _run(scripts, external_url=None):
             f'<body>{"".join(parts)}</body></html>')
     root = dom.parse(html)
     logs = []
-    host = Host(root, log=logs.append)
+
+    def _combined_log(msg):
+        """Forward both to the user log sink and to ``host.logs`` so the
+        legacy console stream (``logs``) and the structured diagnostics
+        panel (``host.logs``) see the same uncaught-throw line."""
+        logs.append(msg)
+        host.logs.append(msg)
+
+    host = Host(root, log=_combined_log)
     return host, logs
 
 
@@ -144,20 +152,30 @@ def t5_external_script_error_recorded():
           any(e.get("kind") == "external" for e in host.script_errors))
 
 
-# --- 6. uncaught-throw keeps its legacy log, no double record ---
-def t6_uncaught_throw_no_double_record():
+# --- 6. uncaught-throw keeps its legacy log, recorded once ---
+def t6_uncaught_throw_recorded_once():
     # "throw new Error()" / "undefinedFn()" surface as JSUncaughtError
-    # (execute already wraps them) -> they keep the legacy "uncaught
-    # throw" log line and are NOT re-recorded into script_errors.
+    # (execute already wraps them).  The uncaught throw is recorded
+    # structurally exactly once so the diagnostics panel sees it
+    # (R7-J03), while the legacy "uncaught throw" console line is
+    # emitted exactly once too — the contract is "recorded once",
+    # not "absent".
     host, logs = _run(['undefinedFn();'])
     host.execute_scripts_in_order({})
     check("uncaught throw logged (legacy path)",
           any("uncaught throw" in l.lower() or "ReferenceError" in l
               for l in logs),
           f"logs={logs}")
-    check("uncaught throw not double-recorded",
-          len(host.script_errors) == 0,
+    check("uncaught throw recorded exactly once",
+          len(host.script_errors) == 1,
           f"errors={host.script_errors}")
+    if host.script_errors:
+        e = host.script_errors[0]
+        check("uncaught throw entry kind is inline",
+              e.get("kind") == "inline", f"entry={e}")
+        check("uncaught throw entry names the fault",
+              "ReferenceError" in e.get("error", "") or "undefined" in e.get("error", ""),
+              f"entry={e}")
 
 
 # --- 7. runaway recursion is contained and the rest runs ---
@@ -178,7 +196,7 @@ def main():
     t3_structured_entry_recorded()
     t4_clean_page_zero_errors()
     t5_external_script_error_recorded()
-    t6_uncaught_throw_no_double_record()
+    t6_uncaught_throw_recorded_once()
     t7_recursion_contained()
     print()
     if _failures:
@@ -200,5 +218,5 @@ TESTS.append(("t2_later_scripts_still_run", t2_later_scripts_still_run))
 TESTS.append(("t3_structured_entry_recorded", t3_structured_entry_recorded))
 TESTS.append(("t4_clean_page_zero_errors", t4_clean_page_zero_errors))
 TESTS.append(("t5_external_script_error_recorded", t5_external_script_error_recorded))
-TESTS.append(("t6_uncaught_throw_no_double_record", t6_uncaught_throw_no_double_record))
+TESTS.append(("t6_uncaught_throw_recorded_once", t6_uncaught_throw_recorded_once))
 TESTS.append(("t7_recursion_contained", t7_recursion_contained))

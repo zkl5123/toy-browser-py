@@ -630,7 +630,7 @@ def test_parse_error_recorded_and_next_script_runs():
             "<script>console.log('GOOD');</script>"
             "</body></html>")
     host, logs = _make_host("http://x.invalid/", html)
-    host.execute_all()
+    host.execute_scripts_in_order({})
     assert len(host.script_errors) >= 1, \
         f"parse error must be recorded: {host.script_errors}"
     assert any("GOOD" in l for l in logs), \

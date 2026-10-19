@@ -7903,10 +7903,19 @@ class Host:
                 try:
                     self.execute(s)
                 except JSUncaughtError as e:
-                    # R7-J03 — structured record (see execute_scripts_in_order).
+                    # B03 / R7-J03 — an uncaught runtime throw must
+                    # surface in the diagnostics panel (structured
+                    # script_errors entry) AND keep the legacy console
+                    # log line.  Record the entry first (logged=False
+                    # lets _record_script_error emit the "[inline
+                    # script] ..." line), then emit the legacy
+                    # "uncaught throw (inline)" line so the two
+                    # diagnostics owners see one structured entry and
+                    # one human-readable log line.
                     self._record_script_error(s, e.value, "inline")
+                    self.log(f"uncaught throw (inline): {e.value}")
                 except _Throw as e:
-                    self._record_script_error(s, e.value, "inline")
+                    self.log(f"uncaught throw (inline): {e.value}")
                 if self._budget_cancelled:
                     self._budget_cancelled = False
                     self._record_script_error(
@@ -7919,11 +7928,15 @@ class Host:
                 try:
                     self.execute(code)
                 except JSUncaughtError as e:
+                    # B03 / R7-J03 — same contract as the inline
+                    # branch: record structurally and emit the legacy
+                    # external log line.
                     self._record_script_error(_src or "(external)",
-                                              e.value, "external")
+                                               e.value, "external")
+                    self.log(f"uncaught throw (external {_src}): {e.value}")
                 except _Throw as e:
                     self._record_script_error(_src or "(external)",
-                                              e.value, "external")
+                                               e.value, "external")
                 if self._budget_cancelled:
                     self._budget_cancelled = False
                     self._record_script_error(
@@ -8081,12 +8094,12 @@ class Host:
                 try:
                     self.execute(code)
                 except JSUncaughtError as e:
-                    # R7-J03 — a runtime throw is a script-boundary
-                    # failure like a parse error: record it structurally
-                    # (B03) so the diagnostics panel shows "N script(s)
-                    # failed" instead of zero errors, AND keep the log
-                    # line for the console stream.
+                    # B03 / R7-J03 — an uncaught runtime throw must
+                    # surface in the diagnostics panel (structured
+                    # script_errors entry) AND keep the legacy
+                    # "uncaught throw (external ...)" console line.
                     self._record_script_error(src, e.value, "external")
+                    self.log(f"uncaught throw (external {src}): {e.value}")
                 except _Throw as e:
                     # B03 — a parse-time / interpreter SyntaxError,
                     # ReferenceError, … that execute() re-raised as a
@@ -8130,9 +8143,11 @@ class Host:
                 try:
                     self.execute(txt)
                 except JSUncaughtError as e:
-                    # R7-J03 — runtime throws join the structured
-                    # script_errors record (see the external branch).
+                    # B03 / R7-J03 — same contract as external: record
+                    # the uncaught throw structurally and emit the
+                    # legacy console line.
                     self._record_script_error(txt, e.value, "inline")
+                    self.log(f"uncaught throw (inline): {e.value}")
                 except _Throw as e:
                     # B03 — inline script parse/runtime SyntaxError (the
                     # baidu "pos 210" shape) must stay inside the
@@ -8256,8 +8271,10 @@ class Host:
     def execute_event_with_this(self, element_id: str):
         self.execute_event(element_id)
 
-    def _record_script_error(self, source: str, error_value, kind: str) -> None:
-        """B03 — record a script-boundary failure as a structured entry.
+    def _record_script_error(self, source: str, error_value, kind: str,
+                             logged: bool = False) -> None:
+        """B03 / R7-J03 — record a script-boundary failure as a
+        structured entry.
 
         *source* is the script code (inline) or its URL (external).
         *error_value* is the raw exception payload (a ``_Throw.value``
@@ -8269,16 +8286,21 @@ class Host:
         misclassifying a script fault as a network / connection error
         (the baidu case: a 730 KB document whose 34th inline script
         hit a SyntaxError previously crashed the whole page and the
-        GUI reported it as ``Connection error``).  Also emits one
-        log line for observability, matching the existing ``uncaught
-        throw`` log style.
+        GUI reported it as ``Connection error``).
+
+        *logged* marks whether the caller has already emitted the
+        legacy "uncaught throw" console line for this same payload.
+        When True, the structured entry is written but **no** second
+        log line is emitted, avoiding double-logging.  When False, a
+        single ``[kind script] ...`` line is written for observability.
         """
-        msg = f"[{kind} script] {self._format_error_value(error_value)}"
-        self.log(msg)
+        formatted = self._format_error_value(error_value)
+        if not logged:
+            self.log(f"[{kind} script] {formatted}")
         self.script_errors.append({
             "source": source,
             "kind": kind,
-            "error": self._format_error_value(error_value),
+            "error": formatted,
         })
 
     @staticmethod
@@ -8353,7 +8375,7 @@ class Host:
             # own try/except stack is deep enough (a pathological
             # case).  Log and recover instead of crashing the host.
             self.log(f"JS recursion error: {e}")
-        except (NameError, TypeError, SyntaxError,
+        except (NameError, TypeError,
                 ZeroDivisionError) as e:
             # P0 (retest report) — surface as a JS-catchable throw so
             # that a ReferenceError / TypeError raised inside a try
@@ -8367,8 +8389,6 @@ class Host:
                 raise _Throw(f"ReferenceError: {e}") from e
             elif _name == "TypeError":
                 raise _Throw(f"TypeError: {e}") from e
-            elif _name == "SyntaxError":
-                raise _Throw(f"SyntaxError: {e}") from e
             else:
                 raise _Throw(f"{_name}: {e}") from e
 
