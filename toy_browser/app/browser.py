@@ -126,11 +126,32 @@ def render_document_from_url(
     # policy — the 4th report's csp_self/csp_inline GUI divergence).
     doc_csp = ""
     loaded: dict = {}
-    doc_policy: object = None
+    # R7-S02 第 2 点 — 文档响应后**无条件**构建策略，与
+    # ``load_subresources`` 开关解耦。旧代码把
+    # ``DocumentPolicy.from_response`` 放在 ``if load_subresources:``
+    # 里，一关资源下载 doc_policy 就是 None —— 文档 CSP 静默消失，
+    # inline 脚本在无策略状态下运行（方案验收"关闭资源下载不解除
+    # inline CSP"直接失败）。策略来自文档**响应**，与下不下载子资源
+    # 无关。
+    _doc_url_final = resp.final_url or url
+    doc_policy = net.DocumentPolicy.from_response(
+        resp, doc_origin=net._origin_str(_doc_url_final))
+    # R7-S02 第 1 点 — 文档请求上下文（贯穿后续所有请求）。
+    # document_origin **只**来自文档响应；``<base href>`` 只改
+    # base_url（相对 URL 解析基准），绝不改写 origin。
+    req_ctx = None
+    try:
+        from toy_browser.network import request_context as _rc_mod
+        req_ctx = _rc_mod.context_for_destination(
+            doc_policy.doc_origin, _doc_url_final,
+            _rc_mod.DEST_NAVIGATE, policy=doc_policy)
+        _base_dom = net.base_url_from_dom(tree)
+        if _base_dom is not None:
+            req_ctx = req_ctx.with_base(_base_dom.to_string())
+    except Exception:
+        req_ctx = None
     if load_subresources:
-        base = net.parse_url(resp.final_url or url)
-        doc_policy = net.DocumentPolicy.from_response(
-            resp, doc_origin=net._origin_str(resp.final_url or url))
+        base = net.parse_url(_doc_url_final)
         try:
             loaded = net.load_subresources(
                 tree, base,
@@ -170,6 +191,10 @@ def render_document_from_url(
         else:
             script_cache[_u] = None
     host = _js_mod.Host(tree, lambda _s: None)
+    # R7-S02 第 1 点 — host 持有文档请求上下文，后续入口（inline
+    # 脚本 / 事件处理器里的 fetch）复用同一 context，而不是各自
+    # 重新推导来源。
+    host.request_context = req_ctx
     # P1 (assessment report) — carry the document origin so CSP 'self'
     # matches the document origin, not unconditionally.
     # R4 stage 0 — prefer the unified policy context's origin (it is
