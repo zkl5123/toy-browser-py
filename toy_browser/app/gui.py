@@ -814,38 +814,23 @@ class PageInstance:
                 # execute_scripts_in_order covers it.
                 # B05（GUI 桥）— 若本页内联脚本发了 location 导航任务
                 # （location.replace / assign / href=），消费
-                # ``host._pending_nav`` 跟跳（与 CLI browser.render_
-                # document_from_url 的 B05 段同一契约：seen-URL 去重 +
-                # 循环预算，防 baidu 227 字节页的 https↔http 反复替换
-                # 死循环）。GUI 侧经递归 :meth:`load_url` 跟跳最终
-                # 目标，而非只停在脚本页（A01 主链 + U01 命中一致性
-                # 的前置——页面要停在**最终**文档，hit-test / 历史
-                # 才对应真实渲染页）。
+                # ``host._pending_nav`` 跟跳。
+                # R7-A01 — 统一 B05 follow 契约：经
+                # navigation.select_pending_navigation_target 解析
+                # （与 CLI browser.render_document_from_url 同契约，
+                # 消除 GUI/CLI 重复实现）。
+                from toy_browser.app.navigation import (
+                    select_pending_navigation_target,
+                )
                 pending = list(getattr(_host, "_pending_nav", []) or [])
-                if pending:
-                    seen = {url}
-                    follow = None
-                    for req in pending:
-                        target = (getattr(req, "target", req)
-                                  if not isinstance(req, str) else req)
-                        if not target or target in seen:
-                            continue
-                        low = target.lower()
-                        if not (low.startswith("http://")
-                                or low.startswith("https://")):
-                            continue
-                        if target == url:
-                            continue  # reload：非跨文档导航
-                        seen.add(target)
-                        follow = target
-                        break
-                    if follow is not None:
-                        # 跟跳到最终目标（循环预算由 seen 去重约束；
-                        # 每跳都重新 fetch 并再检查其 _pending_nav）。
-                        self.load_url(follow, w, h,
-                                      record_history=record_history,
-                                      client=client, parallel=parallel)
-                        return
+                follow = select_pending_navigation_target(pending, url)
+                if follow is not None:
+                    # 跟跳到最终目标（循环预算由 seen 去重约束；
+                    # 每跳都重新 fetch 并再检查其 _pending_nav）。
+                    self.load_url(follow, w, h,
+                                  record_history=record_history,
+                                  client=client, parallel=parallel)
+                    return
                 # P0 (assessment report) — render the *script-mutated*
                 # tree (run_scripts=False skips the legacy re-parse;
                 # _reuse_doc routes load_html to the stored

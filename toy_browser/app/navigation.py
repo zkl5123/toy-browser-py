@@ -326,6 +326,42 @@ class NavBudget:
         return self.cancelled or hops > self.max_hops
 
 
+def select_pending_navigation_target(
+    pending_nav,
+    base_url: str,
+    allowed_schemes: tuple[str, ...] = ("http", "https"),
+) -> Optional[str]:
+    """R7-A01 — 统一 B05 pending navigation follow 契约。
+
+    CLI/GUI 不再各自重复“seen 去重 + 协议过滤 + reload 不跟跳”规则：
+    所有脚本同步产生的导航都经此函数解析出唯一可跟跳目标。
+
+    * ``pending_nav`` — host._pending_nav（str 或 NavRequest 混排）
+    * ``base_url``    — 当前已提交文档 URL（reload 判定基准）
+    * ``allowed_schemes`` — 允许跟跳的协议（默认 http/https）
+
+    返回首个可跟跳目标，或 None（不跟跳 / 全为 reload / 全被过滤）。
+    """
+    seen = {base_url}
+    allowed = tuple(s.lower() for s in allowed_schemes)
+    for req in list(pending_nav or []):
+        target = getattr(req, "target", req) if not isinstance(req, str) else req
+        if not target:
+            continue
+        if target in seen:
+            continue
+        low = target.lower()
+        # 协议过滤：仅允许 http/https（与 CLI 既有 B05 段同契约）。
+        scheme_hit = any(low.startswith(f"{s}://") for s in allowed)
+        if not scheme_hit:
+            continue
+        if target == base_url:
+            continue  # reload：同文档非跨文档导航，不跟跳
+        seen.add(target)
+        return target
+    return None
+
+
 # ---------------------------------------------------------------------------
 # B05 — Location：location 与文档 URL 的导航语义
 # ---------------------------------------------------------------------------

@@ -251,6 +251,77 @@ def test_b05_budget_cancel():
 
 
 # ---------------------------------------------------------------------------
+# R7-A01 — 统一 B05 pending navigation follow 契约（CLI/GUI 共享纯函数）
+# ---------------------------------------------------------------------------
+
+from toy_browser.app.navigation import select_pending_navigation_target
+
+
+class _FakeNavRequest:
+    """模拟 host._pending_nav 中 NavRequest 的对象形式。"""
+
+    def __init__(self, target):
+        self.target = target
+
+
+@_reg
+def test_r7_a01_pending_nav_first_eligible_selected():
+    """首个可跟跳目标被选中，且兼容 str / NavRequest-like 混排。"""
+    pending = [
+        _FakeNavRequest("https://a.example/"),
+        _FakeNavRequest("https://b.example/"),
+        "https://c.example/",
+    ]
+    assert select_pending_navigation_target(
+        pending, "https://base.example/") == "https://a.example/"
+
+
+@_reg
+def test_r7_a01_pending_nav_reload_not_followed():
+    """指向 base_url 的 reload 请求不参与跟跳。"""
+    base = "https://base.example/"
+    pending = [base, _FakeNavRequest(base), "https://next.example/"]
+    assert select_pending_navigation_target(
+        pending, base) == "https://next.example/"
+
+
+@_reg
+def test_r7_a01_pending_nav_scheme_filtered():
+    """仅允许 http/https，非 web scheme 不参与跟跳。"""
+    base = "https://base.example/"
+    pending = [
+        "file:///tmp/demo.html",
+        "about:blank",
+        _FakeNavRequest("http://ok.example/"),
+    ]
+    assert select_pending_navigation_target(
+        pending, base) == "http://ok.example/"
+
+
+@_reg
+def test_r7_a01_pending_nav_deduplicates_seen_urls():
+    """重复出现的目标只考虑一次（seen 去重）。"""
+    base = "https://base.example/"
+    pending = [
+        _FakeNavRequest("https://dup.example/"),
+        "https://dup.example/",
+        "https://later.example/",
+    ]
+    assert select_pending_navigation_target(
+        pending, base) == "https://dup.example/"
+
+
+@_reg
+def test_r7_a01_pending_nav_empty_or_all_invalid_returns_none():
+    """空 pending / 全被过滤时返回 None（CLI/GUI 均不跟跳）。"""
+    base = "https://base.example/"
+    assert select_pending_navigation_target(None, base) is None
+    assert select_pending_navigation_target([], base) is None
+    assert select_pending_navigation_target(
+        [base, "ftp://data.example/", "about:blank"], base) is None
+
+
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     passed = 0

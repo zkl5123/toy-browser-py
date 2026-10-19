@@ -191,29 +191,20 @@ def render_document_from_url(
     # guard: the classic baidu 227-byte page replaces
     # https:// -> http://, which would otherwise loop forever.  We
     # dedupe by seen-URL and cap total script-redirect hops.
+    # R7-A01 — 统一 B05 follow 契约：经 navigation.select_pending_navigation_target
+    # 解析（与 GUI PageInstance.load_url 同契约，消除 CLI/GUI 重复实现）。
+    from toy_browser.app.navigation import select_pending_navigation_target
     pending = list(getattr(host, "_pending_nav", []) or [])
-    if pending and max_script_redirects > 0:
-        seen = {resp.final_url or url}
-        follow = None
-        for req in pending:
-            target = getattr(req, "target", req) if not isinstance(req, str) else req
-            if not target or target in seen:
-                continue
-            low = target.lower()
-            if not (low.startswith("http://") or low.startswith("https://")):
-                continue
-            if target == (resp.final_url or url):
-                continue  # reload: no cross-document navigation
-            seen.add(target)
-            follow = target
-            break
-        if follow is not None:
-            return render_document_from_url(
-                follow, css_text, width, height,
-                load_subresources=load_subresources, client=client,
-                timeout=timeout, use_cache=use_cache, progress=progress,
-                max_script_redirects=max_script_redirects - 1,
-            )
+    base_url = resp.final_url or url
+    follow = select_pending_navigation_target(pending, base_url) if (
+        pending and max_script_redirects > 0) else None
+    if follow is not None:
+        return render_document_from_url(
+            follow, css_text, width, height,
+            load_subresources=load_subresources, client=client,
+            timeout=timeout, use_cache=use_cache, progress=progress,
+            max_script_redirects=max_script_redirects - 1,
+        )
 
     media_rules = css_mod.parse_media_queries(author_css)
     supports_rules = css_mod.parse_supports_blocks(author_css)
