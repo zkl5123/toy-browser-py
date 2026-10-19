@@ -53,6 +53,21 @@ class PageInstance:
         self.title: str = "New Tab"
         self.bitmap: paint.Bitmap | None = None
         self._full_bitmap: paint.Bitmap | None = None  # P33.R2
+        # R7-A01 历史栈收敛 — 双栈字段（back_stack / fwd_stack）不再
+        # 由页面自持，而是其页内 :class:`HistoryCommitter` 游标模型的
+        # 只读投影（游标下界 / 上界）。外部消费者（TabBrowser 主链、
+        # session 持久化 list(s.back_stack)、tab_identity 快照、
+        # about:history 页）继续把这两个属性当 list 读，形态不变；
+        # 真正的历史提交 / 前进后退统一走游标（单一所有者）。
+        from toy_browser.app.history_entry import HistoryCommitter
+        # 初始页 about:blank 作为游标第 0 项：此后每次新导航经
+        # :meth:`_commit_history` 追加，游标始终指向"当前页"所在项；
+        # 双栈字段（back/fwd）是游标的只读投影（见下方注释）。
+        self._hist = HistoryCommitter(initial_url="about:blank")
+        # R7-A01 历史栈收敛 — 双栈字段是游标模型的只读投影，
+        # 由 :meth:`_sync_history_stacks` 维护（投影直接用
+        # ``self._hist.cursor``，它始终指向当前页所在的历史项）；
+        # 外部消费者继续按 list 读这两个属性，形态不变。
         self.back_stack: list[str] = []
         self.fwd_stack: list[str] = []
         self.width: int = 800
@@ -947,17 +962,73 @@ class PageInstance:
         if browser is not None and getattr(browser, "history", None) is not None:
             browser.history.add(self.url, self.title or self.url)
 
+    def _sync_history_stacks(self) -> None:
+        """R7-A01 历史栈收敛 — 把游标模型投影回双栈字段。
+
+        ``self._hist.cursor`` 始终指向**当前页**所在的历史项；投影规则：
+
+        * ``back_stack`` = 游标之前的历史项（oldest→当前前一项）；
+        * ``fwd_stack`` = 游标之后的历史项（当前后一项→newest）。
+
+        这与旧双栈模型一致：当前页 URL 在 ``self.url``，双栈只保留
+        已提交的其它历史项。外部消费者据此读历史形态；所有提交 /
+        移动都经游标，不直接改这两个 list。
+        """
+        entries = self._hist.entries
+        cur = self._hist.cursor
+        if cur < 0:
+            self.back_stack = []
+            self.fwd_stack = []
+            return
+        self.back_stack = [e.url for e in entries[:cur]]
+        self.fwd_stack = [e.url for e in entries[cur + 1:]]
+
+    def _commit_history(self, url: str, source: str = "address",
+                       dedup: bool = True) -> None:
+        """R7-A01 历史栈收敛 — 一次新导航提交到本标签游标（G09 step 3
+        单一入口）。
+
+        等价旧双栈时序：导航前先把"被离开的旧页"（``self.url``）落到
+        cursor 项，再提交新目标 *url* 使 cursor 推进到新目标。这样
+        投影出的 back_stack 含被离开的旧页（与旧模型 push X 一致），
+        fwd_stack 被新导航清空。"""
+        # 1) 保证"被离开的旧页"是 cursor 指向项（首次导航 / go 后
+        #    再导航时 cursor 可能指向更早项或 -1）。
+        old = self.url
+        if old and self._hist.cursor < 0:
+            self._hist.commit(old, source="address", dedup=False)
+        elif old and self._hist.cursor >= 0 and \
+                self._hist.entries[self._hist.cursor].url != old:
+            # cursor 已落后于当前页（例如 go_back 后又直接 load）：
+            # 把当前页作为新 cursor 项补进（清掉其后前进项）。
+            self._hist.commit(old, source="address", dedup=False)
+        # 2) 提交新目标（cursor 推进；清掉前进项 = 旧模型 fwd_stack.clear）。
+        self._hist.commit(url, source=source, dedup=dedup)
+        self._sync_history_stacks()
+
+    def can_back(self) -> bool:
+        """R7-A01 历史栈收敛 — 游标可后退（工具栏 / 键盘启停依据）。"""
+        return self._hist.can_back()
+
+    def can_forward(self) -> bool:
+        """R7-A01 历史栈收敛 — 游标可前进。"""
+        return self._hist.can_forward()
+
     def go_back(self):
-        if self.back_stack:
-            self.fwd_stack.append(self.url)
-            target = self.back_stack.pop()
-            self._load_no_history(target, self.width, self.height)
+        # R7-A01 历史栈收敛 — 经游标后退：back() 把游标移向前并返回
+        # 新位置项（后退目标），双栈随后投影同步。
+        tgt = self._hist.back()
+        if tgt is not None:
+            self._sync_history_stacks()
+            self._load_no_history(tgt.url, self.width, self.height)
 
     def go_forward(self):
-        if self.fwd_stack:
-            self.back_stack.append(self.url)
-            target = self.fwd_stack.pop()
-            self._load_no_history(target, self.width, self.height)
+        # R7-A01 历史栈收敛 — 经游标前进：forward() 把游标移向后并
+        # 返回新位置项（前进目标），双栈随后投影同步。
+        tgt = self._hist.forward()
+        if tgt is not None:
+            self._sync_history_stacks()
+            self._load_no_history(tgt.url, self.width, self.height)
 
     def _load_no_history(self, url: str, w: int, h: int):
         """Load *url* without touching back/fwd stacks (internal)."""
@@ -1781,6 +1852,16 @@ class TabBrowser:
         """B 系列批次 42 — 诊断串（资源三态 + 任务版本）。"""
         return self._b_wiring.describe()
 
+    def can_back(self) -> bool:
+        """R7-A01 历史栈收敛 — 游标可后退（工具栏 / 键盘启停依据）。"""
+        page = self.tabs[self.current] if self.tabs else None
+        return page.can_back() if page is not None else False
+
+    def can_forward(self) -> bool:
+        """R7-A01 历史栈收敛 — 游标可前进。"""
+        page = self.tabs[self.current] if self.tabs else None
+        return page.can_forward() if page is not None else False
+
     def _commit_navigation(self, url: str) -> None:
         """G04 — the single navigation entry point shared by the Go
         button, the address-bar Return (routed by :meth:`_return_routed`),
@@ -1788,10 +1869,11 @@ class TabBrowser:
         if not url:
             return
         page = self.tabs[self.current]
-        # Push current URL onto the back stack (navigation history).
+        # R7-A01 历史栈收敛 — 历史提交经本标签游标（push 当前页 +
+        # 清前进栈的语义由 HistoryCommitter.commit 承担：截断游标后的
+        # 前进项、追加新项、推进游标）；双栈字段自动投影同步。
         if page.url and page.url != url:
-            page.back_stack.append(page.url)
-            page.fwd_stack.clear()
+            page._commit_history(url, source="address")
         page.load_url(url, 800, 600)
         self.notebook.tab(self.current, text=page.title)
         self._refresh_canvas(self.current)
@@ -1832,8 +1914,7 @@ class TabBrowser:
             return
         page = self.tabs[self.current]
         if page.url and page.url != path:
-            page.back_stack.append(page.url)
-            page.fwd_stack.clear()
+            page._commit_history(path, source="file")
         page.load_file(path, 800, 600)
         self.notebook.tab(self.current, text=page.title)
         self._refresh_canvas(self.current)
