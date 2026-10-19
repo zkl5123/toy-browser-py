@@ -1,0 +1,10 @@
+{
+  "command": [
+    "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "D:\\Desktop\\1\\toy-browser-py\\test.py",
+    "--full",
+    "--report"
+  ],
+  "returncode": 0,
+  "wall_seconds": 762.0414231999894
+}

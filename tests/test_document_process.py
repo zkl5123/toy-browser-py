@@ -130,8 +130,9 @@ def test_pool_close_tab_drops_pending():
     assert pool.post(DocCommand(1, DOC_CMD_NAVIGATE, seq=2)) is False
     # drain 无该 tab 帧
     assert pool.drain() == []
-    # 在途命令被关标签丢弃（帧丢弃统计含命令态丢弃）
-    assert pool.stats.dropped_tab_frames >= 0
+    # 在途命令被关标签丢弃（帧丢弃统计含命令态丢弃；R7-Q01: >=0 恒真，
+    # 收紧为实际丢弃数）
+    assert pool.stats.dropped_tab_frames >= 1
 
 
 @_reg
@@ -193,7 +194,8 @@ def test_make_multiprocessing_pool_fallback_no_crash():
     except Exception:
         pass
     pool.post(DocCommand(1, DOC_CMD_NAVIGATE, {"url": "a"}, 1))
-    assert len(pool.drain()) >= 0
+    # R7-Q01 — drain() 契约：始终返回帧列表（可能为空）
+    assert isinstance(pool.drain(), list)
     try:
         pool.shutdown()
     except Exception:

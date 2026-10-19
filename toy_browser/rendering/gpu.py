@@ -38,6 +38,7 @@ P04 范围（本批落地）：
 
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
 from typing import Optional
 
@@ -144,12 +145,15 @@ class GPURasterizer:
         # 风险——rgba8unorm-srgb 与 CPU 8-bit 值一致）。
         buf = bytearray()
         n = width * height
-        buf_extend = buf.extend
+        # R7-P02 — ``bytearray.extend(int)`` raises TypeError; the helper
+        # crashed on every call instead of returning a verification dict
+        # (audit §5 "gpu_verify_helper_rgb_conversion").
+        buf_append = buf.append
         for i in range(n):
-            buf_extend(img.buffer[i * 3])
-            buf_extend(img.buffer[i * 3 + 1])
-            buf_extend(img.buffer[i * 3 + 2])
-            buf_extend(255)
+            buf_append(img.buffer[i * 3])
+            buf_append(img.buffer[i * 3 + 1])
+            buf_append(img.buffer[i * 3 + 2])
+            buf_append(255)
         tex = self.upload_rgba8(width, height, bytes(buf),
                                  label="gpu_verify")
         back = self.read_back(tex, width, height)
@@ -397,7 +401,11 @@ class GlyphAtlas:
 
     def __init__(self, rasterizer: Optional[GPURasterizer] = None,
                  capacity: int = 64, atlas_width: int = 16,
-                 cell_h: int = 16, atlas_height: int = 256,
+                 # R7-P02 — the cell is a SQUARE pixel cell (previous
+                 # default 16 clipped every glyph above 16px, so 17px
+                 # text rasterised identically to 16px; 24 covers the
+                 # common 16/17/20/24 sizes).
+                 cell_h: int = 24, atlas_height: int = 256,
                  rasterize_glyph=None) -> None:
         self._rasterizer = rasterizer
         self._capacity = capacity
@@ -434,29 +442,36 @@ class GlyphAtlas:
                       weight: int, font_px: float):
         """P06 — 光栅化单字形（经注入回调）→ RGBA8 像素 + 打包进
         atlas（1D 条带），返回 (rgba_bytes, uv, slot)。"""
+        cell = self._cell_h
         if self._rasterize_glyph is not None:
             rgba = self._rasterize_glyph(ch, family, weight, font_px)
         else:
-            rgba = self._default_glyph_rgba(ch, family, weight, font_px)
-        # 打包：按现有条目数占位（atlas 1D 条带，col/row 推导）
+            rgba = self._default_glyph_rgba(ch, family, weight, font_px,
+                                            cell=cell)
+        # 打包：按现有条目数占位（atlas 网格，col/row 推导）
         slot = self._pack_count
         self._pack_count += 1
         col = slot % self._atlas_width
         row = slot // self._atlas_width
-        cw = self._atlas_width
-        chh = self._cell_h
-        ahw = cw  # atlas 逻辑宽（像素）= atlas_width 列
-        ahh = self._atlas_height
-        u0 = col / float(cw)
-        v0 = row / float(ahh)
-        u1 = (col + 1) / float(cw)
-        v1 = (row + chh / float(ahw)) if chh else v0
-        # 简化：v1 = (row + 1) / atlas_height（每行 1 字形高）
-        v1 = (row + 1) / float(ahh)
+        # R7-P02 — UV 按**像素**归一化：atlas 宽 = atlas_width × cell，
+        # 高 = atlas_height（像素），每个字形占一个 cell×cell 格。
+        # 旧实现把 atlas 当成 1px 宽的槽位条带，字形像素根本无法写
+        # 进 atlas（见 :meth:`_atlas_rgba_bytes`）。
+        ahw = self._atlas_width * cell
+        ahh = max(cell, self._atlas_height)
+        u0 = col / float(self._atlas_width)
+        u1 = (col + 1) / float(self._atlas_width)
+        v0 = (row * cell) / float(ahh)
+        v1 = ((row + 1) * cell) / float(ahh)
+        if v1 > 1.0:
+            # 槽位溢出 atlas 高度（capacity 大于可容纳行数）：夹到
+            # 最后一格，保证 0 ≤ v0 < v1 ≤ 1。
+            v0 = max(0.0, min(v0, 1.0 - 1e-6))
+            v1 = 1.0
         uv = (u0, v0, u1, v1)
         self._uploads += 1
         self._entries[key] = {"uv": uv, "ref": 1, "px": len(rgba),
-                              "slot": (col, row)}
+                              "slot": (col, row), "rgba": rgba}
         self._entries.move_to_end(key)
         # 真实 wgpu 设备：上传整张 atlas 纹理（字形像素并入）
         if self._rasterizer is not None and \
@@ -475,48 +490,81 @@ class GlyphAtlas:
         return rgba, uv, (col, row)
 
     def _atlas_rgba_bytes(self) -> bytes:
-        """P06 — 把已驻留字形像素按 slot 拼成 atlas RGBA8 紧凑 buffer
-        （atlas_width × atlas_height 逻辑尺寸；未占位槽位 alpha=0）。"""
-        ahw = self._atlas_width
-        ahh = self._atlas_height
-        cellw = self._cell_h  # 每字形列宽（像素，简化=cell_h 正方形格）
+        """P06 / R7-P02 — 把已驻留字形像素按 slot 拼成 atlas RGBA8
+        紧凑 buffer（``atlas_width × cell`` 宽 × ``atlas_height`` 高；
+        未占位区域 alpha=0）。
+
+        R7-P02 — 旧实现只分配了一个全透明 buffer（"此处仅占位"），
+        于是 GPU 侧上传的 atlas 一张字形都没有（审计 §5
+        "p06_atlas_has_coverage"）。现在把每个 entry 光栅化出的
+        RGBA 像素真正写进它自己那一格。
+        """
+        cell = self._cell_h
+        ahw = self._atlas_width * cell
+        ahh = max(cell, self._atlas_height)
         buf = bytearray(ahw * ahh * 4)
         for key, e in self._entries.items():
             col, row = e["slot"]
-            if col >= ahw or row >= ahh:
+            rgba = e.get("rgba")
+            if not rgba:
                 continue
-            # 字形 RGBA8 像素（e 里未存像素，存 px 长度；简化：按
-            # 默认字形回退重光栅化取像素，避免 atlas 拼接每像素
-            # 重算——本批逻辑 atlas 为主，真实 wgpu 上传在后续批次
-            # 接字形解码管线时替换）。
-            # 此处仅占位（透明），真实字形像素在后续批次接 TTF /
-            # 位图光栅化管线时填入。
+            # 字形是正方形 size×size（size ≤ cell）。
+            size = int((len(rgba) // 4) ** 0.5)
+            if size <= 0:
+                continue
+            size = min(size, cell)
+            x0 = col * cell
+            y0 = row * cell
+            if x0 >= ahw or y0 >= ahh:
+                continue
+            for y in range(min(size, ahh - y0)):
+                srow = rgba[y * size * 4:(y + 1) * size * 4]
+                off = ((y0 + y) * ahw + x0) * 4
+                buf[off:off + len(srow)] = srow
         return bytes(buf)
 
     @staticmethod
     def _default_glyph_rgba(ch: str, family: str, weight: int,
-                           font_px: float) -> bytes:
-        """P06 — 内置位图字形回退：8×8 字形 scale 到 *font_px*
-        粒度（最近邻），alpha 覆盖层（R=G=B=255，A=覆盖 255 /
-        未覆盖 0），返回 RGBA8 紧凑 bytes。无 TTF 时的 CPU 字形
-        光栅化契约（P20 曲线填充在后续批次替换）。"""
+                           font_px: float, cell: int | None = None) -> bytes:
+        """P06 / R7-P02 — 内置位图字形回退：8×N 位图最近邻放大到
+        *font_px* 粒度，alpha 覆盖层（R=G=B=255，A=覆盖 255 /
+        未覆盖 0），返回 ``size×size`` 的 RGBA8 紧凑 bytes。
+
+        R7-P02 修正（审计 §5 "glyph atlas 真实 mask"）：
+
+        * 码点不再被 ``& 0x7F`` 截断——``'中'`` 曾被折叠成 ``'-'``，
+          于是 Unicode 与 ASCII 字形共用同一张 mask；
+        * *family* 真正传入 ``font.glyph_for``（monospace 8 行 /
+          serif 10 行），不再硬编码 monospace；
+        * *weight* ≥ 600 时做合成粗体（向右扩一像素的覆盖）；
+        * 输出尺寸取 ``round(font_px)``（16 与 17 不再相同），
+          *cell* 给出时裁剪到 atlas 格子边长。
+        """
         from toy_browser.typography import font as _font
-        glyph = _font.glyph_for(ord(ch) & 0x7F, "monospace")
-        scale = max(1, int(font_px / 8.0))
-        w = h = 8 * scale
-        out = bytearray(w * h * 4)
-        for ry in range(h):
-            sy = ry // scale
-            byte = glyph[sy]
-            for rx in range(w):
-                sx = rx // scale
-                covered = bool(byte & (0x80 >> sx))
-                j = (ry * w + rx) * 4
-                if covered:
-                    out[j] = 255
-                    out[j + 1] = 255
-                    out[j + 2] = 255
-                    out[j + 3] = 255
+        glyph = _font.glyph_for(ord(ch), family or "monospace")
+        rows = len(glyph)
+        cols = 8
+        size = max(1, int(round(float(font_px))))
+        if cell:
+            size = max(1, min(size, int(cell)))
+        bold = int(weight or 400) >= 600
+        out = bytearray(size * size * 4)
+        for ry in range(size):
+            sy = (ry * rows) // size
+            byte = glyph[sy] if sy < rows else 0
+            for rx in range(size):
+                sx = (rx * cols) // size
+                covered = bool(byte & (0x80 >> sx)) if sx < cols else False
+                if not covered and bold and sx > 0:
+                    # 合成粗体：左邻像素覆盖则本像素也覆盖。
+                    covered = bool(byte & (0x80 >> (sx - 1)))
+                if not covered:
+                    continue
+                j = (ry * size + rx) * 4
+                out[j] = 255
+                out[j + 1] = 255
+                out[j + 2] = 255
+                out[j + 3] = 255
         return bytes(out)
 
     def get_or_rasterize(self, key_or_ch, family: str = "monospace",
@@ -906,8 +954,14 @@ class GPUBackend(RenderBackend):
                 rgba[j + 1] = (c >> 8) & 0xFF
                 rgba[j + 2] = c & 0xFF
                 rgba[j + 3] = 255
-            key = _img_key(f"src:{sw}x{sh}:{len(pixels)}")
-            # 同资源（同尺寸 + 同像素数）复用同一纹理；refcount 由
+            # R7-P02 — the key must identify the pixel CONTENT: the
+            # legacy ``src:{w}x{h}:{len(pixels)}`` collapsed two distinct
+            # 1×1 images (red / blue) onto one cache entry, so only one
+            # texture stayed resident (audit §5
+            # "p05_distinct_content_resident").
+            _digest = hashlib.blake2b(bytes(rgba), digest_size=16).hexdigest()
+            key = _img_key(f"src:{sw}x{sh}:{_digest}")
+            # 同资源（同尺寸 + 同内容）复用同一纹理；refcount 由
             # render 调用方（多框共用）经 ref/unref 管理。
             self._img_cache.get_or_upload(key, sw, sh, bytes(rgba))
 

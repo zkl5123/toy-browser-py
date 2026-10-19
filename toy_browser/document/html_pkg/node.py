@@ -19,6 +19,12 @@ class Node:
         "text",
         "children",
         "parent",
+        # R7-H01 — document-level parsing metadata (quirks mode / doctype
+        # / namespace).  Only the synthetic ``document`` node carries
+        # meaningful values; element nodes keep the defaults.
+        "quirks_mode",
+        "doctype_name",
+        "namespace",
         "__weakref__",
     )
 
@@ -31,6 +37,9 @@ class Node:
         tag: Optional[str] = None,
         attrs: Optional[dict] = None,
         text: Optional[str] = None,
+        quirks_mode: bool = False,
+        doctype_name: Optional[str] = None,
+        namespace: Optional[str] = None,
     ):
         self.node_type = node_type
         self.tag = tag
@@ -38,6 +47,13 @@ class Node:
         self.text = text
         self.children: list[Node] = []
         self.parent: Optional[Node] = None
+        # R7-H01 — quirks mode: a document with no doctype (or with a
+        # doctype whose name is not "html") is parsed in quirks mode.
+        self.quirks_mode = quirks_mode
+        self.doctype_name = doctype_name
+        # R7-H01 — the element's namespace (HTML / SVG / MathML).  The
+        # parser only records the basics for now; "html" is the default.
+        self.namespace = namespace or ("html" if node_type == Node.ELEMENT else None)
 
     @classmethod
     def element(cls, tag: str, attrs: Optional[dict] = None) -> "Node":

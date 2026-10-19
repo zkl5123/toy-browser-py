@@ -33,8 +33,9 @@ from __future__ import annotations
 
 from .node import Node, VOID_TAGS, implicitly_closes
 from .entities import decode_entities, parse_entities
-from .tokenize import tokenize, tokenize_rawtext, decode_bytes
-from .build import build, parse
+from .tokenize import (tokenize, tokenize_rawtext, decode_bytes, iter_tokens,
+                       RAWTEXT_TAGS, RCDATA_TAGS, PLAINTEXT_TAGS)
+from .build import build, parse, parse_fragment
 
 __all__ = [
     "Node",
@@ -44,9 +45,14 @@ __all__ = [
     "parse_entities",
     "tokenize",
     "tokenize_rawtext",
+    "iter_tokens",
+    "RAWTEXT_TAGS",
+    "RCDATA_TAGS",
+    "PLAINTEXT_TAGS",
     "decode_bytes",
     "build",
     "parse",
+    "parse_fragment",
     "parse_file",
 ]
 

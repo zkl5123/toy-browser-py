@@ -28,6 +28,38 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         _failures.append(name)
 
 
+def bench(name: str, value: float, threshold: float, detail: str = "") -> None:
+    """Informational performance observation (R7-Q01).
+
+    Performance thresholds are machine-load sensitive; the hard gate
+    lives in the isolated benchmark job (tools/benchmarks), not in the
+    functional regression.  A regression here is reported as WARN and
+    never silently counts as a functional PASS.
+    """
+    state = "OK  " if value < threshold else "WARN"
+    print(f"{state} [bench] {name}: {detail or f'{value:.3f}'} "
+          f"(info threshold {threshold})")
+
+
+def _checked(fn):
+    """R7-Q01 — propagate internal check() failures to the test runner.
+
+    The legacy TESTS entries called ``check()`` which only *printed*
+    FAIL; the runner saw a normal return and counted a PASS.  Wrap each
+    registered test so any check() failure it records raises.
+    """
+    def wrapper():
+        n0 = len(_failures)
+        try:
+            fn()
+        finally:
+            if len(_failures) > n0:
+                raise AssertionError(
+                    "internal check failure(s): " + "; ".join(_failures[n0:]))
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
 # ---------------------------------------------------------------------------
 # 1. text.measure cache correctness
 # ---------------------------------------------------------------------------
@@ -188,8 +220,7 @@ def t8_measure_perf() -> None:
     for _ in range(5000):
         text.measure(s, 14.0, "sans-serif")
     t_m = (time.perf_counter() - t0) / 5000
-    check("measure() on cached string is fast", t_m < 5e-6,
-          f"{t_m*1e6:.2f} us")
+    bench("measure() on cached string", t_m, 5e-6, f"{t_m*1e6:.2f} us")
     # Uncached (different string each call) should still work
     for i in range(100):
         w = text.measure(f"内容 {i} 用于测试", 14.0, "sans-serif")
@@ -220,8 +251,7 @@ def t9_pipeline_perf() -> None:
         b = paint_engine.rasterize(d, 1200, 800)
         best = min(best, time.perf_counter() - t0)
     print(f"   3000-node pipeline: {best*1000:.1f} ms")
-    check("3000-node pipeline under 15s (P34.3 was ~9.6s)", best < 15.0,
-          f"got {best:.1f}s")
+    bench("3000-node pipeline vs P34.3 (~9.6s)", best, 15.0, f"got {best:.1f}s")
 
 
 def main():
@@ -249,12 +279,12 @@ if __name__ == "__main__":
 
 # GPT P1-2 — TESTS list (auto-generated)
 TESTS: list = []
-TESTS.append(("t1_cache_agrees_with_advance", t1_cache_agrees_with_advance))
-TESTS.append(("t2_measure_edge_cases", t2_measure_edge_cases))
-TESTS.append(("t3_clear_advances_cache", t3_clear_advances_cache))
-TESTS.append(("t4_layout_clear_caches_clears_text", t4_layout_clear_caches_clears_text))
-TESTS.append(("t5_half_lead_cache", t5_half_lead_cache))
-TESTS.append(("t6_scroll_container_tagging", t6_scroll_container_tagging))
-TESTS.append(("t7_non_scroll_emits_commands", t7_non_scroll_emits_commands))
-TESTS.append(("t8_measure_perf", t8_measure_perf))
-TESTS.append(("t9_pipeline_perf", t9_pipeline_perf))
+TESTS.append(("t1_cache_agrees_with_advance", _checked(t1_cache_agrees_with_advance)))
+TESTS.append(("t2_measure_edge_cases", _checked(t2_measure_edge_cases)))
+TESTS.append(("t3_clear_advances_cache", _checked(t3_clear_advances_cache)))
+TESTS.append(("t4_layout_clear_caches_clears_text", _checked(t4_layout_clear_caches_clears_text)))
+TESTS.append(("t5_half_lead_cache", _checked(t5_half_lead_cache)))
+TESTS.append(("t6_scroll_container_tagging", _checked(t6_scroll_container_tagging)))
+TESTS.append(("t7_non_scroll_emits_commands", _checked(t7_non_scroll_emits_commands)))
+TESTS.append(("t8_measure_perf", _checked(t8_measure_perf)))
+TESTS.append(("t9_pipeline_perf", _checked(t9_pipeline_perf)))

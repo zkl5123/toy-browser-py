@@ -83,10 +83,12 @@ class ResourceRecord:
 
 @dataclass
 class ScriptSpec:
-    """一个 ``<script>`` 的调度规格（动态插入 / async / defer / 位置）。
+    """一个 ``<script>`` 的调度规格（动态插入 / async / defer / module / 位置）。
 
     - ``position`` — ``inline`` / ``head`` / ``body``（影响相对执行顺序）。
     - ``async`` / ``defer`` — 布尔标志（B08 步骤 3 "async/defer"）。
+    - ``is_module`` — R7-J02 第3点：ES module 脚本。module 脚本**始终 deferred**
+      （即使无 defer 属性），且未实现 module loader 时不可当经典 classic 执行。
     - ``enabled`` — 脚本启用状态（被策略 / CSP 禁用时 False）。
     - ``doc_ready`` — 是否需要在 DOMContentLoaded 之后执行。
     """
@@ -94,24 +96,28 @@ class ScriptSpec:
     position: str = "head"
     async_flag: bool = False
     defer: bool = False
+    is_module: bool = False
     enabled: bool = True
     doc_ready: bool = False
 
     def key(self) -> tuple:
-        """调度排序键（B08 步骤 3 最小一致模型）。
+        """调度排序键（B08 步骤 3 + R7-J02 第3点最小一致模型）。
 
-        - 未启用 → 排在最后（不执行）。
-        - ``doc_ready``（DOMContentLoaded 后）→ 在常规脚本之后。
-        - ``defer`` → 常规脚本之后、DOMContentLoaded 之前，按插入序。
-        - ``async`` → 就绪即执行（不阻塞后续脚本，按就绪序）。
-        - 普通 → 按插入序（文档序）。
+        组别（数字越小越先执行）：
+        - 0 = parser-blocking classic（按文档序阻塞解析器）
+        - 1 = async（就绪即执行，不阻塞后续脚本，按就绪序）
+        - 2 = defer / module（所有 classic parser-blocking 之后、DOMContentLoaded 之前，
+              按文档序；module 脚本无 defer 属性时同样归此组——R7-J02 第3点
+              "module 不把当普通 classic 执行"）
+        - 3 = doc_ready（DOMContentLoaded 之后）
+        - 4 = disabled（不执行）
         """
-        # 组别：0=普通(文档序), 1=async(就绪序), 2=defer, 3=doc_ready, 4=disabled
         if not self.enabled:
             group = 4
         elif self.doc_ready:
             group = 3
-        elif self.defer:
+        elif self.defer or self.is_module:
+            # defer 与 module 同组（module 始终 deferred，R7-J02 第3点）
             group = 2
         elif self.async_flag:
             group = 1
@@ -142,10 +148,12 @@ class ScriptScheduler:
 
     def add(self, url: str, position: str = "head",
             async_flag: bool = False, defer: bool = False,
+            is_module: bool = False,
             enabled: bool = True, doc_ready: bool = False) -> ScriptSpec:
         self._seq += 1
         spec = ScriptSpec(url=url, position=position, async_flag=async_flag,
-                          defer=defer, enabled=enabled, doc_ready=doc_ready)
+                          defer=defer, is_module=is_module,
+                          enabled=enabled, doc_ready=doc_ready)
         spec._seq = self._seq  # type: ignore[attr-defined]
         self._scripts.append(spec)
         return spec
@@ -178,6 +186,23 @@ class ScriptScheduler:
     def can_run_deferred(self) -> bool:
         """defer 脚本只能在 DOMContentLoaded 之前排空后执行。"""
         return self._dom_content_loaded or True
+
+    def scripts_by_url(self) -> dict:
+        """R7-J02 第3点 — 按 URL 索引所有已注册脚本的 ScriptSpec。"""
+        return {s.url: s for s in self._scripts}
+
+    def module_scripts(self) -> list[str]:
+        """R7-J02 第3点 — 列出所有 module 脚本 URL（供调用方感知并选择跳过）。
+
+        未实现 module loader 时，调用方应对这些脚本**不作为 classic 执行**，
+        而是单独标记或跳过，避免把 import 语法当 classic 语句解析。
+        """
+        return [s.url for s in self._scripts if s.is_module and s.enabled]
+
+    def deferred_scripts(self) -> list[str]:
+        """列出所有 deferred 脚本（defer=True 或 is_module=True）。"""
+        return [s.url for s in self._scripts
+                if s.enabled and (s.defer or s.is_module)]
 
     def pending(self) -> list[str]:
         return [s.url for s in self._scripts if s.enabled and s.url not in self._executed]
@@ -290,9 +315,11 @@ class DocumentContext:
 
     def register_script(self, url: str, position: str = "head",
                         async_flag: bool = False, defer: bool = False,
+                        is_module: bool = False,
                         enabled: bool = True, doc_ready: bool = False) -> ScriptSpec:
         spec = self.scheduler.add(url, position=position,
                                   async_flag=async_flag, defer=defer,
+                                  is_module=is_module,
                                   enabled=enabled, doc_ready=doc_ready)
         self.scripts[url] = spec
         return spec
@@ -300,6 +327,14 @@ class DocumentContext:
     def script_execution_order(self) -> list[str]:
         """B08 步骤 3 — 脚本执行顺序（排除未启用）。"""
         return self.scheduler.execution_order()
+
+    def module_scripts(self) -> list[str]:
+        """R7-J02 第3点 — module 脚本 URL 列表（供调用方感知跳过 classic 执行）。"""
+        return self.scheduler.module_scripts()
+
+    def deferred_scripts(self) -> list[str]:
+        """所有 deferred 脚本（defer=True 或 is_module=True）URL 列表。"""
+        return self.scheduler.deferred_scripts()
 
     def fire_dom_content_loaded(self) -> None:
         self.scheduler.mark_dom_content_loaded()

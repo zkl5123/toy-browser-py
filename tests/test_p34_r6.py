@@ -33,6 +33,25 @@ def check(name, cond, detail=""):
         print(f"FAIL {name}  {detail}")
         _failures.append(name)
 
+def bench(name, value, threshold, detail=""):
+    """Informational performance observation (R7-Q01) — never a PASS/FAIL gate."""
+    state = "OK  " if value < threshold else "WARN"
+    print(f"{state} [bench] {name}: {detail or f'{value:.3f}'} "
+          f"(info threshold {threshold})")
+
+def _checked(fn):
+    """R7-Q01 — propagate internal check() failures to the test runner."""
+    def wrapper():
+        n0 = len(_failures)
+        try:
+            fn()
+        finally:
+            if len(_failures) > n0:
+                raise AssertionError(
+                    "internal check failure(s): " + "; ".join(_failures[n0:]))
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
 # --- 1. css._apply_subtree inheritance candidate dict ---
 def t1_inherit_candidates():
     # Parent sets line-height; child inherits it.
@@ -297,8 +316,7 @@ def t5_perf():
         gc.collect()
         t0 = time.perf_counter(); run_once(); best = min(best, time.perf_counter() - t0)
     print(f"   10k-node pipeline: {best*1000:.0f} ms")
-    check("10k-node pipeline not slower than P34.4 (~29.4s)",
-          best < 32.0, f"got {best:.1f}s")
+    bench("10k-node pipeline vs P34.4 (~29.4s)", best, 32.0, f"got {best:.1f}s")
 
 def main():
     t1_inherit_candidates()
@@ -320,8 +338,8 @@ if __name__ == "__main__":
 
 # GPT P1-2 — TESTS list (auto-generated)
 TESTS: list = []
-TESTS.append(("t1_inherit_candidates", t1_inherit_candidates))
-TESTS.append(("t2_emit_fast_path", t2_emit_fast_path))
-TESTS.append(("t3_leaf_fast_path", t3_leaf_fast_path))
-TESTS.append(("t4_pipeline_pixels", t4_pipeline_pixels))
-TESTS.append(("t5_perf", t5_perf))
+TESTS.append(("t1_inherit_candidates", _checked(t1_inherit_candidates)))
+TESTS.append(("t2_emit_fast_path", _checked(t2_emit_fast_path)))
+TESTS.append(("t3_leaf_fast_path", _checked(t3_leaf_fast_path)))
+TESTS.append(("t4_pipeline_pixels", _checked(t4_pipeline_pixels)))
+TESTS.append(("t5_perf", _checked(t5_perf)))

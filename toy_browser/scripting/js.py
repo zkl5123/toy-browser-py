@@ -44,6 +44,91 @@ class Token:
     pos: int = 0
 
 
+def _decode_js_escapes(raw: str) -> str:
+    """R7-J01 — decode JS string-literal escape sequences in one pass.
+
+    The legacy chain of ``str.replace`` calls handled only ``\\'`` /
+    ``\\"`` / ``\\\\`` / ``\\n`` / ``\\t`` and was order-dependent
+    (``"\\\\n"`` wrongly became a newline).  ECMAScript string literals
+    also support ``\\uXXXX`` / ``\\u{...}`` / ``\\xXX`` / ``\\r`` /
+    ``\\b`` / ``\\f`` / ``\\v`` / ``\\0`` / identity escapes and line
+    continuations — without them, UTF-16 code-unit semantics are not
+    observable for escaped source (``"\\uD83D\\uDE00".length`` must be 2).
+    """
+    out = []
+    i = 0
+    n = len(raw)
+    hexdigits = "0123456789abcdefABCDEF"
+    while i < n:
+        c = raw[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            out.append("\\")
+            break
+        e = raw[i]
+        if e == "n":
+            out.append("\n"); i += 1
+        elif e == "t":
+            out.append("\t"); i += 1
+        elif e == "r":
+            out.append("\r"); i += 1
+        elif e == "b":
+            out.append("\b"); i += 1
+        elif e == "f":
+            out.append("\f"); i += 1
+        elif e == "v":
+            out.append("\v"); i += 1
+        elif e == "\n" or e == "\r" or (e == "\u2028" or e == "\u2029"):
+            # LineContinuation: the escape contributes nothing.
+            i += 1
+        elif e == "0" and (i + 1 >= n or not raw[i + 1].isdigit()):
+            out.append("\0"); i += 1
+        elif e == "x":
+            h = raw[i + 1:i + 3]
+            if len(h) == 2 and all(ch in hexdigits for ch in h):
+                out.append(chr(int(h, 16))); i += 3
+            else:
+                out.append("x"); i += 1
+        elif e == "u":
+            if i + 1 < n and raw[i + 1] == "{":
+                j = raw.find("}", i + 2)
+                if j != -1:
+                    try:
+                        out.append(chr(int(raw[i + 2:j], 16))); i = j + 1
+                    except ValueError:
+                        out.append("u"); i += 1
+                else:
+                    out.append("u"); i += 1
+            else:
+                h = raw[i + 1:i + 5]
+                if len(h) == 4 and all(ch in hexdigits for ch in h):
+                    cp = int(h, 16)
+                    i += 5
+                    # R7-J01 — a high-surrogate escape immediately
+                    # followed by a low-surrogate escape forms ONE code
+                    # point in the string value (``"\ud83d\ude00"`` is a
+                    # single 😀, not two lone halves).
+                    if 0xD800 <= cp <= 0xDBFF and raw[i:i + 2] == "\\u":
+                        h2 = raw[i + 2:i + 6]
+                        if len(h2) == 4 and all(ch in hexdigits for ch in h2):
+                            cp2 = int(h2, 16)
+                            if 0xDC00 <= cp2 <= 0xDFFF:
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (cp2 - 0xDC00)
+                                i += 6
+                    out.append(chr(cp))
+                else:
+                    out.append("u"); i += 1
+        else:
+            # Identity escape (\" \\ \' \/ and SourceCharacter but not
+            # IdentifierPart): keep the escaped character itself.
+            out.append(e); i += 1
+    return "".join(out)
+
+
 def _is_digit(c: str) -> bool:
     return c.isdigit()
 
@@ -122,14 +207,7 @@ def lex(src: str, _allow_regexp: bool = True) -> list[Token]:
                 if src[i] == "\\" and i + 1 < n:
                     i += 1
                 i += 1
-            value = src[start:i]
-            value = (
-                value.replace("\\'", "'")
-                .replace('\\"', '"')
-                .replace("\\\\", "\\")
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-            )
+            value = _decode_js_escapes(src[start:i])
             i += 1
             tokens.append(Token("string", value, start - 1))
             continue
@@ -144,6 +222,11 @@ def lex(src: str, _allow_regexp: bool = True) -> list[Token]:
             i += 1
             text_start = i
             while i < n:
+                # R7-J01 — an escaped ``\` `` or ``\${`` is literal text,
+                # not a terminator / interpolation start.
+                if src[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
                 if src[i] == "`":
                     chunk = src[text_start:i]
                     tokens.append(Token("tpl", chunk, text_start))
@@ -279,6 +362,335 @@ class _UndefinedSentinel:
 
 
 _UNDEFINED = _UndefinedSentinel()
+
+
+# ---------------------------------------------------------------------------
+# R7-J01 — value-semantics helpers
+# ---------------------------------------------------------------------------
+
+class _HoleSentinel:
+    """R7-J01 — an array *hole* (``[,]``) as a distinct runtime value.
+
+    A hole is NOT ``undefined``: ``0 in [,]`` is false while
+    ``0 in [undefined]`` is true, and iteration methods
+    (forEach/map/…) skip holes but visit explicit undefined.
+    """
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "<hole>"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+_HOLE = _HoleSentinel()
+
+
+def _utf16_units(s: str) -> list:
+    """UTF-16 code units of *s*: astral chars count as TWO units."""
+    units: list = []
+    for ch in s:
+        o = ord(ch)
+        if o > 0xFFFF:
+            o -= 0x10000
+            units.append(0xD800 + (o >> 10))
+            units.append(0xDC00 + (o & 0x3FF))
+        else:
+            units.append(o)
+    return units
+
+
+def _units_to_str(units: list) -> str:
+    """Inverse of :func:`_utf16_units` (lone surrogates round-trip)."""
+    out = []
+    i = 0
+    n = len(units)
+    while i < n:
+        u = units[i]
+        if 0xD800 <= u <= 0xDBFF and i + 1 < n and 0xDC00 <= units[i + 1] <= 0xDFFF:
+            out.append(chr(0x10000 + ((u - 0xD800) << 10) + (units[i + 1] - 0xDC00)))
+            i += 2
+        else:
+            out.append(chr(u))
+            i += 1
+    return "".join(out)
+
+
+def _utf16_len(s: str) -> int:
+    """``String.length`` — UTF-16 code units, not Python code points."""
+    extra = 0
+    for ch in s:
+        if ord(ch) > 0xFFFF:
+            extra += 1
+    return len(s) + extra
+
+
+def _utf16_char_at(s: str, i: int):
+    """The single UTF-16 code unit at *i* as a 1-char string (a lone
+    surrogate half is returned as-is), or None when out of range."""
+    if i < 0:
+        return None
+    pos = 0
+    for ch in s:
+        o = ord(ch)
+        span = 2 if o > 0xFFFF else 1
+        if pos <= i < pos + span:
+            if span == 1:
+                return ch
+            o -= 0x10000
+            if i == pos:
+                return chr(0xD800 + (o >> 10))
+            return chr(0xDC00 + (o & 0x3FF))
+        pos += span
+    return None
+
+
+def _utf16_slice(s: str, start: int, end: int) -> str:
+    """Substring by UTF-16 code-unit indices (already clamped)."""
+    units = _utf16_units(s)
+    start = max(0, min(start, len(units)))
+    end = max(0, min(end, len(units)))
+    if start >= end:
+        return ""
+    return _units_to_str(units[start:end])
+
+
+def _is_array_index(key) -> bool:
+    """True when *key* is a canonical array-index string ("0", "10", …:
+    an integer 0 <= n < 2**32-1 with no leading zeros / sign / dot)."""
+    if isinstance(key, bool):
+        return False
+    if isinstance(key, int):
+        return 0 <= key < 0xFFFFFFFF
+    if isinstance(key, float):
+        return key.is_integer() and 0 <= key < 0xFFFFFFFF
+    if not isinstance(key, str) or not key:
+        return False
+    if not key.isdigit():
+        return False
+    if len(key) > 1 and key[0] == "0":
+        return False
+    return int(key) < 0xFFFFFFFF
+
+
+def _ordered_prop_keys(o: dict) -> list:
+    """R7-J01 — property enumeration order (spec §13.7.5.10 simplified):
+    integer-index keys in ascending numeric order FIRST, then the
+    remaining string keys in insertion order.  Internal ``__``-prefixed
+    host keys stay invisible."""
+    idx: list = []
+    rest: list = []
+    for k in o.keys():
+        if k.startswith("__"):
+            continue
+        if _is_array_index(k):
+            idx.append(k)
+        else:
+            rest.append(k)
+    idx.sort(key=int)
+    return idx + rest
+
+
+def _js_to_string(v) -> str:
+    """R7-J01 — ToString for the default Array.sort comparator (JS sorts
+    by the string form, UTF-16 code-unit order)."""
+    if v is None:
+        return "null"
+    if isinstance(v, _UndefinedSentinel):
+        return "undefined"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        import math as _m
+        if _m.isnan(v):
+            return "NaN"
+        if _m.isinf(v):
+            return "Infinity" if v > 0 else "-Infinity"
+        if v.is_integer():
+            return str(int(v))
+        return repr(v)
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return ",".join("" if (x is None or isinstance(x, _UndefinedSentinel) or isinstance(x, _HoleSentinel)) else _js_to_string(x) for x in v)
+    return str(v)
+
+
+def _js_to_number(v) -> float:
+    """R7-J01 — ToNumber for the callable ``Number(...)`` constructor.
+
+    Covers the primitive cases exactly (undefined→NaN, null→0,
+    bool→1/0, string→numeric prefix with the JS grammar).  Objects use
+    the toy approximation: arrays via their join form, plain objects →
+    NaN (the spec's ToPrimitive path is out of the toy's scope).
+    """
+    import math as _m
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    if v is None:
+        return 0.0
+    if isinstance(v, _UndefinedSentinel):
+        return float("nan")
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return 0.0
+        try:
+            low = s.lower()
+            if low in ("infinity", "+infinity"):
+                return float("inf")
+            if low == "-infinity":
+                return float("-inf")
+            if low.startswith(("0x", "-0x", "+0x")):
+                neg = low.startswith("-")
+                hexpart = s[3:] if neg else s[2:]
+                try:
+                    val = float(int(hexpart, 16))
+                    return -val if neg else val
+                except ValueError:
+                    return float("nan")
+            return float(s)
+        except ValueError:
+            return float("nan")
+    if isinstance(v, list):
+        return _js_to_number(_js_to_string(v))
+    return float("nan")
+
+
+def _js_same_value(x, y) -> bool:
+    """R7-J01 — SameValue(x, y) for ``Object.is``: like ``===`` except
+    +0 !== -0 and NaN === NaN."""
+    if isinstance(x, bool) or isinstance(y, bool):
+        return isinstance(x, bool) and isinstance(y, bool) and x == y
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+        import math as _m
+        x_nan = isinstance(x, float) and _m.isnan(x)
+        y_nan = isinstance(y, float) and _m.isnan(y)
+        if x_nan or y_nan:
+            return x_nan and y_nan
+        if x == 0 and y == 0:
+            return _m.copysign(1.0, x) == _m.copysign(1.0, y)
+        return x == y
+    if isinstance(x, str) and isinstance(y, str):
+        return x == y
+    if x is None or y is None:
+        return x is None and y is None
+    if isinstance(x, _UndefinedSentinel) or isinstance(y, _UndefinedSentinel):
+        return isinstance(x, _UndefinedSentinel) and isinstance(y, _UndefinedSentinel)
+    return x is y
+
+
+# JS WhiteSpace + LineTerminator (the set parseInt/parseFloat strip).
+_JS_WS = " \t\n\r\f\v\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
+
+def _js_string_to_number(s: str) -> float:
+    """R7-J01 — ToNumber(string): "" / whitespace-only → 0, "Infinity"
+    forms → ±inf, "0x…" → hex, anything else unparsable → NaN."""
+    t = s.strip(_JS_WS)
+    if t == "":
+        return 0.0
+    low = t.lower()
+    if low in ("infinity", "+infinity"):
+        return float("inf")
+    if low == "-infinity":
+        return float("-inf")
+    if low.startswith(("0x", "-0x", "+0x")):
+        neg = low.startswith("-")
+        hexpart = t[3:] if neg else t[2:]
+        try:
+            val = float(int(hexpart, 16))
+            return -val if neg else val
+        except ValueError:
+            return float("nan")
+    try:
+        return float(t)
+    except ValueError:
+        return float("nan")
+
+
+def _js_parse_int(string, radix=0):
+    """R7-J01 — global ``parseInt(string, radix)`` with the ECMAScript
+    grammar: leading whitespace/sign, ``0x`` auto-detect for radix 0,
+    ``0x`` strip for radix 16, digits valid in the radix, NaN when no
+    digit parses (``parseInt("10", 16)`` → 16)."""
+    if isinstance(string, bool):
+        string = "true" if string else "false"
+    elif string is None:
+        string = "null"
+    elif isinstance(string, _UndefinedSentinel):
+        string = "undefined"
+    elif isinstance(string, (int, float)):
+        string = _js_to_string(string)
+    elif isinstance(string, list):
+        string = _js_to_string(string)
+    s = str(string).lstrip(_JS_WS)
+    sign = 1
+    if s.startswith("+"):
+        s = s[1:]
+    elif s.startswith("-"):
+        sign = -1
+        s = s[1:]
+    r = 0
+    if isinstance(radix, bool):
+        r = 0
+    elif isinstance(radix, (int, float)):
+        r = int(radix)
+    if r != 0 and (r < 2 or r > 36):
+        return float("nan")
+    if r == 16 and s[:2].lower() == "0x":
+        s = s[2:]
+    elif r == 0 and s[:2].lower() == "0x":
+        r = 16
+        s = s[2:]
+    elif r == 0:
+        r = 10
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"[:r]
+    i = 0
+    while i < len(s) and s[i].lower() in digits:
+        i += 1
+    if i == 0:
+        return float("nan")
+    return sign * int(s[:i], r)
+
+
+def _js_parse_float(string):
+    """R7-J01 — global ``parseFloat``: leading numeric prefix
+    (sign / digits / fraction / exponent / Infinity), NaN otherwise."""
+    import math as _m
+    import re as _re
+    if string is None:
+        return float("nan")
+    if isinstance(string, bool):
+        return float("nan")  # ToString(true)="true" has no numeric prefix
+    if isinstance(string, _UndefinedSentinel):
+        return float("nan")
+    if isinstance(string, (int, float)):
+        return float(string)
+    s = str(string).lstrip(_JS_WS)
+    low = s.lower()
+    if low.startswith("infinity") or low.startswith("+infinity"):
+        return float("inf")
+    if low.startswith("-infinity"):
+        return float("-inf")
+    m = _re.match(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", s)
+    if not m:
+        return float("nan")
+    try:
+        return float(m.group(0))
+    except ValueError:
+        return float("nan")
 
 
 @dataclass
@@ -488,6 +900,12 @@ class MethodCall(JNode):
 @dataclass
 class ArrayLit(JNode):
     elements: list  # list of JNode; an element may be an ArraySpread node (P16.1)
+
+
+# R7-J01 — an elided array element (``[,]``): a HOLE, not undefined.
+@dataclass
+class ArrayHole(JNode):
+    """Marker node for an array-literal hole (``[1, , 3]``)."""
 
 
 # P16.1 — array / call-argument spread
@@ -1118,11 +1536,13 @@ class Parser:
                     # additive: right continues at ADD_SUB + 1 so a
                     # trailing `*` / `%` / `**` binds tighter.
                     right_prec = prec + 1
-                elif op in ("==", "!=", "===", "!==", "<", ">", "<=", ">="):
+                elif op in ("==", "!=", "===", "!==", "<", ">", "<=", ">=", "in"):
                     # comparison: right operand continues at LOGICAL_AND
                     # level so `a === b && c` → `(a===b) && c`
                     # (LOGICAL_AND=3 < CMP+1=5 → stop).  `**` (prec 7)
                     # and `*` (prec 6) are included in the right operand.
+                    # R7-J01 — ``in`` shares the relational level
+                    # (``0 in [,]`` / ``"x" in obj``).
                     right_prec = CMP + 1
                 elif op == "**":
                     # P0 (agent report) — `**` is RIGHT-associative in JS:
@@ -1148,7 +1568,7 @@ class Parser:
             return MUL_DIV
         if t.value in ("+", "-"):
             return ADD_SUB
-        if t.value in ("==", "!=", "===", "!==", "<", ">", "<=", ">="):
+        if t.value in ("==", "!=", "===", "!==", "<", ">", "<=", ">=", "in"):
             return CMP
         if t.value == "&&":
             return LOGICAL_AND
@@ -1368,7 +1788,9 @@ class Parser:
         if t.kind == "tpl":
             parts: list = []
             # Consume the first text chunk.
-            parts.append(self.next().value)
+            # R7-J01 — template chunks decode the same escape sequences
+            # as string literals (``\uXXXX`` etc.).
+            parts.append(_decode_js_escapes(self.next().value))
             while True:
                 nt = self.peek()
                 if nt.kind == "open_tpl":
@@ -1380,7 +1802,7 @@ class Parser:
                     # text chunk (or close_tpl if the template ends with one).
                     nnt = self.peek()
                     if nnt.kind == "tpl":
-                        parts.append(self.next().value)
+                        parts.append(_decode_js_escapes(self.next().value))
                     else:
                         break
                 else:
@@ -1531,6 +1953,9 @@ class Parser:
         P16.1 — supports ``...expr`` spread elements: ``[...xs, 3]``.
         A spread element is recorded as an :class:`ArraySpread` node so
         the interpreter can splice the iterable's elements in place.
+        R7-J01 — supports elided elements (``[1, , 3]``): an empty slot
+        is recorded as an :class:`ArrayHole` marker so the evaluator can
+        store a real hole (``0 in [,]`` → false).
         """
         self.expect("[")
         elems: list = []
@@ -1538,10 +1963,19 @@ class Parser:
             self.next()
             return ArrayLit(elems)
         while True:
+            if self.peek().value == "]":
+                # trailing comma (``[a, ]``) adds NO extra slot
+                break
             # P16.1 — array spread: ``...expr`` in element position.
             if self.peek().value == "...":
                 self.next()
                 elems.append(ArraySpread(self.parse_expression_arr_el()))
+            elif self.peek().value == ",":
+                # R7-J01 — elided slot: ``[1, , 3]`` (interior) or the
+                # leading comma of ``[,]``.  A comma *before* ``]`` is a
+                # trailing comma (handled by the break above), so it adds
+                # no slot — ``[1, ].length === 1``.
+                elems.append(ArrayHole())
             else:
                 # B04 — 数组元素走 parse_expression_arr_el()（允许
                 # 三元/赋值，但 *不*允许序列逗号），元素间逗号由
@@ -2161,6 +2595,110 @@ class _BudgetExceeded(Exception):
     cancellation instead of hanging the GUI thread."""
 
 
+# ---------------------------------------------------------------------------
+# R7-S01 — JS→Python host object capability boundary.
+#
+# Round-7 security audit (S01) found that the interpreter's generic
+# ``getattr`` / ``setattr`` fallbacks let page script reach *arbitrary*
+# Python attributes of host objects — ``location._host.doc_url``,
+# ``localStorage.__class__.__name__``, ``fetch.__self__._js_step_budget``
+# all read back private host state.  Shielding ``__``-prefixed names is
+# not enough (``_host`` is already outside that prefix).
+#
+# Every Python object exposed to page script must therefore declare an
+# explicit capability table (readable properties / writable properties /
+# callable methods).  Anything not on the table reads as ``undefined``
+# and writes are dropped — the interpreter never performs a blind
+# getattr/setattr on a host object again.
+#
+# The table is keyed by ``type(obj).__name__`` (several host classes are
+# created per-Host inside factory methods, so identity keying would not
+# match).  Register with :func:`register_host_object_policy`.
+# ---------------------------------------------------------------------------
+
+class _HostObjectPolicy:
+    """JS-visible capability table for one host object class."""
+
+    __slots__ = ("read", "write", "call")
+
+    def __init__(self, read=(), write=(), call=()):
+        self.read = frozenset(read)
+        self.write = frozenset(write)
+        self.call = frozenset(call)
+
+
+_HOST_OBJECT_POLICIES: dict = {}
+
+
+def register_host_object_policy(cls, policy: "_HostObjectPolicy") -> None:
+    """Register (or replace) the JS capability table for *cls*."""
+    _HOST_OBJECT_POLICIES[cls.__name__] = policy
+
+
+def _host_policy_for(obj):
+    return _HOST_OBJECT_POLICIES.get(type(obj).__name__)
+
+
+def host_object_read(obj, prop: str):
+    """R7-S01 — whitelisted property read on a Python host object.
+
+    Returns the attribute value when *prop* is on the class's read
+    table (or is a declared static of a callable, e.g. ``Date.now``);
+    otherwise the JS ``undefined`` sentinel (so ``typeof`` reports
+    ``"undefined"``, exactly like a missing property in a browser).
+    Never falls back to a bare ``getattr``.
+    """
+    pol = _host_policy_for(obj)
+    if pol is not None and prop in pol.read:
+        try:
+            return getattr(obj, prop, None)
+        except Exception:
+            return None
+    if callable(obj):
+        statics = getattr(obj, "__js_statics__", ())
+        if prop in statics:
+            try:
+                return getattr(obj, prop, None)
+            except Exception:
+                return None
+    return _UNDEFINED
+
+
+def host_object_write(obj, prop: str, value) -> bool:
+    """R7-S01 — whitelisted property write on a Python host object.
+
+    Returns True when the write was performed; False (dropped, JS
+    strict-mode TypeError semantics approximated by a silent no-op)
+    when *prop* is not on the class's write table.
+    """
+    pol = _host_policy_for(obj)
+    if pol is not None and prop in pol.write:
+        try:
+            setattr(obj, prop, value)
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def host_object_callable(obj, method: str):
+    """R7-S01 — whitelisted method lookup on a Python host object.
+
+    Returns the bound method when *method* is on the class's call
+    table (or a declared static of a callable, e.g. the
+    ``String.fromCharCode`` / ``Date.now`` method-call form), else
+    ``None``.
+    """
+    pol = _host_policy_for(obj)
+    if pol is not None and method in pol.call:
+        return getattr(obj, method, None)
+    if callable(obj):
+        statics = getattr(obj, "__js_statics__", ())
+        if method in statics:
+            return getattr(obj, method, None)
+    return None
+
+
 class Interpreter:
     def __init__(self, host: "Host"):
         self.host = host
@@ -2188,12 +2726,14 @@ class Interpreter:
 
     @staticmethod
     def truthy(v: Any) -> bool:
+        # R7-J01 — ToBoolean: NaN is FALSY (Python ``nan != 0`` is True,
+        # so the naive numeric branch made NaN truthy).
         if v is None or isinstance(v, _UndefinedSentinel):
             return False
         if isinstance(v, bool):
             return v
         if isinstance(v, (int, float)):
-            return v != 0
+            return v == v and v != 0
         if isinstance(v, str):
             return len(v) > 0
         return True
@@ -2415,6 +2955,11 @@ class Interpreter:
                 if 0 <= idx < len(obj):
                     return obj[idx]
                 return None
+            # R7-J01 — string bracket access: ``"abc"[0]`` / ``"😀"[0]``
+            # index by UTF-16 code unit (a lone surrogate half is a
+            # valid 1-char result, exactly like V8).
+            if isinstance(obj, str) and isinstance(idx, (int, float)) and not isinstance(idx, bool):
+                return _utf16_char_at(obj, int(idx))
             # P0 (agent report) — dict index access: JS `obj[key]` where
             # key is a number or string.  Try the exact key first, then
             # the str(int) form so `m[0]` works on a dict with "0" keys
@@ -2569,10 +3114,9 @@ class Interpreter:
                     args = [self.eval(a) for a in (node.call_args or [])]
                     return base(*args)
                 return None
-            attr = getattr(base, str(key), None)
-            if attr is not None:
-                return attr
-            return None
+            # R7-S01 — same whitelisted accessor as eval_member: host
+            # objects only expose their declared capability table.
+            return host_object_read(base, str(key))
         if isinstance(node, MethodCall):
             # P12.2 — `super.method(args)`: the parser produces
             # MethodCall(Ident("super"), ...). Resolve via the current
@@ -2653,6 +3197,10 @@ class Interpreter:
                         out.extend(src)
                     else:
                         out.append(src)
+                elif isinstance(e, ArrayHole):
+                    # R7-J01 — elided element: store a real hole so
+                    # ``0 in [,]`` is false and iteration methods skip it.
+                    out.append(_HOLE)
                 else:
                     out.append(self.eval(e))
             return out
@@ -2829,12 +3377,15 @@ class Interpreter:
     # coercion for that one case.
     @staticmethod
     def _js_strict_eq(l, r):
-        # P0 (agent report) — JS booleans are *numbers* (true===1,
-        # false===0).  Treat bool/number pairs by value.
-        if isinstance(l, bool) and isinstance(r, (int, float)) and not isinstance(r, bool):
-            return (1 if l else 0) == r
-        if isinstance(r, bool) and isinstance(l, (int, float)) and not isinstance(l, bool):
-            return (1 if r else 0) == l
+        # R7-J01 — JS strict equality is TYPE-sensitive: ``true === 1``
+        # is false (Boolean vs Number are different types).  The legacy
+        # code coerced bool/number pairs by value, which the round-7
+        # semantic probe ``strict_bool_number`` flags as a mismatch
+        # against Node/V8.  Python's ``bool`` being an ``int`` subclass
+        # makes the naive ``isinstance`` check wrong, so handle booleans
+        # as their own type first.
+        if isinstance(l, bool) or isinstance(r, bool):
+            return isinstance(l, bool) and isinstance(r, bool) and l == r
         # P0 (agent report) — JS numbers compare numerically regardless
         # of int/float representation (0 === 0.0, 1 === 1.0).
         if isinstance(l, (int, float)) and isinstance(r, (int, float)):
@@ -2856,6 +3407,59 @@ class Interpreter:
         if type(l) is type(r):
             return l == r
         # null === undefined is False in JS (distinct values).
+        return False
+
+    @staticmethod
+    def _js_loose_eq(l, r):
+        """R7-J01 — abstract equality ``==`` (spec §7.2.15), extracted so
+        ``!=`` is a true negation (the legacy ``!=`` re-implemented the
+        coercion and diverged from ``==`` on the empty-string case)."""
+        # null / undefined are loosely equal to each other only.
+        if (l is None or isinstance(l, _UndefinedSentinel)) and \
+           (r is None or isinstance(r, _UndefinedSentinel)):
+            return True
+        if l is None or isinstance(l, _UndefinedSentinel):
+            return False
+        if r is None or isinstance(r, _UndefinedSentinel):
+            return False
+        # Booleans coerce to numbers first.
+        if isinstance(l, bool):
+            l = 1.0 if l else 0.0
+        if isinstance(r, bool):
+            r = 1.0 if r else 0.0
+        # P1 (assessment report) — JS ToPrimitive(array): an Array's
+        # ``valueOf`` is its own elements as a primitive value (empty →
+        # "" → 0; single → that element; multi → joined string).  Reduce
+        # any array operand to its numeric primitive *before* the
+        # numeric/bool/str coercion branches so that ``[] == false`` and
+        # ``[] == 0`` both evaluate true (probe_equality's expected
+        # [true, true, …]).
+        def _array_to_num(v):
+            if not v:
+                return 0.0
+            if len(v) == 1:
+                el = v[0]
+                if isinstance(el, list):
+                    return _array_to_num(el)
+                if isinstance(el, (int, float)):
+                    return el
+                return 0.0
+            return 0.0  # multi-element: string join; not a number
+        if isinstance(l, list):
+            l = _array_to_num(l)
+        if isinstance(r, list):
+            r = _array_to_num(r)
+        # Numbers compare numerically regardless of int/float (0 == 0.0).
+        if isinstance(l, (int, float)) and isinstance(r, (int, float)):
+            return l == r
+        # R7-J01 — ToNumber("") is 0, so ``'' == 0`` is TRUE (the legacy
+        # ``float(l)`` raised on the empty string and made it false).
+        if isinstance(l, str) and isinstance(r, (int, float)):
+            return _js_string_to_number(l) == r
+        if isinstance(r, str) and isinstance(l, (int, float)):
+            return l == _js_string_to_number(r)
+        if type(l) is type(r):
+            return l == r
         return False
 
     def eval_binary(self, node: Binary) -> Any:
@@ -2925,91 +3529,12 @@ class Interpreter:
             if isinstance(l, int) and isinstance(r, int):
                 return int(result)
             return result
-        if op in ("==", "==="):
-            if op == "===":
-                # P0 (agent report) — JS strict equality: bools are
-                # numbers (true===1, false===0), null/undefined are
-                # distinct.
-                return self._js_strict_eq(l, r)
-            if op == "==":
-                # P0 (GLM report) — JS loose equality with type coercion:
-                # ``1 == "1"`` is true (both coerce to the number 1),
-                # ``null == undefined`` is true, booleans coerce to
-                # numbers before comparing.
-                # P0 (agent report) — undefined participates in loose ==
-                # the same way null does (both are falsy "nothing" values).
-                if (l is None or isinstance(l, _UndefinedSentinel)) and \
-                   (r is None or isinstance(r, _UndefinedSentinel)):
-                    return True
-                # P1 (assessment report) — JS ToPrimitive(array): an
-                # Array's ``valueOf`` is its own elements as a primitive
-                # value (empty → "" → 0; single → that element; multi →
-                # joined string).  Reduce any array operand to its
-                # numeric primitive *before* the numeric/bool/str
-                # coercion branches so that ``[] == false`` and
-                # ``[] == 0`` both evaluate true (probe_equality's
-                # expected [true, true, …]).
-                def _array_to_num(v):
-                    if not v:
-                        return 0.0
-                    if len(v) == 1:
-                        el = v[0]
-                        if isinstance(el, list):
-                            return _array_to_num(el)
-                        if isinstance(el, (int, float)):
-                            return el
-                        return 0.0
-                    return 0.0  # multi-element: string join; not a number
-                if isinstance(l, list):
-                    l = _array_to_num(l)
-                if isinstance(r, list):
-                    r = _array_to_num(r)
-                # P0 (agent report) — JS numbers compare numerically
-                # regardless of int/float representation (0 == 0.0).
-                if isinstance(l, (int, float)) and isinstance(r, (int, float)) \
-                        and not isinstance(l, bool) and not isinstance(r, bool):
-                    return l == r
-                if type(l) is type(r):
-                    return l == r
-            # Cross-type coercion (loose == only).
-            if isinstance(l, bool) and isinstance(r, (int, float)):
-                return (1 if l else 0) == r
-            if isinstance(r, bool) and isinstance(l, (int, float)):
-                return l == (1 if r else 0)
-            if isinstance(l, str) and isinstance(r, (int, float)):
-                try:
-                    return float(l) == r
-                except ValueError:
-                    return False
-            if isinstance(r, str) and isinstance(l, (int, float)):
-                try:
-                    return l == float(r)
-                except ValueError:
-                    return False
-            if (l is None and r is None) or (l is None and r is None):
-                return True
-            return False
-        if op in ("!=", "!=="):
-            if op == "!==":
-                return not self._js_strict_eq(l, r)
-            # P0 (GLM report) — negation of loose ==.
-            if type(l) is type(r):
-                return l != r
-            if isinstance(l, bool) and isinstance(r, (int, float)):
-                return (1 if l else 0) != r
-            if isinstance(r, bool) and isinstance(l, (int, float)):
-                return l != (1 if r else 0)
-            if isinstance(l, str) and isinstance(r, (int, float)):
-                try:
-                    return float(l) != r
-                except ValueError:
-                    return True
-            if isinstance(r, str) and isinstance(l, (int, float)):
-                try:
-                    return l != float(r)
-                except ValueError:
-                    return True
-            return l != r
+        if op in ("==", "!=", "===", "!=="):
+            if op in ("===", "!=="):
+                eq = self._js_strict_eq(l, r)
+            else:
+                eq = self._js_loose_eq(l, r)
+            return eq if op in ("==", "===") else (not eq)
         if op == "<":
             return l < r
         if op == ">":
@@ -3018,6 +3543,50 @@ class Interpreter:
             return l <= r
         if op == ">=":
             return l >= r
+        # R7-J01 — relational ``in`` operator: property presence.
+        # ``"x" in {x: undefined}`` is true (presence, not value);
+        # ``0 in [,]`` is false (a hole is an absent property).
+        if op == "in":
+            if isinstance(r, list):
+                if isinstance(l, bool) or not isinstance(l, (int, float, str)):
+                    return False
+                if isinstance(l, str):
+                    # R7-J01 — the only non-index own property a toy
+                    # array carries is ``length``.
+                    if l == "length":
+                        return True
+                    if not _is_array_index(l):
+                        return False
+                    idx = int(l)
+                else:
+                    idx = int(l)
+                    if idx < 0:
+                        return False
+                return 0 <= idx < len(r) and not isinstance(r[idx], _HoleSentinel)
+            if isinstance(r, dict):
+                if r.get("__regexp__") or r.get("__promise__"):
+                    return False
+                if isinstance(l, bool):
+                    return False
+                if isinstance(l, (int, float)):
+                    key = str(int(l)) if float(l).is_integer() else str(l)
+                    return key in r
+                if l is None:
+                    return "null" in r
+                if isinstance(l, _UndefinedSentinel):
+                    return "undefined" in r
+                return str(l) in r
+            if isinstance(r, str):
+                if isinstance(l, bool) or not isinstance(l, (int, float)):
+                    return False
+                idx = int(l)
+                return 0 <= idx < _utf16_len(r)
+            # R7-J01 — host objects (Date / Map / …): only the whitelisted
+            # read table is visible, so ``"x" in hostObj`` mirrors it.
+            pol = _host_policy_for(r)
+            if pol is not None and isinstance(l, str):
+                return l in pol.read
+            return False
         raise TypeError(f"unsupported operator {op}")
 
     def eval_unary(self, node: Unary) -> Any:
@@ -3156,14 +3725,21 @@ class Interpreter:
                 return v
             # P30.2 — parentElement / children / tagName are @property;
             # P30.3 — method surface (appendChild, addEventListener, …) is
-            # Python methods.  Fall back to getattr for both.
-            attr = getattr(obj, prop, None)
-            return attr
+            # Python methods.  R7-S01 — both are served through the
+            # whitelisted host-object accessor (never a bare getattr, so
+            # ``el.node`` / ``el._host_ref`` stay invisible to script).
+            return host_object_read(obj, prop)
         if isinstance(obj, dict):
             if "__doc__" in obj:
                 fn = self.host.eval_doc_method(obj["__doc__"], prop)
                 if fn is not None:
                     return fn
+                # R7-J02 — document.readyState 是活属性：读 Host 的
+                # 当前生命周期状态（解析前 "loading"，解析后
+                # "interactive"，脚本+微任务排空后 "complete"），不读
+                # dict 里缓存的旧快照。
+                if prop == "readyState":
+                    return self.host._document_ready_state
                 # P30.1 — document.querySelector (full CSS selector, first match).
                 if prop == "querySelector":
                     root = obj["__doc__"]
@@ -3218,14 +3794,17 @@ class Interpreter:
             return None
         if isinstance(obj, str):
             if prop == "length":
-                return len(obj)
+                # R7-J01 — String.length counts UTF-16 code units:
+                # ``"😀".length === 2`` (surrogate pair), not 1.
+                return _utf16_len(obj)
             return None
-        # P4.2 — arbitrary Python objects (e.g. _ToyDate, regexp dicts,
-        # callable objects): return the attribute if it exists, else None.
-        attr = getattr(obj, prop, None)
-        if attr is not None:
-            return attr
-        return None
+        # R7-S01 — arbitrary Python host objects (Date instances, Map /
+        # Set / XHR / WebSocket / URL / Storage / location, …): only the
+        # class's whitelisted properties are visible.  The legacy bare
+        # ``getattr(obj, prop)`` exposed private host state
+        # (``location._host``, ``localStorage.__class__``,
+        # ``fetch.__self__``); everything off-table reads as undefined.
+        return host_object_read(obj, prop)
 
     def eval_assign(self, node: Assign) -> Any:
         value = self.eval(node.value)
@@ -3265,10 +3844,19 @@ class Interpreter:
                 # are visible to the host's _fire() / call_method
                 # dispatch.  The legacy path silently dropped these
                 # assignments (else: pass), so callbacks never fired.
-                try:
-                    setattr(obj, prop, rhs)
-                except Exception:
-                    pass
+                #
+                # R7-S01 — the write now goes through the class's
+                # whitelist: host objects declare their writable
+                # surface (``_Xhr``: onload/onerror/onreadystatechange);
+                # anything else is dropped instead of blindly
+                # ``setattr``-ing private host state.
+                if not host_object_write(obj, prop, rhs):
+                    try:
+                        self.host.log(
+                            f"blocked write to host object "
+                            f"{type(obj).__name__}.{prop}")
+                    except Exception:
+                        pass
             return rhs
         if isinstance(target, Ident):
             rhs = value
@@ -3959,40 +4547,74 @@ class DomElement:
 
     # --- P30.4 — custom events ------------------------------------------------
 
-    def add_event_listener(self, event_name: str, listener) -> None:
+    def add_event_listener(self, event_name: str, listener,
+                           options: Any = None) -> None:
         """P30.4 — register a custom-event listener on this element.
         ``listener`` is a JS function (closure); called with the event
-        dict when :meth:`dispatch_event` fires the same event name."""
+        object when :meth:`dispatch_event` fires the same event name.
+
+        R7-J03 — *options* (a dict or the legacy boolean capture flag)
+        carries ``capture`` / ``once`` / ``passive``.  ``once`` removes
+        the entry after its first invocation; ``capture`` moves the
+        listener to the capture phase of the DOM event path (root →
+        target) instead of the bubble phase (target → root)."""
         registry = self._listeners_of()
-        registry.setdefault(str(event_name), []).append(listener)
+        entries = registry.setdefault(str(event_name), [])
+        capture = False
+        once = False
+        passive = False
+        if isinstance(options, dict):
+            capture = bool(options.get("capture"))
+            once = bool(options.get("once"))
+            passive = bool(options.get("passive"))
+        elif isinstance(options, bool):
+            capture = options
+        entries.append({"fn": listener, "capture": capture,
+                        "once": once, "passive": passive})
+
+    def remove_event_listener(self, event_name: str, listener,
+                              options: Any = None) -> None:
+        """R7-J03 — unregister a listener (matching fn + capture flag)."""
+        registry = self._listeners_of()
+        entries = registry.get(str(event_name))
+        if not entries:
+            return
+        capture = False
+        if isinstance(options, dict):
+            capture = bool(options.get("capture"))
+        elif isinstance(options, bool):
+            capture = options
+        for entry in list(entries):
+            if entry["fn"] is listener and entry["capture"] == capture:
+                entries.remove(entry)
 
     def _listeners_of(self) -> dict:
         """The Host-owned listener registry for this element's node
-        (keyed by node so re-wrapped elements keep the same listeners)."""
+        (keyed by node so re-wrapped elements keep the same listeners).
+        R7-J03 — each entry is ``{"fn", "capture", "once", "passive"}``
+        (the legacy bare-callable list is no longer stored)."""
         host = self._host_ref
         if host is None:
             return {}
         return host._listeners.setdefault(self.node, {})
 
-    def dispatch_event(self, event_name: str, detail: Any = None) -> bool:
-        """P30.4 — fire a custom event synchronously: every listener
-        registered for *event_name* on this element is called in
-        registration order with an event object
-        ``{"type": …, "target": <this element>, "detail": …}``.
-        Returns ``True`` (cancelable events are not cancelled in the
-        toy engine)."""
-        ev = {"type": str(event_name), "target": self, "detail": detail}
-        registry = self._listeners_of()
-        for fn in list(registry.get(str(event_name), [])):
-            try:
-                r = fn(ev)
-                if r is False:
-                    # toy: report cancel but keep calling remaining handlers
-                    ev["defaultPrevented"] = True
-            except Exception as e:
-                if self._host_ref is not None:
-                    self._host_ref.log(f"listener error: {e}")
-        return True
+    def dispatch_event(self, event_name: str, detail: Any = None,
+                       bubbles: bool = True,
+                       cancelable: bool = True) -> bool:
+        """P30.4 + R7-J03 — fire an event through the DOM event path.
+
+        The event walks the full ancestor chain with the spec's phase
+        layering: capture listeners (root → target), target listeners,
+        then bubble listeners (target → root), honouring
+        ``stopPropagation`` / ``stopImmediatePropagation`` /
+        ``preventDefault`` and ``once`` removal.  Returns False when a
+        cancelable event's default was prevented (the DOM contract)."""
+        host = self._host_ref
+        if host is None:
+            return True
+        return host.dispatch_dom_event(
+            self, event_name, detail=detail, bubbles=bubbles,
+            cancelable=cancelable)
 
 
 class Host:
@@ -4047,6 +4669,12 @@ class Host:
         # resolve relative <script src> attributes against the cache
         # the URL pipeline returns (which is keyed by absolute URL).
         self.doc_url: str = ""
+        # R7-S02 — the document's parsed CSP directives, stored when
+        # the URL pipeline runs the scripts so that LATER script
+        # entry points (inline on* event handlers dispatched by the
+        # GUI/CLI after load) share the exact same policy instead of
+        # silently running ungated.  None = no CSP (allow all).
+        self.csp_directives: dict | None = None
         # R4 stage 3 — optional network transport: an object with a
         # ``fetch(url) -> net.HttpResponse | None`` method (the URL
         # pipelines wrap a shared keep-alive ``net.HttpClient`` in a
@@ -4067,7 +4695,24 @@ class Host:
         # "the page rendered, but N script(s) failed" WITHOUT treating
         # it as a network / connection error (B03 step 4).  Network
         # failures stay in the HttpClient's own error path.
+        # R7-J03 — ``_budget_cancelled`` is set by execute() when a
+        # script was killed by the step budget; the script-element
+        # boundary reads + clears it to record the cancellation
+        # structurally (execute itself must not raise — P0 contract).
         self.script_errors: list[dict] = []
+        self._budget_cancelled: bool = False
+        # R7-J02 — document 生命周期状态（HTML 事件循环 §2.7）。
+        # ``_document_ready_state``：``"loading"`` → 解析结束 ``"interactive"``
+        # → 脚本 + 微任务排空后 ``"complete"``。``_document_events``：
+        # ``DOMContentLoaded`` / ``load`` 的监听器注册表（与
+        # :meth:`add_event_listener` 的节点级 registry 同形，键是
+        # 事件名）。``_document_fired``：已派发过的事件名集合——脚本
+        # 里 ``addEventListener`` 注册时若事件已触发过（状态已推进），
+        # 立即结算监听器（真实浏览器：已派发事件的监听器注册时不重放，
+        # 但 toy 语义选择"注册即结算"以保持脚本可见性，见 J02 注释）。
+        self._document_ready_state: str = "loading"
+        self._document_events: dict[str, list] = {}
+        self._document_fired: set[str] = set()
         self.globals: dict = {
             "document": self._document_obj(),
             "console": self._console_obj(),
@@ -4109,13 +4754,23 @@ class Host:
             # surface (network, observer callbacks) is out of scope
             # for the kernel.
             "XMLHttpRequest": self._xhr_ctor(),
+            # R7-J03 — cancellation surface for fetch/XHR.
+            "AbortController": self._abort_controller_ctor(),
+            "AbortSignal": self._abort_signal_ctor(),
             "MutationObserver": self._mutation_observer_ctor(),
             "queueMicrotask": self._queue_microtask,
             "ResizeObserver": self._resize_observer_ctor(),
             # P6.3 — Object built-in
             "Object": self._object_obj(),
-            # P9.3 — Number built-in
+            # P9.3 — Number built-in (R7-J01: callable constructor)
             "Number": self._number_obj(),
+            # R7-J01 — Boolean built-in (probe truthy_array/truthy_object:
+            # ``Boolean([])`` / ``Boolean({})`` are true) plus the global
+            # parseInt / parseFloat functions (probe parseint_radix:
+            # ``parseInt("10", 16)`` → 16).
+            "Boolean": self._boolean_obj(),
+            "parseInt": _js_parse_int,
+            "parseFloat": _js_parse_float,
             # P10.2 — Map / Set built-ins
             "Map": self._map_ctor(),
             "Set": self._set_ctor(),
@@ -4169,6 +4824,15 @@ class Host:
             "body": _find_tag("body"),
             "documentElement": _find_tag("html"),
             "head": _find_tag("head"),
+            # R7-J02 — document 生命周期属性：readyState 是**活**的
+            # （解析前 "loading"，解析后 "interactive"，脚本+微任务排空
+            # 后 "complete"）。这里存一个指向 Host 状态的快照；真正的
+            # 属性读走 ``eval_doc_property``（见下）拿到最新值。
+            "readyState": self._document_ready_state,
+            # R7-J02 — document.addEventListener 的 document 级事件
+            # 注册表（DOMContentLoaded / load）。``__events__`` 让
+            # 属性读路径路由到 :meth:`_doc_add_event_listener`。
+            "__events__": self._document_events,
         }
 
     # P30.1 — full-selector document accessors (reuse css.Selector engine).
@@ -4214,9 +4878,13 @@ class Host:
                     # and js_optional_nullish probes).  Recurse through
                     # the elements with the same number/bool/str
                     # formatting the top-level args use.
+                    # R7-J01 — an elided element (hole) renders as
+                    # ``empty`` (V8 groups runs as ``<N empty item>``).
                     inner = []
                     for el in a:
-                        if el is None:
+                        if isinstance(el, _HoleSentinel):
+                            inner.append("empty")
+                        elif el is None:
                             inner.append("null")
                         elif isinstance(el, _UndefinedSentinel):
                             inner.append("undefined")
@@ -4576,24 +5244,34 @@ class Host:
         # P29.3 — Date.parse / Date.UTC (toy: parse ISO-8601 subset + ms).
         date_ctor.parse = staticmethod(parse_fn)
         date_ctor.UTC = staticmethod(utc_fn)
+        # R7-S01 — declare the JS-visible statics so the whitelisted
+        # accessor can serve ``Date.now`` / ``Date.parse`` / ``Date.UTC``
+        # without falling back to a bare getattr (which would also expose
+        # ``Date.__self__``-style private attributes).
+        date_ctor.__js_statics__ = ("now", "parse", "UTC")
         return date_ctor
 
     def _object_obj(self) -> dict:
-        """P6.3 — Object.keys / Object.values built-in."""
+        """P6.3 — Object.keys / Object.values built-in.
+        R7-J01 — enumeration follows the spec's property order:
+        integer-index keys ascending FIRST, then insertion order
+        (``Object.keys({"10":"a","2":"b","x":"c"})`` → ``2,10,x``)."""
         def keys(o):
             if isinstance(o, dict):
-                # Strip internal keys (those starting with "__")
-                return [k for k in o.keys() if not k.startswith("__")]
+                return _ordered_prop_keys(o)
             return []
         def values(o):
             if isinstance(o, dict):
-                return [o[k] for k in o if not k.startswith("__")]
+                return [o[k] for k in _ordered_prop_keys(o)]
             return []
         # P8.3 — Object.entries: returns [ [key, value], … ] pairs.
         def entries(o):
             if isinstance(o, dict):
-                return [[k, o[k]] for k in o if not k.startswith("__")]
+                return [[k, o[k]] for k in _ordered_prop_keys(o)]
             return []
+        # R7-J01 — Object.is(x, y): SameValue (NaN===NaN, +0!==-0).
+        def is_same(x, y):
+            return _js_same_value(x, y)
         # P9.3 — Object.assign(target, …sources): shallow-merge source dicts.
         def assign(target, *sources):
             if not isinstance(target, dict):
@@ -4604,7 +5282,8 @@ class Host:
                         if not k.startswith("__"):
                             target[k] = v
             return target
-        return {"keys": keys, "values": values, "entries": entries, "assign": assign}
+        return {"keys": keys, "values": values, "entries": entries,
+                "assign": assign, "is": is_same}
 
     # P1 (assessment report) — CSS namespace object (the browser's
     # ``CSS.supports`` static method).  V8: ``typeof CSS === "object"``
@@ -4818,7 +5497,14 @@ class Host:
             self._microtasks.append((cb, True, None, "micro"))
 
     # P9.3 — Number built-in
-    def _number_obj(self) -> dict:
+    def _number_obj(self):
+        """R7-J01 — the ``Number`` global is a CALLABLE constructor
+        (``Number(null)`` → 0, ``Number(undefined)`` → NaN), not a
+        plain dict — the round-7 probe ``number_null`` recorded the
+        function-dict repr because calling the dict returned the dict.
+        The statics (isInteger / isNaN / parseInt / parseFloat) hang
+        off the callable via ``__js_statics__`` (same pattern as
+        ``String.fromCharCode`` / ``Date.now``)."""
         import math
 
         def is_integer(v):
@@ -4838,51 +5524,45 @@ class Host:
                 return True
             return False
 
-        def parse_int(v):
+        def parse_int(v, radix=0):
             # P9.3 — parseInt: parse the leading integer of a string.
-            # P0 (agent report) — JS returns NaN (not null) on failure.
-            import re as _re
-            import math as _math
-
-            try:
-                if isinstance(v, str):
-                    m = _re.match(r"\s*[-+]?\d+", v)
-                    return int(m.group(0)) if m else float("nan")
-                f = float(v)
-                if _math.isinf(f) or _math.isnan(f):
-                    return float("nan")
-                return int(f)
-            except (ValueError, TypeError):
-                return float("nan")
+            # R7-J01 — honour the radix argument (``parseInt("10",16)``
+            # → 16) and the 0x auto-detect for radix 0/undefined.
+            return _js_parse_int(v, radix)
 
         def parse_float(v):
             # P0 (agent report) — JS parseFloat: parse the leading
             # numeric prefix of a string, ignoring trailing garbage
             # (`parseFloat('3.14abc')` → 3.14, not NaN).  Returns
             # NaN only when no numeric prefix exists.
-            import math as _math
-            import re as _re_pf
-            if v is None:
-                return float("nan")
-            if isinstance(v, (int, float)):
-                return float(v)
-            s = str(v).lstrip()
-            # JS parseFloat grammar: optional sign, digits, optional
-            # fraction, optional exponent.
-            m = _re_pf.match(r"[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?", s)
-            if m:
-                try:
-                    return float(m.group(0))
-                except ValueError:
-                    return float("nan")
-            return float("nan")
+            return _js_parse_float(v)
 
-        return {
-            "isInteger": is_integer,
-            "isNaN": is_nan,
-            "parseFloat": parse_float,
-            "parseInt": parse_int,
-        }
+        def number_ctor(*args):
+            # R7-J01 — ToNumber(x) for the call form.
+            if not args:
+                return 0.0
+            return _js_to_number(args[0])
+
+        number_ctor.isInteger = is_integer
+        number_ctor.isNaN = is_nan
+        number_ctor.parseFloat = parse_float
+        number_ctor.parseInt = parse_int
+        # R7-S01 — declare the JS-visible statics (see _date_obj).
+        number_ctor.__js_statics__ = ("isInteger", "isNaN", "parseFloat", "parseInt")
+        return number_ctor
+
+    def _boolean_obj(self):
+        """R7-J01 — the ``Boolean`` global: ``Boolean(x)`` is ToBoolean
+        (every object — including ``[]`` / ``{}`` — is truthy).  The
+        round-7 probes ``truthy_array`` / ``truthy_object`` recorded a
+        ReferenceError because the global did not exist at all."""
+        def boolean_ctor(*args):
+            if not args:
+                return False
+            return Interpreter.truthy(args[0])
+
+        boolean_ctor.__js_statics__ = ()
+        return boolean_ctor
 
     def _string_obj(self) -> dict:
         def string_ctor(*codes):
@@ -4892,6 +5572,8 @@ class Host:
             return "".join(chr(int(c)) for c in codes)
 
         string_ctor.fromCharCode = lambda *codes: "".join(chr(int(c)) for c in codes)
+        # R7-S01 — declare the JS-visible static (see _date_obj).
+        string_ctor.__js_statics__ = ("fromCharCode",)
         return string_ctor
 
     # P10.2 — Array.from / Array.of
@@ -5200,14 +5882,14 @@ class Host:
     def flush_microtasks(self) -> None:
         """P1 (assessment report) — drain the microtask queue.
 
-        A Promise ``.then`` handler enqueued by :meth:`_make_promise`
-        runs here, *after* the current script's synchronous body and
-        after :meth:`flush_timers` (V8's ordering: the script's sync
-        statements → macrotask timers → microtask queue → next task).
-        The queue is drained until empty so that a microtask that
-        schedules another microtask is also settled in the same drain
-        (bounded by a safety cap so a microtask storm cannot loop
-        forever).
+        微任务检查点（J02 第 1 点 / HTML 事件循环 §4.4）：每个任务
+        （同步脚本 / timer 回调 / rAF 回调）结束后都要跑一次微任务
+        检查点，把队列排空——一个微任务排出的下一个微任务也在同
+        次排空中结算。注意：标准微任务检查点并不"先排空所有
+        macrotask timers 再排空 microtasks"；timers 与 microtasks
+        是交替的（每个 timer 回调 = 一个任务，其后立即检查微任务）。
+        旧注释把这条写成"V8 规则: sync→timers→microtasks"是误读，
+        已修正。
         """
         for _pass in range(32):
             if not self._microtasks:
@@ -5405,35 +6087,95 @@ class Host:
         return {"resolve": resolve, "reject": reject, "__construct__": construct}
 
     def _fetch_response(self, status: int, ok: bool, body_text: str,
-                        url: str, content_type: str = "") -> dict:
-        """R4 stage 3 — a toy Response object (the Fetch spec surface
-        the report's functional_response_methods case checks:
+                        url: str, content_type: str = "",
+                        headers: "dict | None" = None,
+                        redirected: bool = False) -> dict:
+        """R4 stage 3 + R7-J03 — a toy Response object (the Fetch spec
+        surface the report's functional_response_methods case checks:
         ``typeof r.text`` / ``typeof r.json`` must both be
         ``function`` — they are *methods* on the response, not string
-        attributes).  The legacy flat dict (``text`` as a string
-        property) is kept only when no network transport is
-        attached, so the probe still degrades gracefully offline."""
+        attributes).
+
+        R7-J03 fixes over the R4 shape:
+
+        * ``json()`` REJECTS with a ``SyntaxError`` on invalid JSON
+          (the legacy version silently resolved ``null``);
+        * the body readers are one-shot: after the first
+          ``text()`` / ``json()`` / ``arrayBuffer()`` the body is
+          consumed (``bodyUsed``), and later reads reject with a
+          ``TypeError`` (spec §body-mixin);
+        * ``headers`` exposes a case-insensitive ``get()`` with the
+          forbidden response-header names (``set-cookie`` &co)
+          filtered out, like the spec's "response" headers guard.
+        """
         import json as _json
 
         _body_bytes = body_text.encode("utf-8", "replace")
+        # R7-J03 — one-shot body state shared by the three readers.
+        _body_state = {"used": False}
+
+        # Spec (fetch §2.2.3): forbidden response-header names are not
+        # exposed to script through the "response" headers guard.
+        _FORBIDDEN = {"set-cookie", "set-cookie2"}
+
+        def _rejected(err_name, message):
+            p = self._make_promise()
+            p["__reject__"]({"name": err_name, "message": message})
+            return p
+
+        def _consume():
+            """Mark the body read; return False when already used."""
+            if _body_state["used"]:
+                return False
+            _body_state["used"] = True
+            return True
 
         def _text_method():
             # V8: Response.text() returns a *Promise* that resolves to
             # the body string.  The toy resolves synchronously.
-            return self._make_promise(
-                lambda rj, rs: rs(body_text))
+            # R7-J03 — the executor is called as
+            # ``executor(resolve, reject)``: the FIRST parameter
+            # resolves.  The legacy lambdas named the parameters
+            # ``(rj, rs)`` and called ``rs`` — the REJECT function — so
+            # every text()/json()/arrayBuffer() read rejected with the
+            # body as the error value (the probe only checked
+            # ``typeof r.text``, so the bug stayed latent).
+            if not _consume():
+                return _rejected("TypeError",
+                                 "body stream already read")
+            return self._make_promise(lambda rj, rs: rj(body_text))
 
         def _json_method():
+            if not _consume():
+                return _rejected("TypeError",
+                                 "body stream already read")
             try:
                 parsed = _json.loads(_body_bytes.decode("utf-8", "replace"))
-            except Exception:
-                parsed = None
-            return self._make_promise(
-                lambda rj, rs: rs(parsed))
+            except Exception as _e:
+                # R7-J03 — invalid JSON rejects with SyntaxError (V8:
+                # "Unexpected token … in JSON at position 0"); the toy
+                # keeps a short message.
+                return _rejected("SyntaxError",
+                                 f"Unexpected token in JSON: {_e}")
+            return self._make_promise(lambda rj, rs: rj(parsed))
 
         def _array_buffer_method():
-            return self._make_promise(
-                lambda rj, rs: rs(_body_bytes))
+            if not _consume():
+                return _rejected("TypeError",
+                                 "body stream already read")
+            return self._make_promise(lambda rj, rs: rj(_body_bytes))
+
+        _hdrs = {}
+        for k, v in (headers or {}).items():
+            if str(k).lower() in _FORBIDDEN:
+                continue
+            _hdrs[str(k).lower()] = v
+
+        def _header_get(name):
+            return _hdrs.get(str(name).lower())
+
+        def _header_has(name):
+            return str(name).lower() in _hdrs
 
         return {
             "__response__": True,
@@ -5441,20 +6183,24 @@ class Host:
             "status": status,
             "url": url,
             "type": "basic",
+            "redirected": bool(redirected),
             "statusText": "",
             "content_type": content_type,
             "text": _text_method,
             "json": _json_method,
             "arrayBuffer": _array_buffer_method,
+            # R7-J03 — one-shot body bookkeeping (JS: a boolean prop).
+            "bodyUsed": _body_state["used"],
+            "headers": {"get": _header_get, "has": _header_has},
             # Legacy flat field, kept so pre-stage-3 code that read
             # ``r.text`` as a string still works offline.
             "_text_value": body_text,
         }
 
-    def _fetch(self, url: str) -> "dict":
-        """P1 (assessment report) + R4 stage 3 — ``fetch(url)``
-        returns a *settled Promise* (not a plain string), matching the
-        browser contract the assessment's probe checks:
+    def _fetch(self, url: str, init=None) -> "dict":
+        """P1 (assessment report) + R4 stage 3 + R7-J03 — ``fetch(url,
+        init?)`` returns a *settled Promise* (not a plain string),
+        matching the browser contract the assessment's probe checks:
         ``typeof fetch('…').then`` must be ``function``.
 
         R4 stage 3 — when the host carries a *network transport*
@@ -5520,18 +6266,48 @@ class Host:
             p["__reject__"]({"name": "TypeError",
                              "message": "fetch failed (offline)"})
             return p
-        # R4 stage 3 — real request through the shared transport.
+        # R7-S02 — connect-src gate: a CSP-blocked fetch must never
+        # reach the transport (zero requests on the wire).
+        if self._csp_connect_blocked(url):
+            self.log(f"fetch blocked by CSP connect-src: {url}")
+            p = self._make_promise()
+            p["__reject__"]({"name": "TypeError",
+                             "message": "fetch blocked by CSP"})
+            return p
+        # R7-J03 — real request through the shared transport.
         p = self._make_promise()
         try:
             from toy_browser.network import net as _net
-            resp = transport.fetch(url)
+            # R7-J03 — the optional init object: method / body /
+            # headers / signal (fetch spec §Request).  A second
+            # argument that is not a dict is ignored (lenient).
+            method = "GET"
+            body = None
+            req_headers: dict = {}
+            if isinstance(init, dict):
+                method = str(init.get("method") or "GET").upper()
+                body = init.get("body")
+                _h = init.get("headers")
+                if isinstance(_h, dict):
+                    for k, v in _h.items():
+                        req_headers[str(k)] = str(v)
+                _sig = init.get("signal")
+                if _sig is not None and getattr(_sig, "aborted", False):
+                    p["__reject__"]({"name": "AbortError",
+                                     "message": "The operation was aborted."})
+                    return p
+            resp = transport.fetch(url, method=method, body=body,
+                                   headers=req_headers or None)
             if resp is None:
                 raise _net.FetchError(url)
             body_text = (resp.body or b"").decode("utf-8", "replace") \
                 if isinstance(resp.body, (bytes, bytearray)) else str(resp.body)
             response = self._fetch_response(
                 resp.status, getattr(resp, "ok", False), body_text,
-                url, getattr(resp, "content_type", ""))
+                getattr(resp, "final_url", "") or url,
+                getattr(resp, "content_type", ""),
+                headers=getattr(resp, "headers", None) or {},
+                redirected=bool(getattr(resp, "redirected", False)))
             p["__resolve__"](response)
         except Exception as e:
             # Opaque network error (spec: TypeError with no detail
@@ -5544,14 +6320,31 @@ class Host:
         return p
 
     def _xhr_ctor(self):
-        """XMLHttpRequest constructor (R4 stage 3): ``typeof`` is
-        ``function``.  With a network transport attached (the URL
-        pipelines inject one), ``open``/``send`` issue the real
-        request through the shared keep-alive client and fire the
+        """XMLHttpRequest constructor (R4 stage 3 + R7-J03):
+        ``typeof`` is ``function``.  With a network transport attached
+        (the URL pipelines inject one), ``open``/``send`` issue the
+        real request through the shared keep-alive client and fire the
         ``onload`` / ``onerror`` / ``onreadystatechange`` callbacks
         on completion — the report's xhr_real case (Edge shows
         ``200:NETWORK_OK``).  Without a transport (offline unit
-        tests) the legacy no-network state machine is preserved."""
+        tests) the legacy no-network state machine is preserved.
+
+        R7-J03 fixes over the R4 shape:
+
+        * ``open(method, url)`` + ``send(body)`` +
+          ``setRequestHeader(name, value)`` are REAL: the method,
+          body and headers are handed to the transport (the legacy
+          path always issued a bodyless GET);
+        * a completed HTTP response — including 4xx/5xx — fires
+          ``onload`` (spec: the load event marks transport success);
+          only a *network* failure (connection refused, DNS, …)
+          fires ``onerror``.  The legacy code fired onerror for a
+          404, which contradicted the spec's event ordering;
+        * ``getResponseHeader`` / ``getAllResponseHeaders`` expose
+          the response headers with the forbidden names
+          (``set-cookie`` …) filtered out, like fetch's headers
+          guard.
+        """
         host = self
 
         class _Xhr:
@@ -5577,6 +6370,10 @@ class Host:
                 self.onreadystatechange = None
                 self._method = "GET"
                 self._url = ""
+                self._request_headers: dict = {}
+                self._response_headers: dict = {}
+                self._sent = False
+                self._aborted = False
 
             def _fire(self, event):
                 cb = getattr(self, event, None)
@@ -5590,12 +6387,44 @@ class Host:
 
             def open(self, method, url, *a):
                 self.readyState = 1
-                self._method = method or "GET"
+                self._method = str(method or "GET").upper()
                 self._url = url or ""
+
+            def setRequestHeader(self, name, value):
+                if name:
+                    self._request_headers[str(name)] = str(value)
+
+            def getResponseHeader(self, name):
+                # R7-J03 — forbidden response-header names are hidden.
+                n = str(name).lower()
+                if n in ("set-cookie", "set-cookie2"):
+                    return None
+                v = self._response_headers.get(n)
+                return v if v is not None else None
+
+            def getAllResponseHeaders(self):
+                lines = []
+                for k, v in sorted(self._response_headers.items()):
+                    if k in ("set-cookie", "set-cookie2"):
+                        continue
+                    lines.append(f"{k}: {v}")
+                return "\r\n".join(lines)
+
+            def abort(self):
+                # R7-J03 — minimal abort: mark and fire readystatechange;
+                # the request is synchronous in the toy, so abort only
+                # takes effect before send().
+                if not self._sent:
+                    self._aborted = True
+                    self.readyState = 0
+                    self._fire("onreadystatechange")
 
             def send(self, *a):
                 transport = getattr(host, "_fetch_transport", None)
                 target_url = self._url
+                body = a[0] if a else None
+                if self._aborted:
+                    return
                 if transport is None or not target_url:
                     # Offline stub: complete with the empty legacy
                     # contract so unit tests never hit the wire.
@@ -5616,11 +6445,29 @@ class Host:
                             target_url = _resolved.to_string()
                         except Exception:
                             pass
+                self._sent = True
                 try:
-                    resp = transport.fetch(target_url)
+                    # R7-S02 — connect-src gate: a CSP-blocked XHR
+                    # must never reach the transport (zero requests).
+                    if host._csp_connect_blocked(target_url):
+                        host.log(
+                            f"XHR blocked by CSP connect-src: {target_url}")
+                        self.status = 0
+                        self.readyState = 4
+                        self._fire("onreadystatechange")
+                        self._fire("onerror")
+                        return
+                    # R7-J03 — method / body / headers really go out.
+                    resp = transport.fetch(
+                        target_url, method=self._method, body=body,
+                        headers=self._request_headers or None)
                     if resp is None:
                         raise _net.FetchError(self._url)
                     self.status = resp.status
+                    self.statusText = getattr(resp, "status_text", "") or ""
+                    self._response_headers = {
+                        str(k).lower(): v
+                        for k, v in (getattr(resp, "headers", None) or {}).items()}
                     self.readyState = 4
                     self.responseText = (
                         resp.body or b"").decode("utf-8", "replace") \
@@ -5628,10 +6475,10 @@ class Host:
                         else str(resp.body or "")
                     self.response = self.responseText
                     self._fire("onreadystatechange")
-                    if getattr(resp, "ok", False):
-                        self._fire("onload")
-                    else:
-                        self._fire("onerror")
+                    # R7-J03 — a *completed* HTTP response (any status,
+                    # including 404/500) is a transport success → onload.
+                    # Only the network-failure path below fires onerror.
+                    self._fire("onload")
                 except Exception as _e:
                     # R4 stage 3 — surface the failure in the host log
                     # stream so the GUI console / test harness can see
@@ -5654,6 +6501,56 @@ class Host:
         # _Xhr class is the correct callable to store in globals:
         # `new XMLHttpRequest()` → gobj() → _Xhr() → instance.
         return _Xhr
+
+    def _abort_signal_ctor(self):
+        """R7-J03 — AbortSignal: the observable side of cancellation
+        (``signal.aborted`` + ``abort`` event listeners)."""
+        class _AbortSignal:
+            def __init__(self, *args, **kwargs):
+                self.aborted = False
+                self.reason = None
+                self._listeners: list = []
+
+            def addEventListener(self, event, cb=None, *a):
+                if event == "abort" and callable(cb):
+                    self._listeners.append(cb)
+
+            def removeEventListener(self, event, cb=None, *a):
+                if event == "abort" and cb in self._listeners:
+                    self._listeners.remove(cb)
+
+            def _fire_abort(self):
+                for cb in list(self._listeners):
+                    try:
+                        cb({"type": "abort", "target": self})
+                    except Exception:
+                        pass
+
+        _AbortSignal.__name__ = "AbortSignal"
+        return _AbortSignal
+
+    def _abort_controller_ctor(self):
+        """R7-J03 — AbortController: ``controller.signal`` is the token
+        passed to ``fetch(url, {signal})``; ``abort()`` flips it and
+        fires the signal's listeners.  A fetch issued with an
+        already-aborted signal rejects with an AbortError (no request
+        is made)."""
+        host = self
+        _SignalCls = self._abort_signal_ctor()
+
+        class _AbortController:
+            def __init__(self, *args, **kwargs):
+                self.signal = _SignalCls()
+
+            def abort(self, reason=None, *a):
+                sig = self.signal
+                if not sig.aborted:
+                    sig.aborted = True
+                    sig.reason = reason
+                    sig._fire_abort()
+
+        _AbortController.__name__ = "AbortController"
+        return _AbortController
 
     def eval_doc_method(self, doc, method: str):
         if method == "getElementById":
@@ -5681,6 +6578,22 @@ class Host:
                 n = DomNode.element(str(tag).lower())
                 return DomElement(n, self)
             return ce
+        # R7-J02 — document.addEventListener(name, handler)：把 handler
+        # 注册进 document 级事件表（``_document_events[name]``）。
+        # DOMContentLoaded / load 在 :meth:`mark_interactive` /
+        # :meth:`mark_complete` 时派发。
+        if method == "addEventListener":
+            def _dl(event_name: str, handler):
+                name = str(event_name)
+                if name not in self._document_events:
+                    self._document_events[name] = []
+                if callable(handler):
+                    self._document_events[name].append(handler)
+                # 已派发过的事件立即执行迟到的监听器（readyState 推进
+                # 发生在脚本前——监听器注册时事件若已触发，直接结算）。
+                if name in self._document_fired:
+                    self._fire_document_event(name)
+            return _dl
         return None
 
     def call_method(self, obj, method: str, args: list):
@@ -5744,11 +6657,25 @@ class Host:
             if method == "getAttribute" and args:
                 return obj.get_attribute(args[0])
             if method == "addEventListener" and len(args) >= 2:
-                obj.add_event_listener(args[0], args[1])
+                # R7-J03 — the third argument is the options dict
+                # ({capture / once / passive}) or the legacy boolean
+                # capture flag.
+                obj.add_event_listener(args[0], args[1],
+                                       args[2] if len(args) > 2 else None)
+                return None
+            if method == "removeEventListener" and len(args) >= 2:
+                obj.remove_event_listener(args[0], args[1],
+                                          args[2] if len(args) > 2 else None)
                 return None
             if method == "dispatchEvent" and args:
                 detail = args[1] if len(args) > 1 else None
-                return obj.dispatch_event(args[0], detail)
+                bubbles = True
+                cancelable = True
+                if len(args) > 2 and isinstance(args[2], dict):
+                    bubbles = bool(args[2].get("bubbles", True))
+                    cancelable = bool(args[2].get("cancelable", True))
+                return obj.dispatch_event(args[0], detail, bubbles=bubbles,
+                                          cancelable=cancelable)
             if method == "remove":
                 obj.remove()
                 # P0 (retest report) — a removed element must no longer
@@ -5791,12 +6718,14 @@ class Host:
             if callable(val):
                 return val(*args)
             return None
-        # P4.2 — generic object method dispatch: for Python objects like
-        # _ToyDate or any non-standard type, try getattr(obj, method).
-        # P10.2 — ToyMap / ToySet classes route .size / .get / .set /
-        # .has / .add / .delete / .keys / .values / .entries / .forEach.
+        # R7-S01 — generic object method dispatch (Date instances, Map /
+        # Set / XHR / WebSocket / URL / Storage / location, …): the
+        # method must be on the class's call whitelist.  The legacy bare
+        # ``getattr(obj, method)`` invoked *any* Python attribute,
+        # including private host state and bound host methods; off-table
+        # names return None (undefined) instead.
         if not isinstance(obj, (list, str, int, float, bool)):
-            attr = getattr(obj, method, None)
+            attr = host_object_callable(obj, method)
             if callable(attr):
                 try:
                     return attr(*args)
@@ -5806,7 +6735,10 @@ class Host:
             # P10.2 — non-callable properties on ToyMap / ToySet.
             if method == "size":
                 # Map / Set store size via @property → int.
-                return attr if attr is not None else 0
+                v = host_object_read(obj, "size")
+                if v is None or isinstance(v, _UndefinedSentinel):
+                    return 0
+                return v
             return None
         if isinstance(obj, list):
             if method == "push":
@@ -5833,7 +6765,8 @@ class Host:
                     # P0 (agent report) — JS `Array.join`: `undefined` and
                     # `null` elements render as EMPTY STRING (V8:
                     # `[1, undefined, undefined].join(',')` → `'1,,'`).
-                    if v is None or isinstance(v, _UndefinedSentinel):
+                    # R7-J01 — a hole (elided element) also renders empty.
+                    if v is None or isinstance(v, _UndefinedSentinel) or isinstance(v, _HoleSentinel):
                         return ""
                     if isinstance(v, float) and v == int(v):
                         return str(int(v))
@@ -5871,24 +6804,33 @@ class Host:
                 return False
             # P5.3 — Array higher-order + join
             # P9.3 — map / filter / forEach receive (value, index) args.
+            # R7-J01 — iteration callbacks SKIP holes (elided elements);
+            # map PRESERVES them at their original indices.
             if method == "map":
                 if args and callable(args[0]):
-                    return [args[0](v, i) for i, v in enumerate(obj)]
+                    out = list(obj)
+                    for i, v in enumerate(obj):
+                        if not isinstance(v, _HoleSentinel):
+                            out[i] = args[0](v, i)
+                    return out
                 return obj
             if method == "filter":
                 if args and callable(args[0]):
-                    return [v for i, v in enumerate(obj) if args[0](v, i)]
+                    return [v for i, v in enumerate(obj)
+                            if not isinstance(v, _HoleSentinel) and args[0](v, i)]
                 return obj
             if method == "forEach":
                 if args and callable(args[0]):
                     for i, v in enumerate(obj):
-                        args[0](v, i)
+                        if not isinstance(v, _HoleSentinel):
+                            args[0](v, i)
                 return None
             if method == "join":
                 def _js_num(v):
                     # P5.3 — JS-style number formatting (whole floats no decimal).
                     # P0 (agent report) — `undefined`/`null` → empty string.
-                    if v is None or isinstance(v, _UndefinedSentinel):
+                    # R7-J01 — a hole also renders as the empty string.
+                    if v is None or isinstance(v, _UndefinedSentinel) or isinstance(v, _HoleSentinel):
                         return ""
                     if isinstance(v, float) and v == int(v):
                         return str(int(v))
@@ -5907,6 +6849,7 @@ class Host:
                         out.append(a)
                 return out
             # P6.3 — Array.reduce
+            # R7-J01 — holes are skipped (callback never sees them).
             if method == "reduce":
                 if not args or not callable(args[0]):
                     return obj[0] if obj else None
@@ -5919,37 +6862,61 @@ class Host:
                     acc = obj[0]
                     obj = obj[1:]
                 for v in obj:
+                    if isinstance(v, _HoleSentinel):
+                        continue
                     acc = fn(acc, v)
                 return acc
             # P7.3 — Array.find / findIndex / some / every
+            # R7-J01 — all of these skip holes too.
             if method == "find":
                 if args and callable(args[0]):
                     for v in obj:
-                        if args[0](v):
+                        if not isinstance(v, _HoleSentinel) and args[0](v):
                             return v
                 return None
             if method == "findIndex":
                 if args and callable(args[0]):
                     for i, v in enumerate(obj):
-                        if args[0](v):
+                        if not isinstance(v, _HoleSentinel) and args[0](v):
                             return i
                 return -1
             if method == "some":
                 if args and callable(args[0]):
-                    return any(args[0](v) for v in obj)
+                    return any(not isinstance(v, _HoleSentinel) and args[0](v) for v in obj)
                 return False
             if method == "every":
                 if args and callable(args[0]):
-                    return all(args[0](v) for v in obj)
+                    return all(not isinstance(v, _HoleSentinel) and args[0](v) for v in obj)
                 return True
             # P8.3 — Array.sort / includes
+            # R7-J01 — default sort compares the STRING forms in UTF-16
+            # code-unit order (``[2,10,1].sort()`` → ``1,10,2``), NOT
+            # numerically; with a comparator the callback decides, and
+            # holes (elided elements) always sort to the end.
             if method == "sort":
-                # Without a comparator: sort by numeric value if all numbers,
-                # otherwise by string representation.
-                try:
-                    return sorted(obj, key=lambda v: (isinstance(v, bool), v if not isinstance(v, bool) else 0))
-                except TypeError:
-                    return sorted(obj, key=lambda v: str(v))
+                cmp = args[0] if args and callable(args[0]) else None
+                holes = [v for v in obj if isinstance(v, _HoleSentinel)]
+                rest = [v for v in obj if not isinstance(v, _HoleSentinel)]
+                if cmp is not None:
+                    import functools as _ft
+                    def _cmp_key(a, b, _cmp=cmp):
+                        r = _cmp(a, b)
+                        try:
+                            r = float(r)
+                        except (TypeError, ValueError):
+                            r = 0.0
+                        if r != r:  # NaN comparator result → 0
+                            return 0
+                        return -1 if r < 0 else (1 if r > 0 else 0)
+                    try:
+                        rest = sorted(rest, key=_ft.cmp_to_key(_cmp_key))
+                    except Exception:
+                        pass
+                else:
+                    rest = sorted(rest, key=_js_to_string)
+                out = rest + holes
+                obj[:] = out
+                return obj
             if method == "includes":
                 if args:
                     target = args[0]
@@ -6039,37 +7006,50 @@ class Host:
             if method == "findLast":
                 if args and callable(args[0]):
                     for i in range(len(obj) - 1, -1, -1):
-                        if args[0](obj[i], i):
+                        if not isinstance(obj[i], _HoleSentinel) and args[0](obj[i], i):
                             return obj[i]
                 return None
             if method == "findLastIndex":
                 if args and callable(args[0]):
                     for i in range(len(obj) - 1, -1, -1):
-                        if args[0](obj[i], i):
+                        if not isinstance(obj[i], _HoleSentinel) and args[0](obj[i], i):
                             return i
                 return -1
             if method == "toReversed":
                 return list(reversed(obj))
             if method == "toSorted":
+                # R7-J01 — same ordering contract as sort (comparator or
+                # default string order, holes last) but NON-mutating.
                 fn = args[0] if args and callable(args[0]) else None
-                out = list(obj)
+                holes = [v for v in obj if isinstance(v, _HoleSentinel)]
+                rest = [v for v in obj if not isinstance(v, _HoleSentinel)]
                 if fn is not None:
+                    import functools as _ft2
+                    def _cmp_key2(a, b, _cmp=fn):
+                        r = _cmp(a, b)
+                        try:
+                            r = float(r)
+                        except (TypeError, ValueError):
+                            r = 0.0
+                        if r != r:
+                            return 0
+                        return -1 if r < 0 else (1 if r > 0 else 0)
                     try:
-                        out = sorted(out, key=fn)
-                    except TypeError:
-                        out = sorted(out, key=str)
+                        rest = sorted(rest, key=_ft2.cmp_to_key(_cmp_key2))
+                    except Exception:
+                        rest = sorted(rest, key=_js_to_string)
                 else:
-                    try:
-                        out = sorted(out)
-                    except TypeError:
-                        out = sorted(out, key=str)
-                return out
+                    rest = sorted(rest, key=_js_to_string)
+                return rest + holes
             if method == "entries":
-                return [[i, v] for i, v in enumerate(obj)]
+                # R7-J01 — the array iterator yields undefined for holes.
+                return [[i, _UNDEFINED if isinstance(v, _HoleSentinel) else v]
+                        for i, v in enumerate(obj)]
             if method == "keys":
                 return list(range(len(obj)))
             if method == "values":
-                return list(obj)
+                # R7-J01 — holes read back as undefined through the iterator.
+                return [_UNDEFINED if isinstance(v, _HoleSentinel) else v for v in obj]
             return None
         if isinstance(obj, str):
             if method == "includes":
@@ -6078,11 +7058,22 @@ class Host:
                 return False
             if method == "indexOf":
                 if args:
-                    idx = obj.find(str(args[0]))
-                    return idx if idx >= 0 else -1
+                    # R7-J01 — indexOf reports a UTF-16 code-unit index.
+                    sub = str(args[0])
+                    units = _utf16_units(obj)
+                    sub_units = _utf16_units(sub)
+                    start = int(args[1]) if len(args) > 1 and isinstance(args[1], (int, float)) else 0
+                    start = max(0, min(start, len(units)))
+                    if not sub_units:
+                        return start
+                    for i in range(start, len(units) - len(sub_units) + 1):
+                        if units[i:i + len(sub_units)] == sub_units:
+                            return i
+                    return -1
                 return -1
             if method == "length":
-                return len(obj)
+                # R7-J01 — UTF-16 code units (see eval_member).
+                return _utf16_len(obj)
             if method == "split":
                 sep = str(args[0]) if args else ""
                 return obj.split(sep)
@@ -6110,23 +7101,28 @@ class Host:
                     return obj.replace(str(target), str(args[1]))
                 return obj
             # P4.2 — string char methods
+            # R7-J01 — all index-taking string methods count UTF-16
+            # code units: ``"😀".charCodeAt(0) === 55357`` (the lead
+            # surrogate), ``"😀".charCodeAt(1) === 56832``.
             if method == "charCodeAt":
                 if args:
                     idx = int(args[0])
-                    if 0 <= idx < len(obj):
-                        return ord(obj[idx])
-                return -1
+                    if 0 <= idx < _utf16_len(obj):
+                        u = _utf16_units(obj)[idx]
+                        return u
+                return float("nan")
             if method == "charAt":
                 if args:
                     idx = int(args[0])
-                    if 0 <= idx < len(obj):
-                        return obj[idx]
+                    ch = _utf16_char_at(obj, idx)
+                    return ch if ch is not None else ""
                 return ""
             if method == "substring":
                 if len(args) >= 1:
+                    n = _utf16_len(obj)
                     start = max(0, int(args[0]))
-                    end = len(obj) if len(args) < 2 else min(len(obj), int(args[1]))
-                    return obj[start:end]
+                    end = n if len(args) < 2 else max(start, min(n, int(args[1])))
+                    return _utf16_slice(obj, start, end)
                 return obj
             # P6.3 — string padding / repeat
             if method == "repeat":
@@ -6179,19 +7175,31 @@ class Host:
                 return None
             # P29.3 — String tail: at / codePointAt / normalize.
             # P0 (agent report) — out-of-range / no-arg → undefined (not null).
+            # R7-J01 — indices are UTF-16 code units; ``at`` returns the
+            # whole code point at that unit (surrogate pair recombined).
             if method == "at":
                 if args:
                     idx = int(args[0])
+                    n = _utf16_len(obj)
                     if idx < 0:
-                        idx += len(obj)
-                    if 0 <= idx < len(obj):
-                        return obj[idx]
+                        idx += n
+                    if 0 <= idx < n:
+                        units = _utf16_units(obj)
+                        u = units[idx]
+                        if 0xD800 <= u <= 0xDBFF and idx + 1 < n and 0xDC00 <= units[idx + 1] <= 0xDFFF:
+                            return _units_to_str(units[idx:idx + 2])
+                        return chr(u)
                 return _UNDEFINED
             if method == "codePointAt":
                 if args:
                     idx = int(args[0])
-                    if 0 <= idx < len(obj):
-                        return ord(obj[idx])
+                    n = _utf16_len(obj)
+                    if 0 <= idx < n:
+                        units = _utf16_units(obj)
+                        u = units[idx]
+                        if 0xD800 <= u <= 0xDBFF and idx + 1 < n and 0xDC00 <= units[idx + 1] <= 0xDFFF:
+                            return 0x10000 + ((u - 0xD800) << 10) + (units[idx + 1] - 0xDC00)
+                        return u
                 return _UNDEFINED
             return None
 
@@ -6512,47 +7520,160 @@ class Host:
 
     def execute_event_bubbled(self, el: DomElement,
                               event_name: str = "click") -> None:
-        """P1 (assessment report) — dispatch *event_name* to *el* with
-        V8-style bubbling: the target element's own handlers run first,
-        then each ancestor's up to the document root, in that order
-        (V8: ``button`` then ``body`` logs for a click on a button
-        with a body listener).  ``this`` binds to the *target* on
-        every hop (matching V8's event.target semantics for handler
-        property access)."""
+        """P1 (assessment report) + R7-J03 — dispatch *event_name* to
+        *el* through the full DOM event path: capture listeners (root →
+        target), the target's own handlers (inline ``on*`` attribute,
+        JS-property handler, then registered listeners in registration
+        order), then bubble listeners (target → root).
+
+        R7-J03 — the flat "call every listener in the list" walk is
+        replaced by the spec's phase layering: listeners registered
+        with ``{capture: true}`` fire on the way DOWN, ``{once: true}``
+        entries are removed after firing, and a handler that calls
+        ``stopPropagation()`` / ``stopImmediatePropagation()`` on the
+        event object halts the walk (remaining handlers on the same
+        element for stopImmediatePropagation).  ``this`` binds to the
+        *target* on every hop (matching V8's event.target semantics
+        for handler property access)."""
+        self.dispatch_dom_event(el, event_name)
+
+    def dispatch_dom_event(self, el: DomElement, event_name: str,
+                           detail: Any = None, bubbles: bool = True,
+                           cancelable: bool = False) -> bool:
+        """R7-J03 — the DOM event path (spec §2.9 dispatching events).
+
+        Builds an event object exposing ``type`` / ``target`` /
+        ``currentTarget`` / ``detail`` / ``bubbles`` / ``cancelable``
+        / ``eventPhase`` / ``defaultPrevented`` plus the
+        ``preventDefault()`` / ``stopPropagation()`` /
+        ``stopImmediatePropagation()`` controls, then walks:
+
+        1. capture phase — ancestors root → target (capture listeners);
+        2. target phase — the target's inline ``on*`` attribute
+           (CSP-gated), its JS-property handler, then ALL its
+           listeners in registration order;
+        3. bubble phase — ancestors target → root (non-capture
+           listeners, plus their inline / JS-property handlers).
+
+        Returns ``not defaultPrevented`` for cancelable events (the
+        DOM ``dispatchEvent`` contract); ``False`` when a handler
+        called ``preventDefault()``."""
+        # Normalize the event type: the GUI/CLI entry points pass the
+        # *prefixed* handler-property name ("onclick"); the listener
+        # registry and the event object use the bare DOM event type
+        # ("click") — the prefixed form is only for inline attributes
+        # and JS-property handlers.
+        etype = str(event_name)
+        if etype.startswith("on") and len(etype) > 2:
+            etype = etype[2:]
+        ev: dict = {
+            "type": etype,
+            "target": el,
+            "currentTarget": el,
+            "detail": detail,
+            "bubbles": bool(bubbles),
+            "cancelable": bool(cancelable),
+            "eventPhase": 0,
+            "defaultPrevented": False,
+            "isTrusted": False,
+            "_stop": False,
+            "_stop_now": False,
+        }
+
+        def _prevent_default():
+            if ev["cancelable"]:
+                ev["defaultPrevented"] = True
+
+        def _stop_propagation():
+            ev["_stop"] = True
+
+        def _stop_immediate():
+            ev["_stop"] = True
+            ev["_stop_now"] = True
+
+        ev["preventDefault"] = _prevent_default
+        ev["stopPropagation"] = _stop_propagation
+        ev["stopImmediatePropagation"] = _stop_immediate
+
+        # Ancestor chain: [target, parent, …, root].
         chain: list = [el]
         p = el.node.parent
         while p is not None:
             chain.append(DomElement(p, self))
             p = p.parent
-        for target in chain:
-            # P1 (assessment report) — resolve the JS-prop handler via the
-            # backing DOM node (the registry key), not the element id: an
-            # id-less element still has its handler found.
-            #
-            # P1 fix — the registry stores handlers under the *prefixed*
-            # property name (``"onclick"``, ``"oninput"``, …) because that
-            # is the JS property the user assigned.  The caller may pass
-            # either the bare event name ("click") or the prefixed form
-            # ("onclick"); normalize to the prefixed form for the lookup.
-            js_event_name = (event_name if event_name.startswith("on")
-                             else f"on{event_name}")
-            js_fn = self._js_props.get(target.node, {}).get(js_event_name)
-            # inline on* attribute: the attribute name is "on" + the
-            # event name when the caller passes the bare name ("click"
-            # → "onclick"); pass through when already prefixed.
-            attr_name = js_event_name
-            handler = target.node.attr(attr_name)
-            if handler:
-                self._run_event_handler(el, handler, attr_name)
-            if callable(js_fn):
-                self._invoke_event_js_fn(js_fn, el)
-            # P30.4 — registered listeners on this node.
-            listeners = target._listeners_of().get(event_name, [])
-            for fn in list(listeners):
+
+        def _fire_registered(node: DomElement, capture: bool) -> bool:
+            """Fire one node's registered listeners for one phase.
+            Returns True when propagation must halt."""
+            entries = node._listeners_of().get(ev["type"], [])
+            for entry in list(entries):
+                if entry.get("capture") != capture:
+                    continue
+                if ev["_stop_now"]:
+                    return True
                 try:
-                    fn({"type": event_name, "target": el, "detail": None})
+                    entry["fn"](ev)
                 except Exception as e:
                     self.log(f"listener error: {e}")
+                if entry.get("once"):
+                    try:
+                        entries.remove(entry)
+                    except ValueError:
+                        pass
+            return bool(ev["_stop"])
+
+        def _fire_target_handlers(node: DomElement) -> bool:
+            """Inline ``on*`` attribute (CSP-gated) + JS-property
+            handler for *node*; returns True when propagation halts."""
+            if ev["_stop_now"]:
+                return True
+            js_event_name = f"on{ev['type']}"
+            js_fn = self._js_props.get(node.node, {}).get(js_event_name)
+            attr_name = js_event_name
+            handler = node.node.attr(attr_name)
+            if handler:
+                # R7-S02 — an inline on* attribute is a script entry
+                # point: it shares the document's script-src policy
+                # ('none' or a nonce-gated CSP blocks the handler too,
+                # exactly like an inline <script>).
+                if not self._csp_inline_allowed(self.csp_directives, None):
+                    self.log(f"CSP blocked inline handler: {attr_name}")
+                else:
+                    self._run_event_handler(el, handler, attr_name)
+                if ev["_stop_now"]:
+                    return True
+            if callable(js_fn):
+                self._invoke_event_js_fn(js_fn, el)
+            return bool(ev["_stop"])
+
+        # 1. capture phase — root → target's parent.
+        if bubbles and len(chain) > 1:
+            ev["eventPhase"] = 1
+            for node in reversed(chain[1:]):
+                ev["currentTarget"] = node
+                if _fire_registered(node, capture=True):
+                    return not ev["defaultPrevented"]
+
+        # 2. target phase — all of the target's handlers.
+        ev["eventPhase"] = 2
+        ev["currentTarget"] = el
+        if _fire_target_handlers(el):
+            return not ev["defaultPrevented"]
+        if _fire_registered(el, capture=False):
+            return not ev["defaultPrevented"]
+        if _fire_registered(el, capture=True):
+            return not ev["defaultPrevented"]
+
+        # 3. bubble phase — target's parent → root.
+        if bubbles:
+            ev["eventPhase"] = 3
+            for node in chain[1:]:
+                ev["currentTarget"] = node
+                if _fire_target_handlers(node):
+                    return not ev["defaultPrevented"]
+                if _fire_registered(node, capture=False):
+                    return not ev["defaultPrevented"]
+        return not ev["defaultPrevented"]
 
     def _invoke_event_js_fn(self, js_fn, el: DomElement) -> None:
         """Call a JS-level handler property with ``this`` bound to
@@ -6591,12 +7712,24 @@ class Host:
     # --- execution entry points ---
 
     def _csp_source_values(self, csp_directives: dict | None,
-                           directive: str) -> list:
-        """The *directive* values (falling back to default-src)."""
+                           directive: str) -> "list | None":
+        """The *directive* values (falling back to default-src).
+
+        R7-S02 — distinguishes the three CSP states:
+
+        * ``None`` — no CSP at all (or neither the directive nor
+          ``default-src`` present): no constraint, callers allow;
+        * a non-empty list — token matching applies;
+        * ``[]`` — the directive is present with **no values**, which
+          per CSP is equivalent to ``'none'``: callers must block.
+        """
         if not csp_directives:
-            return []
-        return csp_directives.get(
-            directive, csp_directives.get("default-src", [])) or []
+            return None
+        if directive in csp_directives:
+            return csp_directives[directive]
+        if "default-src" in csp_directives:
+            return csp_directives["default-src"]
+        return None
 
     def _csp_inline_allowed(self, csp_directives: dict | None,
                             nonce: str | None) -> bool:
@@ -6613,12 +7746,18 @@ class Host:
           ``nonce`` attribute → allowed; a script without a matching
           nonce is still blocked.
         * anything else (bare domains, 'self', …) → inline blocked.
+
+        R7-S02 — a directive present with **no values** (``script-src``
+        alone) is equivalent to ``'none'`` and blocks inline scripts;
+        only the complete absence of the directive allows everything.
         """
         if not csp_directives:
             return True
         values = self._csp_source_values(csp_directives, "script-src")
+        if values is None:
+            return True   # no constraint
         if not values:
-            return True
+            return False  # present-but-empty == 'none'
         if [v.lower().strip("'") for v in values] == ["none"]:
             return False
         from toy_browser.network import net as _net
@@ -6632,12 +7771,17 @@ class Host:
         'nonce-…'/'unsafe-inline' do NOT apply to external fetches,
         and a bare domain entry only matches that origin's URLs in
         the toy — an exact-string or subdomain match on the host).
+
+        R7-S02 — a present-but-empty ``script-src`` is ``'none'``
+        (blocks every external script).
         """
         if not csp_directives:
             return True
         values = self._csp_source_values(csp_directives, "script-src")
+        if values is None:
+            return True   # no constraint
         if not values:
-            return True
+            return False  # present-but-empty == 'none'
         return not self._csp_blocks_source(values, src)
 
     def _csp_blocks_source(self, values: list, source_url: str) -> bool:
@@ -6655,6 +7799,11 @@ class Host:
         for tok in values:
             tok_lower = tok.lower()
             tok_bare = tok_lower.strip("'")
+            if tok_bare == "*":
+                # R7-S02 — the wildcard permits any http(s) URL.
+                if source_url.lower().startswith(("http://", "https://")):
+                    return False
+                continue
             if tok_bare == "none":
                 if len(values) == 1:
                     return True
@@ -6688,6 +7837,28 @@ class Host:
             return True  # a remaining unmatched token — fall through
         return True
 
+    def _csp_connect_blocked(self, url: str) -> bool:
+        """R7-S02 — True when the document's CSP ``connect-src``
+        directive forbids *url* (a fetch() / XMLHttpRequest target).
+        A blocked request must never reach the transport (the audit's
+        "connect-src none → server request count is zero" probe).
+
+        * no CSP / no ``connect-src`` and no ``default-src`` → allowed;
+        * a present-but-empty ``connect-src`` (or a bare ``'none'``)
+          → blocked;
+        * otherwise the source-list token matching of
+          :meth:`_csp_blocks_source` decides.
+        """
+        directives = getattr(self, "csp_directives", None)
+        if not directives:
+            return False
+        values = self._csp_source_values(directives, "connect-src")
+        if values is None:
+            return False  # no constraint
+        if not values:
+            return True   # present-but-empty == 'none'
+        return self._csp_blocks_source(values, url)
+
     def execute_all(self, csp_directives: dict | None = None,
                     external_scripts: list | None = None,
                     legacy_inline_first: bool = False):
@@ -6716,6 +7887,12 @@ class Host:
             self.execute_scripts_in_order(external_scripts,
                                          csp_directives)
             return
+        # R7-S02 — remember the document CSP so later script entry
+        # points (inline on* event handlers) share the same policy.
+        # An explicit None leaves any pre-set directives in place
+        # (the URL pipelines set them before execute_all()).
+        if csp_directives is not None:
+            self.csp_directives = csp_directives
         # P0 (retest report) — legacy two-pass order (CSP gate on
         # inline scripts; external bodies run in document order after
         # the inline pass).
@@ -6726,7 +7903,15 @@ class Host:
                 try:
                     self.execute(s)
                 except JSUncaughtError as e:
-                    self.log(f"uncaught throw: {e.value}")
+                    # R7-J03 — structured record (see execute_scripts_in_order).
+                    self._record_script_error(s, e.value, "inline")
+                except _Throw as e:
+                    self._record_script_error(s, e.value, "inline")
+                if self._budget_cancelled:
+                    self._budget_cancelled = False
+                    self._record_script_error(
+                        s, "RangeError: JS execution budget exceeded",
+                        "inline")
         if external_scripts:
             for _src, code in external_scripts:
                 if not code:
@@ -6734,9 +7919,25 @@ class Host:
                 try:
                     self.execute(code)
                 except JSUncaughtError as e:
-                    self.log(f"uncaught throw (external {_src}): {e.value}")
+                    self._record_script_error(_src or "(external)",
+                                              e.value, "external")
+                except _Throw as e:
+                    self._record_script_error(_src or "(external)",
+                                              e.value, "external")
+                if self._budget_cancelled:
+                    self._budget_cancelled = False
+                    self._record_script_error(
+                        _src or "(external)",
+                        "RangeError: JS execution budget exceeded",
+                        "external")
         self.flush_timers()
+        self.flush_microtasks()  # J02 — 每个脚本任务后检查微任务
         self.flush_raf()  # P1.2
+        # R7-J02 — legacy 双 pass 路径也推进文档生命周期（与
+        # execute_scripts_in_order 末尾的 mark_* 一致）：脚本 + 微任务
+        # 排空后 loading→interactive→complete，派发 DOMContentLoaded/load。
+        self.mark_interactive()
+        self.mark_complete()
 
     # R4 stage 1 — script types that are NOT executable JavaScript
     # (HTML spec: a <script> with a type outside the JS set is treated
@@ -6804,6 +8005,11 @@ class Host:
         execute_all contract: the page's pending callback queue is
         emptied before rendering).
         """
+        # R7-S02 — remember the document CSP so later script entry
+        # points (inline on* event handlers) share the same policy.
+        # An explicit None leaves any pre-set directives in place.
+        if csp_directives is not None:
+            self.csp_directives = csp_directives
         # Normalise the fetch cache: {src_url: code-or-None}
         cache: dict = {}
         if isinstance(fetched, dict):
@@ -6875,7 +8081,12 @@ class Host:
                 try:
                     self.execute(code)
                 except JSUncaughtError as e:
-                    self.log(f"uncaught throw (external {src}): {e.value}")
+                    # R7-J03 — a runtime throw is a script-boundary
+                    # failure like a parse error: record it structurally
+                    # (B03) so the diagnostics panel shows "N script(s)
+                    # failed" instead of zero errors, AND keep the log
+                    # line for the console stream.
+                    self._record_script_error(src, e.value, "external")
                 except _Throw as e:
                     # B03 — a parse-time / interpreter SyntaxError,
                     # ReferenceError, … that execute() re-raised as a
@@ -6885,9 +8096,27 @@ class Host:
                     # page so static content still renders (B03 step 3).
                     self._record_script_error(src, e.value, "external")
                 except RecursionError as e:
-                    # B03 — runaway JS recursion that escaped the
-                    # interpreter's own depth guard.  Log and continue.
-                    self.log(f"JS recursion error (external {src}): {e}")
+                    # B03 + R7-J03 — runaway JS recursion that escaped
+                    # the interpreter's own depth guard: record it
+                    # structurally too (it is a script failure, not a
+                    # page failure).
+                    self._record_script_error(
+                        src, f"RangeError: recursion depth exceeded: {e}",
+                        "external")
+                except Exception as e:  # noqa: BLE001 — script boundary
+                    # R7-J03 — anything else that escapes execute()
+                    # (budget exhaustion surfaces as a log-only path
+                    # today) is recorded so no failure mode is silent.
+                    self._record_script_error(
+                        src, f"{type(e).__name__}: {e}", "external")
+                # R7-J03 — a step-budget cancellation is logged (and
+                # non-raising) inside execute(); record it here so the
+                # structured diagnostics count it.
+                if self._budget_cancelled:
+                    self._budget_cancelled = False
+                    self._record_script_error(
+                        src, "RangeError: JS execution budget exceeded",
+                        "external")
             else:
                 txt = el.text_content()
                 if not txt.strip():
@@ -6901,14 +8130,29 @@ class Host:
                 try:
                     self.execute(txt)
                 except JSUncaughtError as e:
-                    self.log(f"uncaught throw: {e.value}")
+                    # R7-J03 — runtime throws join the structured
+                    # script_errors record (see the external branch).
+                    self._record_script_error(txt, e.value, "inline")
                 except _Throw as e:
                     # B03 — inline script parse/runtime SyntaxError (the
                     # baidu "pos 210" shape) must stay inside the
                     # script boundary, never crash the whole page.
                     self._record_script_error(txt, e.value, "inline")
                 except RecursionError as e:
-                    self.log(f"JS recursion error (inline): {e}")
+                    self._record_script_error(
+                        txt, f"RangeError: recursion depth exceeded: {e}",
+                        "inline")
+                except Exception as e:  # noqa: BLE001 — script boundary
+                    # R7-J03 — never leave a failure mode silent.
+                    self._record_script_error(
+                        txt, f"{type(e).__name__}: {e}", "inline")
+                # R7-J03 — step-budget cancellation (logged, non-raising
+                # inside execute) recorded structurally.
+                if self._budget_cancelled:
+                    self._budget_cancelled = False
+                    self._record_script_error(
+                        txt, "RangeError: JS execution budget exceeded",
+                        "inline")
 
         # R4 stage 1 — the legacy "undeclared fetched bodies run last"
         # tail pass is gone: external scripts now execute in document
@@ -6917,12 +8161,67 @@ class Host:
         # whose body is policy-blocked) still maps to None and is
         # skipped without blocking the rest.
         # R4 stage 3 — in-page fetch()/XHR issue real requests; their
-        # .then / onload handlers run as microtasks, so drain the
-        # microtask queue AFTER the timers (V8 order: sync script →
-        # timers → microtasks) before the page renders.
+        # .then / onload handlers run as microtasks.  页面渲染前把
+        # timers 与 microtasks 排空（每个 timer 回调本身也是一个任务，
+        # 其后检查微任务——见 flush_timers / flush_microtasks 的
+        # J02 修正）。注意这是"渲染前总排空"的便捷顺序，并非事件
+        # 循环规则；标准语义下微任务检查点在每个任务后立即发生。
         self.flush_timers()
         self.flush_microtasks()
         self.flush_raf()  # P1.2
+        # R7-J02 — document 生命周期推进（HTML 事件循环 §2.7）：
+        # 解析 + 脚本 + 微任务排空后，状态 loading→interactive，派发
+        # DOMContentLoaded；随后→complete，派发 load。监听器经
+        # :meth:`_fire_document_event` 结算（J02 第 4 点）。
+        self.mark_interactive()
+        self.mark_complete()
+
+    # ------------------------------------------------------------------
+    # R7-J02 — document 生命周期（readyState / DOMContentLoaded / load）
+    # ------------------------------------------------------------------
+
+    def mark_interactive(self) -> None:
+        """J02 第 4 点 — 解析 + 脚本排空后把 readyState 推进到
+        ``"interactive"`` 并派发 ``DOMContentLoaded``。
+
+        幂等：已 interactive/complete 时不再重放。"""
+        if self._document_ready_state != "loading":
+            return
+        self._document_ready_state = "interactive"
+        self._fire_document_event("DOMContentLoaded")
+
+    def mark_complete(self) -> None:
+        """J02 第 4 点 — 全部排空后把 readyState 推进到
+        ``"complete"`` 并派发 ``load``。
+
+        幂等：已 complete 时不重放；若尚未 interactive（跳过了
+        :meth:`mark_interactive`），先补齐再派发 load。"""
+        if self._document_ready_state == "complete":
+            return
+        if self._document_ready_state == "loading":
+            self._document_ready_state = "interactive"
+            self._fire_document_event("DOMContentLoaded")
+        self._document_ready_state = "complete"
+        self._fire_document_event("load")
+
+    def _fire_document_event(self, event_name: str) -> None:
+        """J02 第 4 点 — 派发一个 document 级事件：结算所有已注册的
+        监听器（注册即结算——toy 语义选择让迟到的 ``addEventListener``
+        也能看到事件，便于脚本在 load 前后注册都可见）。回调异常
+        只终止当前监听器（J02 第 5 点），不阻断后续。"""
+        self._document_fired.add(event_name)
+        for cb in list(self._document_events.get(event_name, [])):
+            try:
+                if callable(cb):
+                    cb({"type": event_name, "target": "document"})
+            except _Throw as e:
+                self.log(f"uncaught throw (document {event_name}): {e.value}")
+            except JSUncaughtError as e:
+                self.log(f"uncaught throw (document {event_name}): {e.value}")
+            except (_BudgetExceeded, RecursionError) as e:
+                self.log(f"document {event_name} handler cancelled: {e}")
+            except Exception as e:  # noqa: BLE001 — J02 第 5 点 异常隔离
+                self.log(f"document {event_name} handler error: {e}")
 
     def execute_event(self, element_id: str, event_name: str = "onclick"):
         """P11.4 — run an element's event handler with `this` bound to the
@@ -6974,13 +8273,40 @@ class Host:
         log line for observability, matching the existing ``uncaught
         throw`` log style.
         """
-        msg = f"[{kind} script] {error_value}"
+        msg = f"[{kind} script] {self._format_error_value(error_value)}"
         self.log(msg)
         self.script_errors.append({
             "source": source,
             "kind": kind,
-            "error": str(error_value),
+            "error": self._format_error_value(error_value),
         })
+
+    @staticmethod
+    def _format_error_value(error_value) -> str:
+        """Normalise a script-boundary payload to a JS-style string.
+
+        ``throw new Error('boom')`` surfaces a ToyError *object* (with
+        ``.name`` / ``.message``), while a rejected promise or an
+        internal fault may hand over a ``{"name": ..., "message": ...}``
+        dict.  Both must render as ``"Error: boom"`` — the Python
+        ``repr``/``str`` of those objects would otherwise leak
+        ``<...ToyError object at 0x...>`` into the GUI diagnostics.
+        """
+        if isinstance(error_value, dict):
+            name = error_value.get("name")
+            message = error_value.get("message")
+            if name:
+                return f"{name}: {message}" if message is not None else f"{name}"
+            if message is not None:
+                return str(message)
+            return str(error_value)
+        name = getattr(error_value, "name", None)
+        message = getattr(error_value, "message", None)
+        if name and message is not None:
+            return f"{name}: {message}"
+        if message is not None:
+            return str(message)
+        return str(error_value)
 
     def _collect_scripts(self, root: DomNode) -> list[str]:
         out: list[str] = []
@@ -7019,6 +8345,7 @@ class Host:
             # the GUI thread.  Log the cancellation and move on to
             # the next script (the rest of the page still renders).
             self.log(f"JS budget exceeded: {exc}")
+            self._budget_cancelled = True
         except RecursionError as e:
             # P0 — the JS recursion guard catches most runaway
             # recursion at the _max_recursion cap, but Python's
@@ -7133,10 +8460,20 @@ class Host:
         (delay) order — a 0 ms callback fires before a 30 ms one —
         so the user's script order does not leak into the drain
         (probe_timer_order: "sync, early, late" rather than the
-        legacy "sync, late, early").  Loop-until-empty so a callback
-        that schedules a new timer is also drained, matching the
-        runner's expectation that the queue settles (a safety cap
-        prevents timer storms from looping forever).
+        legacy "sync, late, early").
+
+        J02 — 每个 timer 回调是一个**任务**；任务结束后立即跑微任务
+        检查点（HTML 事件循环：sync 脚本 → [task → microtask checkpoint]
+        → 下一 task）。旧实现是"排空整个 timers 队列后**才**排空一次
+        microtasks"（基于错误的"V8 规则"注释），导致两个 timer 之间
+        应结算的微任务被延后。现改为每个 timer 回调后调用
+        :meth:`flush_microtasks`，回调异常只终止该任务（J02 第 5
+        点），不影响后续任务。
+
+        Loop-until-empty so a callback that schedules a new timer is
+        also drained, matching the runner's expectation that the
+        queue settles (a safety cap prevents timer storms from
+        looping forever).
         """
         for _pass in range(16):
             if not self._timers:
@@ -7144,9 +8481,8 @@ class Host:
             # P1 — drain the whole current queue in deadline order:
             # a timer scheduled by an earlier callback in this batch
             # (with a *smaller* deadline) must still beat one that was
-            # already queued with a larger deadline (V8's
-            # "shorter delay fires first" contract, stable within a
-            # deadline).
+            # already queued with a larger deadline ("shorter delay
+            # fires first", stable within a deadline).
             batch = sorted(self._timers, key=lambda t: t[1])
             self._timers = []
             for code, _ in batch:
@@ -7156,17 +8492,101 @@ class Host:
                     else:
                         self.execute(str(code))
                 except _Throw as e:
+                    # J02 — 回调异常只终止当前任务，进入统一 diagnostics，
+                    # 不逃逸、不阻断后续 timer。
                     self.log(f"uncaught throw (timer): {e.value}")
                 except JSUncaughtError as e:
                     self.log(f"uncaught throw (timer): {e.value}")
                 except (_BudgetExceeded, RecursionError) as e:
                     self.log(f"timer cancelled: {e}")
-        # P1 (assessment report) — after the timer queue settles, drain
-        # the microtask queue (V8 order: sync script → timers →
-        # microtasks).  probe_microtasks requires the Promise handler to
-        # log *after* the script's own synchronous ``console.log`` and
-        # *after* the 0 ms timers.
+                # J02 — 每个 timer 回调（任务）结束后立即检查微任务
+                # （标准事件循环），而非整批 timer 跑完才排空一次。
+                self.flush_microtasks()
+        # J02 — 末尾再排空一次是安全兜底：若 timer 回调在队列**之外**
+        # （如同步脚本路径，见 :meth:`execute_all` 8118 行的独立调用）
+        # 排出了微任务，这里确保它们被结算。重复调用幂等（队列空即
+        # 立即返回）。
         self.flush_microtasks()
 
 
 HostGlobals = Host
+
+
+# ---------------------------------------------------------------------------
+# R7-S01 — install the host-object capability tables.
+#
+# Runs once at import.  js.py's own classes are registered here (the
+# per-Host factory classes — ToyMap / ToySet / _ToyDate / _Xhr /
+# ToyError — are keyed by name, so one global table covers every Host
+# instance); ``web_api`` registers its own globals from its module
+# body.  A host object whose class has no table exposes *nothing* to
+# page script (every off-table read is undefined, every off-table write
+# is dropped, every off-table call is undefined).
+# ---------------------------------------------------------------------------
+
+def _install_host_object_policies() -> None:
+    register_host_object_policy(DomElement, _HostObjectPolicy(
+        # Readable JS properties (the @property surface + views).
+        read=("id", "value", "checked", "children", "parentElement",
+              "tagName", "classList", "dataset"),
+        # Element mutation is dispatched through set_element_prop /
+        # call_method (explicit tables), so nothing is raw-writable.
+        write=(),
+        call=("append_child", "insert_before", "remove_child", "remove",
+              "replace_child", "set_attribute", "get_attribute",
+              "add_event_listener", "remove_event_listener",
+              "dispatch_event"),
+    ))
+    # The classes below are created per-Host inside factory methods, so
+    # they have no module-level identity — the policy table is keyed by
+    # class *name* and these entries cover every Host instance.
+    _HOST_OBJECT_POLICIES["ToyMap"] = _HostObjectPolicy(
+        read=("size",),
+        call=("set", "get", "has", "delete", "keys", "values", "entries",
+              "forEach"),
+    )
+    _HOST_OBJECT_POLICIES["ToySet"] = _HostObjectPolicy(
+        read=("size",),
+        call=("add", "has", "delete", "values", "forEach"),
+    )
+    _HOST_OBJECT_POLICIES["_ToyDate"] = _HostObjectPolicy(
+        call=("getTime", "getFullYear", "getMonth", "getDate", "getHours",
+              "getMinutes", "getSeconds", "getMilliseconds", "toString",
+              "toISOString"),
+    )
+    # _Xhr.__name__ is rewritten to "XMLHttpRequest" (the JS-visible
+    # constructor name), so the policy is registered under BOTH names.
+    _HOST_OBJECT_POLICIES["_Xhr"] = _HostObjectPolicy(
+        read=("readyState", "status", "statusText", "responseText",
+              "response"),
+        write=("onload", "onerror", "onreadystatechange"),
+        call=("open", "send", "setRequestHeader", "getResponseHeader",
+              "getAllResponseHeaders", "abort"),
+    )
+    _HOST_OBJECT_POLICIES["XMLHttpRequest"] = _HOST_OBJECT_POLICIES["_Xhr"]
+    # R7-J03 — cancellation surface.
+    _HOST_OBJECT_POLICIES["AbortSignal"] = _HostObjectPolicy(
+        read=("aborted", "reason"),
+        call=("addEventListener", "removeEventListener"),
+    )
+    _HOST_OBJECT_POLICIES["AbortController"] = _HostObjectPolicy(
+        read=("signal",),
+        call=("abort",),
+    )
+    _HOST_OBJECT_POLICIES["ToyError"] = _HostObjectPolicy(
+        read=("message", "name"),
+    )
+    _HOST_OBJECT_POLICIES["ToyTypeError"] = _HostObjectPolicy(
+        read=("message", "name"),
+    )
+    # The observer classes are renamed to their JS constructor names
+    # (``_MO.__name__ = "MutationObserver"``), so the policy keys match.
+    _HOST_OBJECT_POLICIES["MutationObserver"] = _HostObjectPolicy(
+        call=("observe", "unobserve", "disconnect"),
+    )
+    _HOST_OBJECT_POLICIES["ResizeObserver"] = _HostObjectPolicy(
+        call=("observe", "unobserve", "disconnect"),
+    )
+
+
+_install_host_object_policies()

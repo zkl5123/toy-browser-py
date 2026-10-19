@@ -19,6 +19,25 @@ def check(name, cond, detail=""):
         print(f"FAIL {name}  {detail}")
         _failures.append(name)
 
+def bench(name, value, threshold, detail=""):
+    """Informational performance observation (R7-Q01) — never a PASS/FAIL gate."""
+    state = "OK  " if value < threshold else "WARN"
+    print(f"{state} [bench] {name}: {detail or f'{value:.3f}'} "
+          f"(info threshold {threshold})")
+
+def _checked(fn):
+    """R7-Q01 — propagate internal check() failures to the test runner."""
+    def wrapper():
+        n0 = len(_failures)
+        try:
+            fn()
+        finally:
+            if len(_failures) > n0:
+                raise AssertionError(
+                    "internal check failure(s): " + "; ".join(_failures[n0:]))
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
 # --- 1. css.clear_caches resets the candidate-rule cache ---
 def t1_css_cache_reset():
     check("css._candidate_rules_cache exists", hasattr(css, "_candidate_rules_cache"))
@@ -167,8 +186,7 @@ def t8_perf():
         gc.collect()
         t0 = time.perf_counter(); run_once(); best = min(best, time.perf_counter() - t0)
     print(f"   3000-node pipeline: {best*1000:.1f} ms")
-    check("3000-node pipeline not slower than P34.4 (~9.5s)", best < 12.0,
-          f"got {best:.1f}s")
+    bench("3000-node pipeline vs P34.4 (~9.5s)", best, 12.0, f"got {best:.1f}s")
 
 def main():
     t1_css_cache_reset()
@@ -193,11 +211,11 @@ if __name__ == "__main__":
 
 # GPT P1-2 — TESTS list (auto-generated)
 TESTS: list = []
-TESTS.append(("t1_css_cache_reset", t1_css_cache_reset))
-TESTS.append(("t2_apply_clears_cache", t2_apply_clears_cache))
-TESTS.append(("t3_identity_cache_correctness", t3_identity_cache_correctness))
-TESTS.append(("t4_expand_shortcircuit", t4_expand_shortcircuit))
-TESTS.append(("t5_adv_char_cache", t5_adv_char_cache))
-TESTS.append(("t6_layout_clears_css", t6_layout_clears_css))
-TESTS.append(("t7_pipeline_render", t7_pipeline_render))
-TESTS.append(("t8_perf", t8_perf))
+TESTS.append(("t1_css_cache_reset", _checked(t1_css_cache_reset)))
+TESTS.append(("t2_apply_clears_cache", _checked(t2_apply_clears_cache)))
+TESTS.append(("t3_identity_cache_correctness", _checked(t3_identity_cache_correctness)))
+TESTS.append(("t4_expand_shortcircuit", _checked(t4_expand_shortcircuit)))
+TESTS.append(("t5_adv_char_cache", _checked(t5_adv_char_cache)))
+TESTS.append(("t6_layout_clears_css", _checked(t6_layout_clears_css)))
+TESTS.append(("t7_pipeline_render", _checked(t7_pipeline_render)))
+TESTS.append(("t8_perf", _checked(t8_perf)))

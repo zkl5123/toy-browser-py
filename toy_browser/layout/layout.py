@@ -21,6 +21,16 @@ from toy_browser.typography import font
 from toy_browser.rendering.paint import Color as _Color
 _DEFAULT_BORDER_COLOR = _Color(0, 0, 0)
 _DEFAULT_TEXT_COLOR = _Color(0, 0, 0)
+# R7-H01 — elements that never generate a box.  Every UA stylesheet hides
+# them (``head, meta, link, style, script, title { display: none }``), but
+# a document is routinely laid out *without* the UA sheet (the common test
+# path ``css.apply(root, "")``); without this tag-level skip the implicit
+# <head> the parser now creates would contribute a stray line box and push
+# the body down.  Extends the legacy ("script", "style") skip.
+_NON_RENDERED_TAGS = frozenset({
+    "head", "meta", "link", "base", "basefont", "bgsound", "title",
+    "style", "script", "template", "noscript",
+})
 # P34.1 — child-index cache with an address-reuse guard.  The key is
 # the *parent node object* (a weakref.ref, so the table itself never
 # keeps dead DOM trees alive; ``Node`` gained a ``__weakref__`` slot
@@ -85,6 +95,10 @@ _SPECIAL_PROPS = frozenset((
     "text-indent", "text-rendering", "font-weight",
     "line-height",
     "box-decoration-break", "-webkit-appearance",
+    # R7-C02 — grid item placement: a box carrying grid-column /
+    # grid-row must take the slow path so the placement is parsed.
+    "grid-column", "grid-row", "grid-column-start", "grid-row-start",
+    "grid-column-end", "grid-row-end",
     "text-justify", "word-break", "hyphens", "overflow-wrap",
     "line-clamp", "-webkit-line-clamp", "text-overflow", "vertical-align",
     "min-width", "max-width", "min-height", "max-height",
@@ -226,6 +240,14 @@ class LayoutBox:
     grid_rows_frac: list = field(default_factory=list)
     grid_gap: float = 0.0
     grid_row_gap: float = 0.0
+    # R7-C02 — grid item placement: explicit line + span on the item
+    # (``grid-column: 2`` / ``grid-column: 2 / span 2`` / ``grid-row``).
+    # ``None`` = auto-placed; span defaults to 1 track (1-based line
+    # numbers per CSS Grid §8.3).
+    grid_column_start: Optional[int] = None
+    grid_column_span: int = 1
+    grid_row_start: Optional[int] = None
+    grid_row_span: int = 1
     # P5.1 — CSS visual effects
     border_radius: float = 0.0  # px corner radius
     shadow_offset_x: float = 0.0  # box-shadow x
@@ -575,7 +597,7 @@ def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, 
     _has_special = False
     for csn in sn.children:
         ct = (csn.dom.tag or "").lower()
-        if ct in ("script", "style") or csn.is_display_none():
+        if ct in _NON_RENDERED_TAGS or csn.is_display_none():
             _has_special = True
             break
     # P33.P1 — parent content dimensions for %/calc resolution.
@@ -585,7 +607,7 @@ def _build_children(bx: LayoutBox, sn, my_font: float, parent_font_family: str, 
         for csn in sn.children:
             cdom = csn.dom
             ctag = (cdom.tag or "").lower()
-            if ctag in ("script", "style"):
+            if ctag in _NON_RENDERED_TAGS:
                 continue
             # P33.P1 — set containing-block dimensions on the child's StyledNode.
             csn.parent_width_px = parent_w
@@ -659,6 +681,72 @@ def _edges_for(sn, prop, my_font):
                 else:
                     base.left = r
     return base
+
+
+def _grid_line_int(raw) -> Optional[int]:
+    """R7-C02 — parse one grid line number ("2" / "2.0" / Keyword("2")).
+
+    Returns ``None`` for non-numeric values (named lines, ``auto``) —
+    the toy engine does not resolve named grid lines.
+    """
+    if raw is None:
+        return None
+    s = str(getattr(raw, "value", raw)).strip()
+    if not s:
+        return None
+    try:
+        return int(float(s))
+    except ValueError:
+        return None
+
+
+def _parse_grid_placement(sn, shorthand: str, start_prop: str,
+                          end_prop: str) -> tuple:
+    """R7-C02 — resolve ``(start_line, span)`` for a grid item.
+
+    Supports the toy-relevant subset of CSS Grid §8.3:
+
+    * ``2``          → start line 2, span 1
+    * ``span 2``     → auto start, span 2
+    * ``2 / span 2`` → start line 2, span 2
+    * ``2 / 4``      → start line 2, span 2 (end − start)
+    * ``1 / -1``     → start line 1, span 1 (negative lines are not
+      resolved against the explicit grid in the toy engine)
+
+    Returns ``(None, 1)`` when the item carries no placement (auto).
+    """
+    raw = sn.get_keyword(shorthand, "")
+    if raw:
+        parts = str(raw).split("/", 1)
+        a = parts[0].strip()
+        b = parts[1].strip() if len(parts) > 1 else ""
+    else:
+        sv = _grid_line_int(sn.props.get(start_prop))
+        ev = _grid_line_int(sn.props.get(end_prop))
+        if sv is None and ev is None:
+            return (None, 1)
+        a = "" if sv is None else str(sv)
+        b = "" if ev is None else str(ev)
+    start: Optional[int] = None
+    span = 1
+    if a.startswith("span"):
+        n = _grid_line_int(a.split()[-1] if len(a.split()) > 1 else "")
+        if n and n > 0:
+            span = n
+    elif a:
+        n = _grid_line_int(a)
+        if n and n > 0:
+            start = n
+    if b:
+        if b.startswith("span"):
+            n = _grid_line_int(b.split()[-1] if len(b.split()) > 1 else "")
+            if n and n > 0:
+                span = n
+        else:
+            n = _grid_line_int(b)
+            if n and start is not None and n > start:
+                span = n - start
+    return (start, max(1, span))
 
 
 def build_box(sn: StyledNode, parent_font_px: float,
@@ -990,7 +1078,10 @@ def build_box(sn: StyledNode, parent_font_px: float,
                 font_family=font_family,
             )
             bx.dom_sn = sn  # P0 (agent report) — back-link for flex sizing
-            _build_children(bx, sn, my_font, parent_font_family, explicit_h, available_w)
+            # R7-C02 — 传给子节点的是**本节点解析出的** font_family（继承
+            # 链），不是父节点传入的值：否则带 font-family 的元素内部的
+            # 文本盒仍用 monospace，测量与绘制分属两个 face。
+            _build_children(bx, sn, my_font, font_family, explicit_h, available_w)
             return bx
     # P1.4 — Flexbox: read display:flex / flex-direction / justify-content / align-items.
     is_flex = False
@@ -1140,6 +1231,15 @@ def build_box(sn: StyledNode, parent_font_px: float,
                             grid_row_gap = _px_of(_gp[1])
                         else:
                             grid_row_gap = _px_of(_gap_raw)
+
+    # R7-C02 — grid item placement (CSS Grid §8.3/§8.5).  These are
+    # *item* properties (a grid item may be a child of any container in
+    # the toy subset), so read them on every element, not just when the
+    # element itself is ``display: grid``.
+    grid_column_start, grid_column_span = _parse_grid_placement(
+        sn, "grid-column", "grid-column-start", "grid-column-end")
+    grid_row_start, grid_row_span = _parse_grid_placement(
+        sn, "grid-row", "grid-row-start", "grid-row-end")
 
     # P7.2 — display:table / table-row / table-cell + border-collapse.
     # P0 (retest report) — honour UA-style `display: table`/`table-row`/
@@ -1751,6 +1851,10 @@ def build_box(sn: StyledNode, parent_font_px: float,
         grid_rows_frac=grid_rows_frac,
         grid_gap=grid_gap,
         grid_row_gap=grid_row_gap,
+        grid_column_start=grid_column_start,
+        grid_column_span=grid_column_span,
+        grid_row_start=grid_row_start,
+        grid_row_span=grid_row_span,
         border_radius=border_radius,
         shadow_offset_x=shadow_offset_x,
         shadow_offset_y=shadow_offset_y,
@@ -1879,7 +1983,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
             for csn in sn.children:
                 cdom = csn.dom
                 ctag = (cdom.tag or "").lower()
-                if ctag in ("script", "style"):
+                if ctag in _NON_RENDERED_TAGS:
                     continue
                 # P33.P1 — set containing-block dimensions on the child's
                 # StyledNode before build_box reads width_px() / height_px().
@@ -2075,6 +2179,41 @@ def _resolve_pct_value(v, ref: float) -> float:
     if isinstance(v, Length) and v.unit == "%":
         return v.value * ref / 100.0
     return 0.0
+
+
+def _whitespace_only_run_len(bx: "LayoutBox", i: int) -> int:
+    """R7-H01 — collapsible-whitespace run length (0 = real content).
+
+    The HTML parser now keeps whitespace-only text nodes (dropping them
+    lost the space between two inline elements), so layout performs the
+    CSS2.1 §16.6.1 collapsing that the parser used to fake: a run of
+    whitespace-only TEXT boxes at a line start / line end (between two
+    block boxes, or before the first inline box of a line) produces no
+    box and consumes no vertical space.
+
+    ``white-space: pre`` / ``pre-wrap`` preserves those runs, so they
+    are exempt (they report length 0 and fall through to the normal
+    inline-run path).
+    """
+    sn = getattr(bx, "dom_sn", None)
+    ws = "normal"
+    if sn is not None:
+        try:
+            ws = sn.get_keyword("white-space", "normal")
+        except Exception:
+            ws = "normal"
+    if ws in ("pre", "pre-wrap"):
+        return 0
+    j = i
+    n = len(bx.children)
+    while j < n:
+        c = bx.children[j]
+        if c.box_type != BoxType.TEXT:
+            break
+        if (c.text_content or "").strip():
+            return 0            # real content in this run → lay it out
+        j += 1
+    return j - i
 
 
 def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None:
@@ -2517,6 +2656,19 @@ def layout_block(bx: LayoutBox, x: float, y: float, containing_w: float) -> None
             prev_block = cb
             i += 1
         else:
+            # R7-H01 — CSS white-space processing (CSS2.1 §16.6.1): a
+            # run of *collapsible* whitespace that sits at a line start
+            # / line end (i.e. between two block boxes, or before the
+            # first inline box on a line) generates no box and advances
+            # the stack by zero.  The HTML parser now keeps
+            # whitespace-only text nodes (dropping them lost the space
+            # between two inline elements), so layout has to perform
+            # the collapsing the parser used to fake.  ``white-space:
+            # pre`` preserves the run, so it is exempt.
+            _ws_run = _whitespace_only_run_len(bx, i)
+            if _ws_run > 0:
+                i += _ws_run
+                continue
             # P18 — inline-level run: collect children until a block-level
             # box is hit.  Each child is laid out sequentially; the run
             # height is the max of child heights and the container's
@@ -2847,50 +2999,45 @@ def _layout_flex(
         else:
             bases[i] = min(bases[i], _item_explicit[i])
 
-    # --- Phase 2: flex grow/shrink (spec §9.7 simplified single-pass) ---
-    total_basis = sum(bases)
-    leftover = available - total_basis
-    sized = list(bases)
+    # --- Phase 2: wrap into lines BEFORE grow/shrink (spec §9.7) ---
+    # R7-C02 — the legacy order (grow first, then wrap) meant a wrapping
+    # container never grew its last line: ``leftover`` was computed once
+    # against the *whole* container, so with three ``flex-grow:1`` items
+    # in a 100px wrapping container the leftover was negative, no item
+    # grew, and every line kept its basis instead of filling the line.
+    # Per spec §9.7 items are collected into lines using their
+    # hypothetical main size (basis floored at the automatic minimum
+    # size), then **each line** resolves its own grow/shrink.
+    def _auto_floor(i: int, cb) -> float:
+        """R7-C02 — the item's automatic minimum size (spec §4.5).
 
-    if leftover > 0:
-        # grow: distribute positive leftover to items with flex-grow > 0
-        total_grow = sum(max(0.0, cb.flex_grow) for cb in ordered)
-        if total_grow > 0:
-            for i, cb in enumerate(ordered):
-                if cb.flex_grow > 0:
-                    sized[i] += leftover * (cb.flex_grow / total_grow)
-    elif leftover < 0:
-        # P27.5 - min-width/min-height:auto: flex items cannot shrink
-        # below their *content* size (the natural main-axis size from
-        # Phase 0, which is the tightest measure available).
-        for i, cb in enumerate(ordered):
+        Only items **without** a specified main-axis size get the
+        content-based floor: an item with ``width:40px`` has a definite
+        main size, so its hypothetical size is that width — the legacy
+        code floored it with ``natural_main`` too, and an empty block
+        measured at the *containing* width (300px) reported a 300px
+        minimum, which broke every wrapping container into one item per
+        line.
+        """
+        if _item_explicit[i] is not None:
+            floor = 0.0
+        else:
             floor = natural_main[i] if natural_main[i] > 0 else 0.0
-            cb_min = cb.min_width if row else cb.min_height
-            floor = max(floor, cb_min if cb_min > 0 else 0.0)
-            sized[i] = max(sized[i], floor)
-        # P27.3 — when flex-wrap is enabled, spec §9.7.4 says items do
-        # NOT shrink to fit the line; they overflow and wrap instead.
-        # Skip the shrink pass when wrapping is active.
-        if not wrap:
-            deficit = available - sum(sized)
-            if deficit < 0:
-                total_shrink = sum(max(0.0, cb.flex_shrink) for cb in ordered)
-                if total_shrink > 0:
-                    total_power = sum(max(0.0, cb.flex_shrink) * max(0.0, sized[i])
-                                      for i, cb in enumerate(ordered))
-                    for i, cb in enumerate(ordered):
-                        if cb.flex_shrink > 0:
-                            power = cb.flex_shrink * max(0.0, sized[i])
-                            shrink_amt = (-deficit) * (power / total_power) if total_power > 0 else 0.0
-                            sized[i] -= shrink_amt
+        cb_min = cb.min_width if row else cb.min_height
+        return max(floor, cb_min if cb_min > 0 else 0.0)
 
-    # --- Phase 3: wrap into lines (if flex-wrap) ---
+    hypo = list(bases)
+    for i, cb in enumerate(ordered):
+        floor = _auto_floor(i, cb)
+        if floor > hypo[i]:
+            hypo[i] = floor
+
     lines: list[list[int]] = []
     if wrap:
         line: list[int] = []
         line_w = 0.0
-        for i, cb in enumerate(ordered):
-            w = sized[i]
+        for i in range(n):
+            w = hypo[i]
             if line and line_w + w > available:
                 lines.append(line)
                 line = []
@@ -2911,6 +3058,47 @@ def _layout_flex(
         # single line: overflow is handled by the shrink pass; when every
         # item has flex-shrink:0 the overflow is clipped (toy: no overflow
         # property yet), so no renormalisation here.
+
+    # --- Phase 2b: flex grow/shrink per line (spec §9.7.1/§9.7.2) ---
+    # R7-C02 — grow starts from the flex base size (``bases``), not from
+    # the floored hypothetical size: the floor is a *shrink* limit.
+    sized = list(bases)
+    for _line in lines:
+        leftover = available - sum(bases[i] for i in _line)
+        if leftover > 0:
+            # grow: distribute positive leftover to items with flex-grow > 0
+            total_grow = sum(max(0.0, ordered[i].flex_grow) for i in _line)
+            if total_grow > 0:
+                for i in _line:
+                    cb = ordered[i]
+                    if cb.flex_grow > 0:
+                        sized[i] += leftover * (cb.flex_grow / total_grow)
+        elif leftover < 0:
+            # P27.5 - min-width/min-height:auto: flex items cannot shrink
+            # below their *content* size (the natural main-axis size from
+            # Phase 0, which is the tightest measure available).
+            for i in _line:
+                floor = _auto_floor(i, ordered[i])
+                sized[i] = max(sized[i], floor)
+            # P27.3 — when flex-wrap is enabled, spec §9.7.4 says items do
+            # NOT shrink to fit the line; they overflow and wrap instead.
+            # Skip the shrink pass when wrapping is active.
+            if not wrap:
+                deficit = available - sum(sized[i] for i in _line)
+                if deficit < 0:
+                    total_shrink = sum(max(0.0, ordered[i].flex_shrink)
+                                       for i in _line)
+                    if total_shrink > 0:
+                        total_power = sum(
+                            max(0.0, ordered[i].flex_shrink) * max(0.0, sized[i])
+                            for i in _line)
+                        for i in _line:
+                            cb = ordered[i]
+                            if cb.flex_shrink > 0:
+                                power = cb.flex_shrink * max(0.0, sized[i])
+                                shrink_amt = (-deficit) * (power / total_power) \
+                                    if total_power > 0 else 0.0
+                                sized[i] -= shrink_amt
 
     # --- Phase 4: place lines ---
     if row:
@@ -3349,6 +3537,66 @@ def _layout_flex(
                        max(final_h, bx.line_height_px))
 
 
+def _grid_place(items: list, cols: int) -> list:
+    """R7-C02 — grid item placement (CSS Grid §8.5, *sparse* packing).
+
+    Returns ``[(row, col, span), …]`` in *items* order (0-based row /
+    column, ``span`` = number of column tracks covered).
+
+    * An item with an explicit ``grid-column`` line is placed at that
+      line; the auto-placement cursor then advances past it (sparse:
+      later auto items never backtrack into the hole it left).
+    * An item with ``grid-row`` starts at that row.
+    * Everything else fills the next free cell at the cursor, which only
+      moves forward.
+
+    The legacy ``row = idx // cols; col = idx % cols`` ignored both the
+    explicit lines and the spans, so ``grid-column: 2`` landed in
+    column 1 and a spanning item occupied a single track.
+    """
+    out: list = []
+    busy: set = set()
+    cur_row = 0
+    cur_col = 0
+    for cb in items:
+        span = max(1, int(getattr(cb, "grid_column_span", 1) or 1))
+        rspan = max(1, int(getattr(cb, "grid_row_span", 1) or 1))
+        fixed_col = getattr(cb, "grid_column_start", None)
+        fixed_row = getattr(cb, "grid_row_start", None)
+        row = (fixed_row - 1) if fixed_row else cur_row
+        col = (fixed_col - 1) if fixed_col else cur_col
+        if col < 0:
+            col = 0
+        if col + span > cols:
+            col = max(0, cols - span)
+        guard = 0
+        while guard < 4096:
+            guard += 1
+            clash = any((row + dr, col + dc) in busy
+                        for dr in range(rspan) for dc in range(span))
+            if not clash:
+                break
+            if fixed_col is not None:
+                row += 1          # an explicit column cannot slide sideways
+            else:
+                col += 1
+                if col + span > cols:
+                    col = 0
+                    row = max(row + 1, cur_row + 1)
+                    cur_row = row
+        for dr in range(rspan):
+            for dc in range(span):
+                busy.add((row + dr, col + dc))
+        out.append((row, col, span))
+        # advance the sparse cursor past this item (never backwards)
+        cur_row = max(cur_row, row)
+        cur_col = col + span
+        if cur_col >= cols:
+            cur_col = 0
+            cur_row = row + 1
+    return out
+
+
 def _layout_grid(
     bx: LayoutBox,
     content_x0: float,
@@ -3450,26 +3698,29 @@ def _layout_grid(
     # Phase 2: place children into the grid, tracking cumulative row height.
     visible = [cb for cb in bx.children if not cb.is_display_none]
     n = len(visible)
+    # R7-C02 — grid item placement: honour explicit grid-column / grid-row
+    # lines and spans instead of the legacy ``idx // cols`` / ``idx % cols``
+    # (an explicit ``grid-column: 2`` used to land in column 1).
+    placement = _grid_place(visible, cols)
     # P33.R4 — accumulate row heights so each row starts below the previous.
     row_y: dict[int, float] = {}
     row_max_h: dict[int, float] = {}
     for idx, cb in enumerate(visible):
-        row = idx // cols
-        col = idx % cols
-        cx = content_x0
-        for c2 in range(col):
-            cx += col_widths[c2]
-            cx += col_gap
-        cy = content_y0 + row_y.get(row, 0.0) + row * row_gap
-        cw = col_widths[col] if col < len(col_widths) else 0.0
+        row, col, cspan = placement[idx]
+        # R7-C02 — a spanning item covers several tracks (+ the gaps
+        # between them), not just one.
+        cw = sum(col_widths[col:col + cspan]) + col_gap * (cspan - 1)
+        cx = content_x0 + sum(col_widths[:col]) + col_gap * col
+        cy = content_y0 + row_y.get(row, 0.0)
         layout_block(cb, cx, cy, cw)
         row_h = cb.rect.h + cb.padding.top + cb.padding.bottom
         row_max_h[row] = max(row_max_h.get(row, 0.0), row_h)
+    n_rows = (max(row_max_h) + 1) if row_max_h else 0
     # P0 (agent report) — row track distribution: when the grid has row
     # track fractions (grid-template-rows: 50px 50px / 1fr 2fr), use
     # them; otherwise fall back to the legacy even-split / content-sized.
     row_fracs = getattr(bx, "grid_rows_frac", None) or []
-    if len(row_fracs) == len(row_max_h) and any(f > 0 for f, u in row_fracs):
+    if len(row_fracs) == n_rows and any(f > 0 for f, u in row_fracs):
         # P0 (retest report) — proportional row sizing (mirrors columns).
         px_sum_r = sum(v for v, u in row_fracs if u == "px")
         fr_sum_r = sum(v for v, u in row_fracs if u == "fr")
@@ -3493,29 +3744,29 @@ def _layout_grid(
                 row_h_list[idx_r] = max(row_h_list[idx_r], row_max_h[idx_r])
     else:
         row_h_list: list[float] = []
-        for row in range(len(row_max_h)):
+        for row in range(n_rows):
             if bx.explicit_height is not None:
-                n_rows = len(row_max_h)
-                row_h_list.append(max(bx.explicit_height / n_rows, row_max_h.get(row, 0.0)))
+                row_h_list.append(
+                    max(bx.explicit_height / max(1, n_rows), row_max_h.get(row, 0.0)))
             else:
                 row_h_list.append(row_max_h.get(row, 0.0))
     # P33.R4 — compute cumulative row offsets for the next pass (include
     # row_gap between rows).
+    # R7-C02 — ``row_y`` already includes the row gaps (each row advances
+    # by ``row_h + row_gap``), so the offset must NOT add ``row *
+    # row_gap`` again: with a 20px row and a 10px gap the second row
+    # used to start at 40 instead of 30.
     total_h = 0.0
-    for row in range(len(row_max_h)):
+    for row in range(n_rows):
         row_y[row] = total_h
         total_h += row_h_list[row] + row_gap
     total_h = max(0.0, total_h - row_gap)  # strip trailing gap
     # Phase 3: re-position children at their correct row y-offsets.
     for idx, cb in enumerate(visible):
-        row = idx // cols
-        col = idx % cols
-        cx = content_x0
-        for c2 in range(col):
-            cx += col_widths[c2]
-            cx += col_gap
-        cy = content_y0 + row_y.get(row, 0.0) + row * row_gap
-        cw = col_widths[col] if col < len(col_widths) else 0.0
+        row, col, cspan = placement[idx]
+        cw = sum(col_widths[col:col + cspan]) + col_gap * (cspan - 1)
+        cx = content_x0 + sum(col_widths[:col]) + col_gap * col
+        cy = content_y0 + row_y.get(row, 0.0)
         layout_block(cb, cx, cy, cw)
         # P0 (agent report) — stretch cell content into its row track when
         # the container height distributes the space.
@@ -3535,6 +3786,62 @@ def _layout_grid(
     bx.rect = Rect(content_x0, content_y0, available,
                    bx.explicit_height if bx.explicit_height is not None
                    else max(total_h, bx.line_height_px))
+
+
+#: R7-H01 — table row groups: the parser inserts an implicit <tbody>
+#: whenever the markup omits one, so layout must treat these elements as
+#: transparent row containers (their rows belong to the table's row
+#: list, not to the group's own box).
+_ROW_GROUP_TAGS = frozenset({"tbody", "thead", "tfoot"})
+
+
+def _collect_table_rows(bx: "LayoutBox") -> list:
+    """R7-H01 — the row list a table lays out.
+
+    Direct ``<tr>`` children plus the rows of every row group
+    (``<tbody>`` / ``<thead>`` / ``<tfoot>``).  The row-group box itself
+    is NOT a row: with an implicit ``<tbody>`` in the tree (the parser
+    now inserts one for ``<table><tr>``), treating the group as a row
+    would collapse the whole table into a single row.
+    """
+    out = []
+    for cb in bx.children:
+        tag = (cb.dom.tag if cb.dom is not None and cb.dom.is_element() else "") or ""
+        if tag in _ROW_GROUP_TAGS:
+            for gc in cb.children:
+                if gc.is_table_row or gc.box_type == BoxType.BLOCK:
+                    out.append(gc)
+            continue
+        if cb.is_table_row or cb.box_type == BoxType.BLOCK:
+            out.append(cb)
+    return out
+
+
+def _cell_span(cell) -> tuple:
+    """R7-C02 — ``(colspan, rowspan)`` of a table cell (HTML §4.9.9).
+
+    Read from the cell's DOM attributes; invalid / missing values fall
+    back to 1 (a cell always covers at least one track).
+    """
+    dom = getattr(cell, "dom", None)
+    if dom is None:
+        return (1, 1)
+    try:
+        if not dom.is_element():
+            return (1, 1)
+    except Exception:
+        return (1, 1)
+    out = []
+    for attr in ("colspan", "rowspan"):
+        raw = dom.attr(attr)
+        n = 1
+        if raw:
+            try:
+                n = int(str(raw).strip())
+            except (TypeError, ValueError):
+                n = 1
+        out.append(n if n > 0 else 1)
+    return (out[0], out[1])
 
 
 def _layout_table(
@@ -3563,16 +3870,22 @@ def _layout_table(
         layout_block(cb, content_x0, content_y0, containing_w)
 
     # Collect rows and their cell widths.
-    rows: list[LayoutBox] = [cb for cb in bx.children if cb.is_table_row or cb.box_type == BoxType.BLOCK]
+    # R7-H01 — an implicit <tbody> (the parser now inserts one whenever
+    # the markup omits it) must not hide the rows from the table
+    # algorithm: the row group is transparent, its rows participate
+    # directly in the table's row list.
+    rows: list[LayoutBox] = _collect_table_rows(bx)
     if not rows:
         bx.rect = Rect(content_x0, content_y0, available, bx.line_height_px)
         return
 
     # Determine column count from the widest row.
+    # R7-C02 — a ``colspan="2"`` cell covers two columns, so the column
+    # count is the sum of the cells' spans, not the raw cell count.
     n_cols = 0
     for row in rows:
         cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
-        n_cols = max(n_cols, len(cells))
+        n_cols = max(n_cols, sum(_cell_span(c)[0] for c in cells))
     # P33.R2-2 (layout_table D3) — border-collapse: collapse is
     # declared on the <table> element (CSS2.1 §17.4.3).  The cascade
     # does NOT propagate it into the <tr>/<td> computed styles: a <td>
@@ -3621,8 +3934,11 @@ def _layout_table(
     # right) are added to the table total once.
     for row in rows:
         cells = [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
-        for ci in range(min(n_cols, len(cells))):
-            c = cells[ci]
+        _col = 0
+        for c in cells:
+            if _col >= n_cols:
+                break
+            _cspan = min(_cell_span(c)[0], n_cols - _col)
             # P1 (agent report) — natural width uses the cell's own
             # font family + line-height so TTF vertical metrics are
             # honoured; border-collapse halves the shared cell borders.
@@ -3652,7 +3968,16 @@ def _layout_table(
             else:
                 _bw_lr = c.border.left + c.border.right
             _cw = _natural + c.padding.left + c.padding.right + _bw_lr
-            col_max[ci] = max(col_max[ci], _cw)
+            # R7-C02 — a spanning cell's natural width is distributed
+            # across the columns it covers (CSS2.1 §17.5.2: the spanning
+            # cell's minimum width increases the columns it spans, each
+            # by at least an equal share), so ``colspan=2`` no longer
+            # reports the width of a single column.
+            _share = _cw / max(1, _cspan)
+            for _k in range(_col, _col + _cspan):
+                if _share > col_max[_k]:
+                    col_max[_k] = _share
+            _col += _cspan
     # P33.R2-2 (layout_table D3) — outer border edges: in collapse mode
     # the table's outer edge is the remaining half of the outermost
     # cell's border pair (each edge column already contributed its INNER
@@ -3697,57 +4022,85 @@ def _layout_table(
         [c for c in row.children if c.is_table_cell or c.box_type in (BoxType.BLOCK, BoxType.TEXT, BoxType.INLINE)]
         for row in rows
     ]
+    # R7-C02 — cell placement: a cell occupies ``colspan`` columns (and
+    # reserved rows for ``rowspan``), so the column cursor advances by the
+    # span and the cell's width is the sum of the tracks it covers.
+    _occupied: set = set()          # (row_index, column) taken by a rowspan
+    _spanning: list = []            # (cell, start_col, colspan, rowspan, row_idx)
+    _placed: dict = {}              # id(cell) -> (start_col, colspan)
     for _ri, row in enumerate(rows):
         row.cells = _row_cells[_ri]
         cells = row.cells
         n_cells = len(cells)
         # Lay out cells horizontally.
-        cell_x = content_x0
         row_h = 0.0
-        for ci in range(n_cols):
-            if ci < n_cells:
-                cell = cells[ci]
-                cw = col_w_list[ci]
-                # Force the cell width.
-                cell.explicit_width = cw
-                layout_block(cell, cell_x, content_y0 + child_y, cw)
-                cell_x += cw
-                # P33.R2-3 (layout_table h) — row pitch: use the
-                # cell's BORDER-BOX height (content + padding +
-                # border), NOT outer_height(): the latter adds the
-                # margin pair, but table cells carry no margins and a
-                # real browser's row pitch is measured border-edge to
-                # border-edge.  In collapse mode the shared row
-                # border between two rows is drawn ONCE and belongs
-                # to the row GAP, so it is NOT part of either row's
-                # box; it is added ONCE per interior boundary, after
-                # the row loop below.  2×2 case (cell border 1px,
-                # padding 4px, text 19.2px):
-                #   row border-box h = 19.2+4+4+1+1 = 29.2
-                #   shared row border = 2 (1px × 2 borders, drawn once)
-                #   table border-box h = 29.2×2 + 2 = 60.4 + 1px
-                #   (Edge 61: the table's own top/bottom border pair,
-                #   which border_rect() re-adds in collapse mode)
-                # so the per-row pitch is the border-box height; the
-                # shared-row border for the NEXT interior boundary is
-                # added ONCE after the row loop (see below), not per
-                # cell.
-                _cell_bh = (cell.rect.h + cell.padding.top + cell.padding.bottom
-                            + cell.border.top + cell.border.bottom)
-                row_h = max(row_h, _cell_bh)
-            else:
-                # Empty cell — just advance.
-                cell_x += col_w_list[ci]
+        _col = 0
+        for cell in cells:
+            # Skip columns reserved by an earlier rowspan cell.
+            while _col < n_cols and (_ri, _col) in _occupied:
+                _col += 1
+            if _col >= n_cols:
+                break
+            _cspan, _rspan = _cell_span(cell)
+            _cspan = max(1, min(_cspan, n_cols - _col))
+            cw = sum(col_w_list[_col:_col + _cspan])
+            cell_x = content_x0 + sum(col_w_list[:_col])
+            _placed[id(cell)] = (_col, _cspan)
+            if _rspan > 1:
+                for _rr in range(_ri, _ri + _rspan):
+                    for _cc in range(_col, _col + _cspan):
+                        _occupied.add((_rr, _cc))
+                _spanning.append((cell, _col, _cspan, _rspan, _ri))
+            # Force the cell width.
+            cell.explicit_width = cw
+            layout_block(cell, cell_x, content_y0 + child_y, cw)
+            _col += _cspan
+            # P33.R2-3 (layout_table h) — row pitch: use the
+            # cell's BORDER-BOX height (content + padding +
+            # border), NOT outer_height(): the latter adds the
+            # margin pair, but table cells carry no margins and a
+            # real browser's row pitch is measured border-edge to
+            # border-edge.  In collapse mode the shared row
+            # border between two rows is drawn ONCE and belongs
+            # to the row GAP, so it is NOT part of either row's
+            # box; it is added ONCE per interior boundary, after
+            # the row loop below.  2×2 case (cell border 1px,
+            # padding 4px, text 19.2px):
+            #   row border-box h = 19.2+4+4+1+1 = 29.2
+            #   shared row border = 2 (1px × 2 borders, drawn once)
+            #   table border-box h = 29.2×2 + 2 = 60.4 + 1px
+            #   (Edge 61: the table's own top/bottom border pair,
+            #   which border_rect() re-adds in collapse mode)
+            # so the per-row pitch is the border-box height; the
+            # shared-row border for the NEXT interior boundary is
+            # added ONCE after the row loop (see below), not per
+            # cell.
+            _cell_bh = (cell.rect.h + cell.padding.top + cell.padding.bottom
+                        + cell.border.top + cell.border.bottom)
+            row_h = max(row_h, _cell_bh)
         # Finalize row.
         row.explicit_height = row_h if row_h > 0 else bx.line_height_px
         row.rect = Rect(content_x0, content_y0 + child_y, _table_total_w, row_h)
         # Reposition cells with the final row y.
-        cx = content_x0
-        for ci in range(n_cells):
-            cell = cells[ci]
+        # R7-C02 — the column cursor advances by the cell's colspan and
+        # skips columns reserved by an earlier rowspan, matching the
+        # placement loop above.
+        _col2 = 0
+        for cell in cells:
+            _pc = _placed.get(id(cell))
+            if _pc is not None:
+                # Reuse the column this cell was placed in: the reserved
+                # set must not push a rowspan cell past its own column.
+                _col2, _cspan2 = _pc
+            else:
+                while _col2 < n_cols and (_ri, _col2) in _occupied:
+                    _col2 += 1
+                if _col2 >= n_cols:
+                    break
+                _cspan2 = max(1, min(_cell_span(cell)[0], n_cols - _col2))
             cell.rect.y = content_y0 + child_y
-            cell.rect.x = cx
-            cx += col_w_list[ci]
+            cell.rect.x = content_x0 + sum(col_w_list[:_col2])
+            _col2 += _cspan2
         # P33.R2-3 (layout_table h) — row pitch: the shared border
         # between two adjacent rows (collapse mode) is drawn ONCE
         # and belongs to the row gap, exactly as the shared column
@@ -3776,6 +4129,24 @@ def _layout_table(
                 max((c.border.top for c in _row_cells[_ri + 1] if c.is_table_cell), default=0.0),
             )
             child_y += _shared
+
+    # R7-H01 — snap every row group (<tbody>/<thead>/<tfoot>) onto the
+    # final geometry of the rows it contributed: the group box itself is
+    # laid out as an ordinary block in phase 1 (before the column widths
+    # were known), so its rect would otherwise stay stale and could
+    # report a hit-test target that no longer matches its rows.
+    for cb in bx.children:
+        _tag = (cb.dom.tag if cb.dom is not None and cb.dom.is_element() else "") or ""
+        if _tag not in _ROW_GROUP_TAGS:
+            continue
+        _kids = [gc for gc in cb.children if gc in rows]
+        if not _kids:
+            continue
+        _x0 = min(g.rect.x for g in _kids)
+        _y0 = min(g.rect.y for g in _kids)
+        _x1 = max(g.rect.x + g.rect.w for g in _kids)
+        _y1 = max(g.rect.y + g.rect.h for g in _kids)
+        cb.rect = Rect(_x0, _y0, max(_x1 - _x0, 0.0), max(_y1 - _y0, 0.0))
 
     # P33.R2-2 (layout_table D3) — the table's rect is recorded at the
     # content-box origin.  border_rect() adds the FULL border pair back

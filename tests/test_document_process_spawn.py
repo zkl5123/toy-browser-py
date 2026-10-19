@@ -51,12 +51,15 @@ def test_server_start_and_shutdown():
     """真实 spawn：start 起子进程，is_spawned 为 True；shutdown 终止。"""
     srv = DocProcessServer()
     ok = srv.start()
-    assert ok == _can_spawn() or True  # start 不崩即可
+    # R7-Q01 — meaningful contract: start() reports success/failure as a
+    # bool (no tautological ``or True``); the real spawn proof is the
+    # is_spawned() assertion below.
+    assert isinstance(ok, bool)
     if _can_spawn():
         assert srv.is_spawned()
         srv.post(DocCommand(1, DOC_CMD_NAVIGATE, {"url": "a"}, 1))
         frames = srv.drain()
-        assert len(frames) >= 0
+        assert isinstance(frames, list)
         srv.shutdown()
         assert not srv.is_spawned()
     else:
@@ -115,7 +118,9 @@ def test_server_close_tab_drops_in_flight():
         tabs = {f.tab_id for f in frames}
         assert 1 not in tabs  # tab1 帧已丢
         assert 2 in tabs      # tab2 保留
-        assert res["dropped_cmds"] >= 0
+        # R7-Q01 — the close_tab contract reports a dropped-command count
+        # (a real int), not just "did not raise".
+        assert isinstance(res["dropped_cmds"], int) and res["dropped_cmds"] >= 0
     finally:
         srv.shutdown()
 
@@ -175,7 +180,9 @@ def test_spawn_entry_returns_server():
     srv = spawn_doc_process_server()
     assert isinstance(srv, DocProcessServer)
     srv.post(DocCommand(1, DOC_CMD_NAVIGATE, {"url": "x"}, 1))
-    assert len(srv.drain()) >= 0
+    # R7-Q01 — drain() always answers with a list of frames (the frame
+    # payload contract itself is proven by the dedicated frame tests).
+    assert isinstance(srv.drain(), list)
     srv.shutdown()
 
 
@@ -186,7 +193,7 @@ def test_make_multiprocessing_pool_returns_server():
     pool = make_multiprocessing_pool()
     assert isinstance(pool, DocProcessServer)
     pool.post(DocCommand(1, DOC_CMD_NAVIGATE, {"url": "m"}, 1))
-    assert len(pool.drain()) >= 0
+    assert isinstance(pool.drain(), list)
     pool.shutdown()
 
 

@@ -16,6 +16,7 @@ from toy_browser.rendering.paint import Bitmap, Color, WHITE
 from toy_browser.rendering.paint_engine import (
     DisplayList, DisplayCommand, rasterize as pe_rasterize)
 from toy_browser.rendering.cpu_image import CPUImage
+from skip_support import require_tk
 from toy_browser.rendering.rasterize_cpu import (
     CPUCanvas, rasterize_to_cpu_image, rasterize_direct,
     cpu_matches_bitmap, cpu_matches_cpu)
@@ -437,6 +438,7 @@ def _make_stub_tabbrowser44(page, dl=None):
     页面），验证 :meth:`_refresh_canvas` 优先走 CPUImage 路径（当
     ``page._last_dl`` 可用）+ 回退 Bitmap 路径（``_last_dl`` 不可用）。
     """
+    require_tk()  # R7-Q01 — 缺 Tk 环境 → SKIP，不算功能失败
     from toy_browser.app.gui import TabBrowser
     tb = object.__new__(TabBrowser)
     tb.tabs = [page]
@@ -507,6 +509,7 @@ def test_refresh_canvas_bitmap_none_early_return():
 def test_c02_refresh_canvas_cpu_fallback_to_bitmap():
     """批次 44 — _c02_refresh_canvas_cpu 当 _last_dl 不可用（full is
     None）时回退到 _refresh_canvas（再走 Bitmap 路径）。"""
+    require_tk()  # R7-Q01 — gui 模块级 import tkinter；缺 Tk → SKIP
     from toy_browser.app.gui import TabBrowser
     page = _PageStub44(width=40, height=30, bitmap=None, last_dl=None)
     tb, called = _make_stub_tabbrowser44(page)
@@ -630,6 +633,7 @@ def test_gui_c02_rasterize_uses_canvas_path():
     paint_engine.rasterize_to_canvas 直接画到 CPUCanvas（消除
     scratch Bitmap 合并层），返回的 CPUImage 与权威 rasterize 逐
     像素一致。"""
+    require_tk()  # R7-Q01 — gui 模块级 import tkinter；缺 Tk → SKIP
     from toy_browser.app.gui import TabBrowser
     from toy_browser.rendering.paint_engine import rasterize_to_canvas
     page = _PageStub44(width=100, height=90, content_height=90,

@@ -18,6 +18,7 @@ import time
 from toy_browser.document import dom
 from toy_browser.typography import text
 from toy_browser.typography import font
+from skip_support import SkipTest
 
 
 def test_get_glyph_mask_uses_resolved_face():
@@ -30,7 +31,7 @@ def test_get_glyph_mask_uses_resolved_face():
     font.init_real_fonts(["fonts"])
     real = text._real_metrics_for("monospace")
     if real is None:
-        return  # no real font — skip
+        raise SkipTest("no real font fixture (fonts/ without TTF)")
     assert not real.has_glyph("你"), "primary face must lack the CJK glyph"
     # Primary face must NOT have a mask for 你 (its cmap lacks the
     # codepoint, so the outline lookup returns None → no mask).
@@ -42,7 +43,7 @@ def test_get_glyph_mask_uses_resolved_face():
     from toy_browser.typography import font as _fontmod
     cjk = _fontmod.get_cjk_fallback()
     if cjk is None:
-        return  # no CJK fallback — the curve path is acceptable
+        raise SkipTest("no CJK fallback font registered")
     assert face is cjk, "resolve_face must return the CJK fallback for CJK codepoints"
     mask = text._get_glyph_mask("你", face, 12.0, 1.0)
     assert mask is not None, "P34.2 must hit the mask cache via the resolved face"
@@ -213,14 +214,21 @@ def test_child_index_guard_rebuilds_on_reuse():
     from toy_browser.layout import layout
     import gc
     layout.clear_caches()
+    # R7-H01 — locate <body> by tag: the parser now creates the implicit
+    # <head> sibling, so ``html.children[0]`` is no longer the body.
+    def _body(n):
+        for c in n.children[0].children:
+            if c.is_element() and c.tag == "body":
+                return c
+        return n.children[0].children[-1]
     n1 = dom.parse("<html><body><div>a</div><div>b</div></body></html>")
-    body1 = n1.children[0].children[0]
+    body1 = _body(n1)
     d1 = body1.children[0]
     assert layout._child_index_for(d1, body1) == 1
     del n1, body1, d1
     gc.collect()
     n2 = dom.parse("<html><body><div>x</div><div>y</div><div>z</div></body></html>")
-    body2 = n2.children[0].children[0]
+    body2 = _body(n2)
     third = body2.children[2]
     assert layout._child_index_for(third, body2) == 3, \
         "child index must be rebuilt when the parent id is reused"
@@ -246,16 +254,21 @@ _TESTS = [
 def main():
     import sys
     failed = []
+    skipped = []
     for name, fn in _TESTS:
         try:
             fn()
             print(f"ok   {name}")
+        except SkipTest as e:
+            print(f"skip {name}: {e}")
+            skipped.append(name)
         except Exception as e:
             import traceback
             print(f"FAIL {name}: {e}")
             traceback.print_exc()
             failed.append(name)
-    print(f"\n{len(_TESTS) - len(failed)}/{len(_TESTS)} passed")
+    print(f"\n{len(_TESTS) - len(failed) - len(skipped)}/{len(_TESTS)} passed"
+          + (f" ({len(skipped)} skipped)" if skipped else ""))
     if failed:
         print("FAILED:", failed)
         sys.exit(1)

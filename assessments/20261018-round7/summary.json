@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-18",
+  "baseline_commit": "2d1bdd31c982fe6637be30da393f47f4170e2750",
+  "verdict": "实验性真实浏览器内核；安全、标准语义和默认主链接入未达通用浏览器要求",
+  "product_source_modified": false,
+  "historical_evidence_overwritten": false,
+  "native_regression": {
+    "python": "3.11.9",
+    "wgpu": "0.32.0",
+    "runner_passed": 1914,
+    "runner_enqueued": 1914,
+    "exit_code": 0,
+    "runner_seconds": 760.5,
+    "unpropagated_internal_performance_fail_lines": 2,
+    "warning": "函数未抛异常的计数，不等于全部内部断言或GUI/GPU端到端能力通过"
+  },
+  "managed_regression": {
+    "python": "3.13.14",
+    "runner_passed": 1825,
+    "runner_enqueued": 1864,
+    "exit_code": 1,
+    "runner_seconds": 401.4,
+    "tkinter_missing_failures": 33,
+    "gpu_fallback_failures": 6,
+    "module_import_errors_omitted_from_denominator": 5,
+    "tests_omitted_from_denominator": 50
+  },
+  "historical_js_replay": {"cases": 51, "raw_logs_match": 50, "trimmed_logs_match": 51, "status_class_match": 51},
+  "historical_layout_replay": {"pages": 17, "boxes": 48, "within_1_css_px": 48},
+  "fresh_pure_js_differential": {"node": "22.22.2", "cases": 24, "matched": 11, "mismatched": 13},
+  "render_targeted_checks": {"checks": 32, "passed": 4, "failed": 28},
+  "security_targeted_probes": {"executed": 21, "probe_errors": 0, "warning": "成功执行不等于标准行为通过"},
+  "implementation_work_items": 21,
+  "reference_warning": "Edge参考来自第五轮冻结数据，非本轮重跑；Node仅用于纯JS；定向样本不代表整体兼容率",
+  "priority": ["测试可信化", "JS宿主隔离", "统一CSP/CORS请求策略", "分配前资源上限", "文档导航默认主链", "HTML/CSS/JS基础语义", "GUI编辑/IME与任务", "排版和性能", "真实GPU绘制"]
+}

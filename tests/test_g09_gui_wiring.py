@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from toy_browser.app import gui as _gui
 from toy_browser.app.tab_session import TabSession
+from skip_support import SkipTest
 
 TESTS = []
 def _reg(fn):
@@ -205,8 +206,8 @@ def test_real_tabbrowser_g09_smoke():
     用共享 root（不 destroy），避免全量 image 冲突。tkinter 不可用跳过。"""
     try:
         root = _shared_root()
-    except Exception:
-        return  # 无 tkinter：跳过
+    except Exception as e:
+        raise SkipTest(f"tkinter not available: {e}")
     b = _gui.TabBrowser(root)
     try:
         assert len(b._tab_ids) == len(b.tabs) == 1

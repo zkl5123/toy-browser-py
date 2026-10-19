@@ -100,6 +100,29 @@ class PageInstance:
         # P33.P1 — mouse move history for hover transitions.
         self._last_mouse_xy: tuple[int, int] = (-1, -1)
 
+    def _clear_document_state(self) -> None:
+        """R7-A01 第 5 点 — about / error 页（及任何非文档导航）原子
+        清空旧文档状态，避免旧 DOM / Host / hit tree / focus 残留。
+
+        审计 B05/A01："about/error 后旧元素不可点击、旧脚本不执行"——
+        旧实现的 about 路径只换 bitmap，DOM/Host 仍指向上个文档，
+        hit-test 会命中已卸载的元素。现统一在此清空，并推进
+        文档版本（让旧 frame / task 因 generation 不匹配被丢弃）。
+        """
+        self._dom_tree = None
+        self._script_host = None
+        self._last_html = ""
+        self._last_css = ""
+        self._reuse_doc = False
+        self.hover_id = None
+        self.focus_id = None
+        self.focus_chain = []
+        self.active_form_field = None
+        self._form_states = {}
+        self._interaction_state = {}
+        self._layout_root = None
+        self.doc_version.new_document()
+
     def scroll_to(self, yoffset: int) -> None:
         """P33.R2 — scroll the page to *yoffset* pixels from the top.
 
@@ -407,13 +430,20 @@ class PageInstance:
         hit = _layout_mod.hit_test(root, float(x), float(doc_y))
         if hit is None or hit.dom is None:
             return None
-        # Build the index map (DOM node id → document-order index).
+        # R7-U01 — build the index map (DOM node → element-order index).
+        # 统一计数源：与 :meth:`_node_index_to_dom` 和
+        # :meth:`_build_focus_chain` 一致，只在 element 节点上推进
+        # 计数（文本节点不占位）。旧实现在 is_element 判断**之前**
+        # 就 counter+=1，于是文本节点丰富页面上 hit_test_at 返回的
+        # 索引与 focus_chain / _node_index_to_dom 的索引整体偏移，
+        # 点击 / Tab 激活落到错误元素（审计 §5 U01 第 1 点"两套遍历
+        # 计数"）。
         counter = [0]
         id_map: dict = {}
 
         def _walk(node):
-            counter[0] += 1
             if node.is_element():
+                counter[0] += 1
                 id_map[id(node)] = counter[0]
             for c in getattr(node, "children", []):
                 _walk(c)
@@ -652,6 +682,10 @@ class PageInstance:
         if url.lower().startswith("about:"):
             self.url = url
             self.title = url
+            # R7-A01 — about 是合成页（非文档），原子清空旧文档状态，
+            # 避免旧 DOM/Host/hit tree 残留（"about/error 后旧元素
+            # 不可点击、旧脚本不执行"）。
+            self._clear_document_state()
             self.bitmap = self._about_page(url, w, h)
             self.content_height = self.bitmap.height if self.bitmap else 0
             self._full_bitmap = None
@@ -778,6 +812,40 @@ class PageInstance:
                 # (the same Node object the script host mutated), so
                 # no extra flush is needed here — the flush inside
                 # execute_scripts_in_order covers it.
+                # B05（GUI 桥）— 若本页内联脚本发了 location 导航任务
+                # （location.replace / assign / href=），消费
+                # ``host._pending_nav`` 跟跳（与 CLI browser.render_
+                # document_from_url 的 B05 段同一契约：seen-URL 去重 +
+                # 循环预算，防 baidu 227 字节页的 https↔http 反复替换
+                # 死循环）。GUI 侧经递归 :meth:`load_url` 跟跳最终
+                # 目标，而非只停在脚本页（A01 主链 + U01 命中一致性
+                # 的前置——页面要停在**最终**文档，hit-test / 历史
+                # 才对应真实渲染页）。
+                pending = list(getattr(_host, "_pending_nav", []) or [])
+                if pending:
+                    seen = {url}
+                    follow = None
+                    for req in pending:
+                        target = (getattr(req, "target", req)
+                                  if not isinstance(req, str) else req)
+                        if not target or target in seen:
+                            continue
+                        low = target.lower()
+                        if not (low.startswith("http://")
+                                or low.startswith("https://")):
+                            continue
+                        if target == url:
+                            continue  # reload：非跨文档导航
+                        seen.add(target)
+                        follow = target
+                        break
+                    if follow is not None:
+                        # 跟跳到最终目标（循环预算由 seen 去重约束；
+                        # 每跳都重新 fetch 并再检查其 _pending_nav）。
+                        self.load_url(follow, w, h,
+                                      record_history=record_history,
+                                      client=client, parallel=parallel)
+                        return
                 # P0 (assessment report) — render the *script-mutated*
                 # tree (run_scripts=False skips the legacy re-parse;
                 # _reuse_doc routes load_html to the stored
@@ -839,6 +907,8 @@ class PageInstance:
         if url.lower().startswith("about:"):
             self.url = url
             self.title = url
+            # R7-A01 — about 合成页原子清空旧文档状态。
+            self._clear_document_state()
             self.bitmap = self._about_page(url, w, h)
             return
         if url.startswith("<"):

@@ -155,14 +155,21 @@ def test_child_index_guard_rebuilds_on_reuse():
     # Simulate two independent DOM trees where the *second* tree's body
     # reuses the *first* tree's body id() (CPython address reuse).
     layout.clear_caches()
+    # R7-H01 — locate <body> by tag: the parser now creates the implicit
+    # <head> sibling, so ``html.children[0]`` is no longer the body.
+    def _body(n):
+        for c in n.children[0].children:
+            if c.is_element() and c.tag == "body":
+                return c
+        return n.children[0].children[-1]
     n1 = dom.parse("<html><body><div>a</div><div>b</div></body></html>")
-    body1 = n1.children[0].children[0]  # <body>
+    body1 = _body(n1)
     d1 = body1.children[0]              # first <div>
     assert layout._child_index_for(d1, body1) == 1
     del n1, body1, d1
     gc.collect()
     n2 = dom.parse("<html><body><div>x</div><div>y</div><div>z</div></body></html>")
-    body2 = n2.children[0].children[0]
+    body2 = _body(n2)
     third = body2.children[2]           # 3rd element child
     assert layout._child_index_for(third, body2) == 3, \
         "child index must be rebuilt when the parent id is reused"

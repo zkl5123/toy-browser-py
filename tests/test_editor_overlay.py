@@ -22,6 +22,7 @@ from toy_browser.app.editor_overlay import (
     _CMD_IME_UPDATE, _CMD_IME_COMMIT, _CMD_PASTE,
 )
 from toy_browser.app.overlay_protocol import OverlayRect, Viewport
+from skip_support import SkipTest, require_tk
 
 TESTS = []
 def _reg(fn):
@@ -254,6 +255,7 @@ class _StubNode:
 
 def _stub_gui_browser():
     """绕过 __init__ 的最小 TabBrowser 桩（注入 G03 接线所需属性）。"""
+    require_tk()  # R7-Q01 — 缺 Tk 环境 → SKIP，不算功能失败
     from toy_browser.app import gui as _gui
     b = object.__new__(_gui.TabBrowser)
     from toy_browser.app.editor_overlay import EditorOverlayController
@@ -360,8 +362,8 @@ def test_real_tabbrowser_g03_smoke():
     桩附着不抛异常（活显示 GUI 验证留后续）。"""
     try:
         root = _shared_root()
-    except Exception:
-        return  # 无 tkinter：跳过
+    except Exception as e:
+        raise SkipTest(f"tkinter not available: {e}")
     from toy_browser.app import gui as _gui
     b = _gui.TabBrowser(root)
     try:

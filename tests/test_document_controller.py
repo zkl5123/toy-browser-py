@@ -13,6 +13,7 @@ from toy_browser.app.document_controller import (
     CMD_NAVIGATE, CMD_INPUT, CMD_RESIZE, CMD_SCROLL, CMD_STOP,
 )
 from toy_browser.app.document_state import reset_version_sequences
+from skip_support import require_tk
 
 
 TESTS = []
@@ -86,6 +87,7 @@ def test_g07_stop_only_when_busy():
 
 
 def test_g07_drain_applies_results():
+    require_tk()  # R7-Q01 — _try_load 经 gui 复用页面加载；缺 Tk → SKIP
     c = _ctrl()
     c.navigate("https://a")
     # 内置工作单元产出结果；apply_results 门控（当前 epoch、非取消）

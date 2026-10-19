@@ -1,0 +1,37 @@
+{
+  "scope": "Current CPU browser.render_document output. No fresh Edge screenshot or pixel comparison.",
+  "images": [
+    {
+      "case": "render_basic",
+      "file": "toy_shot_render_basic.png",
+      "width": 800,
+      "height": 600,
+      "bytes": 21998,
+      "sha256": "d0ad1c1a757aaa2c31e0721ad0102186954c4ad416d88204bd7a5012b1f58e0e"
+    },
+    {
+      "case": "render_cjk",
+      "file": "toy_shot_render_cjk.png",
+      "width": 800,
+      "height": 600,
+      "bytes": 20161,
+      "sha256": "ccfebabcf6254e8a9a17dc43cc20af066ae3aa3fa76c0d62c3ed19ff1e6d9a42"
+    },
+    {
+      "case": "render_emoji_symbols",
+      "file": "toy_shot_render_emoji_symbols.png",
+      "width": 800,
+      "height": 600,
+      "bytes": 7246,
+      "sha256": "d4871f16c1a3ff3a736e5459df3403f98518f1edd25379476d4db9e99e785fcc"
+    },
+    {
+      "case": "render_forms",
+      "file": "toy_shot_render_forms.png",
+      "width": 800,
+      "height": 600,
+      "bytes": 7665,
+      "sha256": "2a289c7afbb3b9f0ebc09265817d640422396f5199d03e00a67d8be634a63143"
+    }
+  ]
+}

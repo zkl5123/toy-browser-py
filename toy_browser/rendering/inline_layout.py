@@ -107,6 +107,10 @@ class PlacedRun:
     baseline_y: float  # 片段基线 y
     font_px: float
     style: dict
+    # R7-C02 — 片段必须能追踪具体 face（测量与绘制使用同一字体），
+    # 否则绘制阶段无法还原该 run 的字族（审计 §5
+    # "text DisplayCommand 无 font_family"）。
+    font_family: str = "monospace"
 
 
 @dataclass
@@ -276,42 +280,75 @@ class InlineLayout:
            进 :class:`LineBox`（片段按字符归属保留 font_px/style）。
         """
         cfg = self.config
-        folded = collapse_runs(runs, mode=cfg.white_space)
-        # 行首/行尾空白去掉（normal 模式 C03 步骤 3）
-        folded = folded.strip() if cfg.white_space != "pre" else folded
+        # R7-C02 — 折叠后保留**每个字符所属的 run**（font_px / style /
+        # font_family），而不是折叠成裸字符串：后者会把整行混排片段
+        # 的字号与样式压成第一个 run 的值（审计 §5
+        # "InlineRun 12/24 字号 → 输出 12/12"、"red/blue → 两个空 dict"）。
+        folded_runs = self._fold_runs(runs, cfg)
+        if not folded_runs:
+            return []
         # nowrap / pre → 单行；normal → 按可断点分行
         if cfg.white_space in ("nowrap", "pre"):
-            chars = list(folded)
+            lines = [list(folded_runs)]
         else:
-            chars = self._break_into_lines(folded, cfg)
-            # _break_into_lines 返回 list[list[str]]，展开
-            # 重新组织：上面 chars 会被赋值成 list[list[str]]，处理：
-            return self._build_lines(chars, runs, cfg)
+            lines = self._break_into_lines(folded_runs, cfg)
 
-        return self._build_lines([chars], runs, cfg)
+        return self._build_lines(lines, folded_runs, cfg)
+
+    @staticmethod
+    def _fold_runs(runs: list, cfg: InlineLayoutConfig) -> list:
+        """R7-C02 — 空白折叠，返回**逐字符** :class:`InlineRun` 序列。
+
+        与 :func:`collapse_runs` 的区别：保留每个字符的 run 归属
+        （font_px / font_family / weight / style），供分行度量与
+        :class:`PlacedRun` 定位使用。"""
+        folder = WhitespaceFolder(cfg.white_space)
+        folded = folder.fold(runs)
+        out: list = []
+        for r in folded:
+            if cfg.white_space == "pre":
+                # pre：整段原样保留，逐字符展开（保留换行前的归属）
+                for ch in r.text:
+                    out.append(InlineRun(ch, r.font_px, r.font_family,
+                                         r.weight, dict(r.style)))
+            else:
+                out.append(r)
+        # 行首/行尾空白去掉（C03 步骤 3；pre 模式保留原样）
+        if cfg.white_space != "pre":
+            while out and _is_space(out[0].text):
+                out.pop(0)
+            while out and _is_space(out[-1].text):
+                out.pop()
+        return out
 
     def _build_lines(self, lines, source_runs: list,
                      cfg: InlineLayoutConfig) -> list:
-        """把分行结果（每行字符 list）定位成 :class:`LineBox` 序列。
+        """把分行结果（每行 :class:`InlineRun` 列表）定位成 LineBox 序列。
 
-        每行：基线 = y + ascent；每个字符 advance 累加得 x；片段继承
-        source_runs 的字体度量（C03 步骤 4 "定位每个片段"）。"""
+        每行：基线 = y + ascent；每个字符按**自身 run** 的 advance 累加
+        得 x；片段继承该 run 的 font_px / font_family / style（C03
+        步骤 4 "定位每个片段" + R7-C02 混排归属）。"""
+        base_run = (source_runs[0] if source_runs
+                    else (lines[0][0] if lines and lines[0] else None))
         ascent, descent = cfg.metrics.line_metrics(
-            source_runs[0].font_px if source_runs else 16.0)
+            base_run.font_px if base_run is not None else 16.0)
         line_h = cfg.line_height if cfg.line_height is not None \
             else (ascent + descent)
         out: list = []
         y = 0.0
-        for line_chars in lines:
+        for line_runs in lines:
             placed = []
             x = 0.0
-            # 片段归属：简化按字符顺序，相邻同 (font_px,style) 归一类
-            for ch in line_chars:
-                fpx = source_runs[0].font_px if source_runs else 16.0
-                placed.append(PlacedRun(
-                    text=ch, x=x, baseline_y=y + ascent,
-                    font_px=fpx, style={}))
-                x += self._adv(ch, fpx)
+            for r in line_runs:
+                # R7-C02 — 逐字符定位，字号/字族/样式取自该字符所属的
+                # run（同一行内 12px 与 24px、red 与 blue 各自保留）。
+                for ch in r.text:
+                    placed.append(PlacedRun(
+                        text=ch, x=x, baseline_y=y + ascent,
+                        font_px=r.font_px,
+                        style=dict(r.style),
+                        font_family=r.font_family))
+                    x += self._adv(ch, r.font_px)
             total_w = x
             out.append(LineBox(runs=placed, x=0.0, y=y,
                                baseline=y + ascent, height=line_h,
@@ -319,7 +356,7 @@ class InlineLayout:
             y += line_h
         return out
 
-    def _break_into_lines(self, text: str,
+    def _break_into_lines(self, runs: list,
                           cfg: InlineLayoutConfig) -> list:
         """C03 步骤 3 "按可断点分行"（简化 UAX#14 / CSS white-space）。
 
@@ -327,30 +364,39 @@ class InlineLayout:
         字符后 / break-all 任意位置）若加下一个字符会超 ``max_width``
         就在此断点分行；行首/行尾不留空白。
 
+        R7-C02 — 输入是**逐字符** :class:`InlineRun` 序列（不再是裸
+        字符串），每个字符用它**自己的** ``font_px`` 度量：混排
+        ``12px`` / ``24px`` 片段的行宽必须按各自字号累加，否则窄容器
+        里的分行位置会整体错算。
+
         断点规则：
         * 空格 → 词间断点（行尾/行首不留空格，行内保留单空格）；
         * CJK 字符 → 每字符后可断；
         * ``word_break == "break-all"`` → 每字符可断；
         * 单词超过 ``max_width`` → 逐字符强断（overflow-wrap 兜底）。
 
-        返回 ``list[list[str]]``（每行字符列表，行内保留词间单空格，
-        行首/行尾无空白）。"""
-        fpx = 16.0   # 共享度量字号（源 run 的 font_px 在 _build_lines 用）
+        返回 ``list[list[InlineRun]]``（每行片段列表，行内保留词间单
+        空格，行首/行尾无空白）。"""
         lines: list = []
         cur: list = []
         cur_w = 0.0            # 当前行有效宽度（不含行尾空格）
         last_break_pos = 0     # cur 内最近的断点索引（0 = 行首）
         last_break_w = 0.0     # 该断点处的行宽
-        for ch in text:
-            adv = self._adv(ch, fpx)
-            is_space = ch == " "
-            if is_space:
+
+        def _sp(r) -> bool:
+            return r.text == " "
+
+        for r in runs:
+            ch = r.text
+            # R7-C02 — 用该字符所属 run 的字号度量（混排保真）。
+            adv = self._adv(ch, r.font_px)
+            if _sp(r):
                 # 空格：记为"最近词间断点"（在 cur 中保留行内单空格，
                 # 断行时截断到断点 → 行尾不留空白）。只有当前行已有
                 # 内容时才记断点（行首不留空格）。
-                if cur and cur[-1] != " ":
+                if cur and not _sp(cur[-1]):
                     # 把空格加入 cur（行内保留），并推进断点到它之后
-                    cur.append(ch)
+                    cur.append(r)
                     last_break_pos = len(cur)
                     # 行尾空格不占有效宽度 → cur_w 不变
                 continue
@@ -364,33 +410,33 @@ class InlineLayout:
                     # 在最近空格断点处分行（保留断点前的内容，去掉行尾
                     # 空格）
                     lines.append(list(cur[:last_break_pos]))
-                    cur = [ch]
+                    cur = [r]
                     cur_w = adv
                     last_break_pos = 0
                     last_break_w = 0.0
                     continue
                 # 无合法断点（单词超长）→ 逐字符强断（overflow-wrap）
                 lines.append(list(cur))
-                cur = [ch]
+                cur = [r]
                 cur_w = adv
                 last_break_pos = 0
                 last_break_w = 0.0
                 continue
             # 正常放入
-            cur.append(ch)
+            cur.append(r)
             cur_w += adv
             # CJK / break-all：每字符后都是断点
             if _is_cjk(ch) or cfg.word_break == "break-all":
                 last_break_pos = len(cur)
                 last_break_w = cur_w
         # 收尾：当前行去掉行尾空格
-        while cur and cur[-1] == " ":
+        while cur and _sp(cur[-1]):
             cur.pop()
         if cur:
             lines.append(cur)
         # 中间行（断行产生的）也去掉行尾空格（C03 "行尾不留空白"）
         for ln in lines:
-            while ln and ln[-1] == " ":
+            while ln and _sp(ln[-1]):
                 ln.pop()
         return lines
 

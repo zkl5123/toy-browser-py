@@ -1,0 +1,34 @@
+{
+  "js_cases.json": {
+    "source": "assessments/20261016-round5/js_cases.json",
+    "sha256": "15d087cedc2d602e0e0f5c9972ccafd3e1d73c7838b184ce17db23ce71039d65"
+  },
+  "layout_cases.json": {
+    "source": "assessments/20261016-round5/layout_cases.json",
+    "sha256": "8c1fd5db886c2a7d8a30f88b44280b039797214351a139a51d276d544f76fd16"
+  },
+  "render_cases.json": {
+    "source": "assessments/20261016-round5/render_cases.json",
+    "sha256": "918e11d56b54610adefded6c3c9f216f43ca0b0e3eb35258af7a7ff9a2c66e9e"
+  },
+  "edge_js_results.json": {
+    "source": "assessments/20261016-round5/edge_js_results.json",
+    "sha256": "023f107a41d3317d3e1a7893a7251ba7875fd0c1a898ec1864b55d93980813c9"
+  },
+  "edge_layout_results.json": {
+    "source": "assessments/20261016-round5/edge_layout_results.json",
+    "sha256": "e89ea0abe3e6bec9f7ad36d49b86b53caa980da0cbc66bd59e329d14a250e656"
+  },
+  "toy_js_runner.py": {
+    "source": "assessments/20261016-round5/toy_js_runner.py",
+    "sha256": "98aa5ec4f0766f861b49fb956d5a7070cdf571c3ab0efc30b174fdbee61e638a"
+  },
+  "toy_layout_runner.py": {
+    "source": "assessments/20261016-round5/toy_layout_runner.py",
+    "sha256": "cc1cba6c52af516bd186b499156298a6c3b140d9e467b8c90f8a76434fea1947"
+  },
+  "pipeline_profile.py": {
+    "source": "assessments/20261016-round5/pipeline_profile.py",
+    "sha256": "efff5f35eb495eebf196740c6d5a5daae00f3f0ad9ababddcd1ab9138d995add"
+  }
+}

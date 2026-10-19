@@ -20,6 +20,7 @@ from toy_browser.app.tk_keyboard_binding import (
     TkJointEvent, tk_key_string, route_event, binding_result,
     modifier_prefix, install,
 )
+from skip_support import SkipTest
 
 TESTS = []
 def _reg(fn):
@@ -208,7 +209,7 @@ def test_install_tab_document_consumed():
     消费决策。tkinter 不可用 → 跳过（直接返回）。"""
     root, tk = _shared_root()
     if root is None:
-        return  # 无 tkinter 环境：跳过
+        raise SkipTest("tkinter not available in this environment")
     try:
         calls, dispatch = _dispatch_recorder()
         router = KeyboardRouter(focus_owner="document")

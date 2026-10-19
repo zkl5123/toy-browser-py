@@ -1,0 +1,1538 @@
+[
+  {
+    "path": "toy_browser/__init__.py",
+    "lines": 1,
+    "bytes": 63,
+    "sha256": "e4c97d5b0d663acc97061e6964fd02a6eaa7533bcee8dc2294c581bfe163710e",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/app/__init__.py",
+    "lines": 1,
+    "bytes": 42,
+    "sha256": "b241f34ad5fbe0e946f77cdb89fbb91faf17695d598158ceb0d12bc1c38c6d5c",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/app/accessibility.py",
+    "lines": 270,
+    "bytes": 11160,
+    "sha256": "3fcec586b270992793ac24854eebafac1e17156740b1a66e004e5459420b32d7",
+    "functions": 15,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/activation.py",
+    "lines": 387,
+    "bytes": 16595,
+    "sha256": "5db57eff497f47a557ed314cab90badc71471103d3582fb3515d5f7a1377d046",
+    "functions": 12,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/b_series_wiring.py",
+    "lines": 466,
+    "bytes": 20016,
+    "sha256": "ff864f3a53cc7b4879d600173bfd5f8acc71095885129c0a113ed6b0139655d5",
+    "functions": 18,
+    "classes": 7
+  },
+  {
+    "path": "toy_browser/app/browser.py",
+    "lines": 1871,
+    "bytes": 73657,
+    "sha256": "05b3123be9254636820f8d5afd12094bff1663b983adee6b4fa0208fa2dee17b",
+    "functions": 65,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/app/caret_explain.py",
+    "lines": 228,
+    "bytes": 10312,
+    "sha256": "0c630c4f7d4b3473d0b5a87903a78d75ffb8d9ef0bee14109ecdadcd6b40b31e",
+    "functions": 6,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/diag_panel.py",
+    "lines": 140,
+    "bytes": 5902,
+    "sha256": "5978715d6c90fd556a5882c11bf4d89537229e9938829e0105409d3ad96678aa",
+    "functions": 7,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/diagnostics.py",
+    "lines": 276,
+    "bytes": 12291,
+    "sha256": "1842852952c170fbf07bf594bac0e4820ecb1d9c2198eeff44f183e7fc027e98",
+    "functions": 15,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/dirty_region.py",
+    "lines": 364,
+    "bytes": 15447,
+    "sha256": "7cb836bf8f04bcad3ecd3a32e67fe16d480e1c43d1578165f06b3eefdcdd9e89",
+    "functions": 26,
+    "classes": 5
+  },
+  {
+    "path": "toy_browser/app/display_list.py",
+    "lines": 282,
+    "bytes": 12862,
+    "sha256": "59e7208bb74de6c13d0d0c7d868e113c62c2d31d5b9c647f39dfeb2bfccda484",
+    "functions": 13,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/document_context.py",
+    "lines": 354,
+    "bytes": 14903,
+    "sha256": "86c389744cd4ccabfa4da1ba0b6384d65b74376c9e51fd26503b3d84f436ada1",
+    "functions": 29,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/app/document_controller.py",
+    "lines": 416,
+    "bytes": 19674,
+    "sha256": "1d8c1774778f8de1ae6304f7bda1aa120922b3e031c47df027054c43cf65a231",
+    "functions": 22,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/app/document_process.py",
+    "lines": 654,
+    "bytes": 28238,
+    "sha256": "e91a03b22f2739b34516f2096c7e921174c895d5345e2b0a8981c89fc35145d7",
+    "functions": 28,
+    "classes": 6
+  },
+  {
+    "path": "toy_browser/app/document_renderer.py",
+    "lines": 136,
+    "bytes": 6292,
+    "sha256": "db11996bd55177eabddfef74506685d0b182a0c828b8e6eba7130ba2dd964fea",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/app/document_state.py",
+    "lines": 148,
+    "bytes": 5565,
+    "sha256": "1717cacba86cfc9f432b8f715314a6c48ce8470222b4fbb01a0f2bf01ca0589f",
+    "functions": 12,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/document_state_full.py",
+    "lines": 241,
+    "bytes": 11550,
+    "sha256": "549afe0a28848386fe03005ca426fe1b5e57f0727fa8843a33c4cf731a9cb050",
+    "functions": 15,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/editor.py",
+    "lines": 348,
+    "bytes": 14937,
+    "sha256": "cbce6cf7db6f5770829d117176ee5434bb49d17ba384db81cc0a86571b5cc620",
+    "functions": 26,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/editor_overlay.py",
+    "lines": 294,
+    "bytes": 12246,
+    "sha256": "863ccefd4b10362181ccf2c8cba8e2b23df4c98728116ce28e71c8440b1a6562",
+    "functions": 16,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/field_editing.py",
+    "lines": 200,
+    "bytes": 8765,
+    "sha256": "030ad85ba069cec5b50257d79998fa9aa77fdf9769072ca8dc41978310642f38",
+    "functions": 16,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/first_screen.py",
+    "lines": 328,
+    "bytes": 12907,
+    "sha256": "abf8f0e36f298b77786157fb4fe40a090c707c10ce8cbccdc5bf8906a8affa48",
+    "functions": 17,
+    "classes": 5
+  },
+  {
+    "path": "toy_browser/app/foci.py",
+    "lines": 104,
+    "bytes": 4400,
+    "sha256": "d9b46ed388ff0fe88faddabb12eea3faa2174f1296bfc1f2f73b516913ca8f1f",
+    "functions": 5,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/form_control.py",
+    "lines": 354,
+    "bytes": 15789,
+    "sha256": "45b0e7b57afba816a466034c8c131f63d7ed4e23321db027dfb7591204ed953c",
+    "functions": 7,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/form_task.py",
+    "lines": 298,
+    "bytes": 14050,
+    "sha256": "b07a73dac5cdd19d7e5d5de59fe82e7ba1faa04dd85555967134f67b709bffc4",
+    "functions": 8,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/frame_ownership.py",
+    "lines": 288,
+    "bytes": 12455,
+    "sha256": "e8baaa4fd2d60783a6c3506db34701afa20b31e180349ebae9efbda86856940e",
+    "functions": 16,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/geometry_freeze.py",
+    "lines": 391,
+    "bytes": 16545,
+    "sha256": "720d86bd1b5c12a1b6903a58e42965b1174ca5e4ba36f7d8e08655834d114737",
+    "functions": 11,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/app/gui.py",
+    "lines": 2256,
+    "bytes": 109132,
+    "sha256": "a169fdce488f16653996083eef362d730feaa3bf37b3bc007c544106a1c4fabb",
+    "functions": 111,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/gui_document_bridge.py",
+    "lines": 332,
+    "bytes": 14430,
+    "sha256": "c36fb27a30eea6e1db8c13a1c5be5c9ea73f1ef43cca1d9710c979d684b1c65e",
+    "functions": 20,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/history_entry.py",
+    "lines": 163,
+    "bytes": 6948,
+    "sha256": "1adfa1ead72f0f96ddd96a7dc96717be7fbe028eb73959c17751847dbe4ece6d",
+    "functions": 11,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/keyboard_router.py",
+    "lines": 228,
+    "bytes": 11251,
+    "sha256": "82841a39d4d43e49d271d9fd5782c096ee4e89d08b8787d7394a1582e9124314",
+    "functions": 5,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/layout_diff.py",
+    "lines": 251,
+    "bytes": 10685,
+    "sha256": "03ce131faf8a347cd055bf3b3efe17e88c85484b478453364a49e6938cf52dbd",
+    "functions": 9,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/layout_incremental.py",
+    "lines": 248,
+    "bytes": 10719,
+    "sha256": "c59a365e297fb11af00ce7f15c348e3b3cd43877cb2e1af0121cf6cd93b104cf",
+    "functions": 8,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/load_phases.py",
+    "lines": 425,
+    "bytes": 16210,
+    "sha256": "d03607bce9a29ddaf35f41367694261f67472af067db1c4be142541edefa84d8",
+    "functions": 34,
+    "classes": 6
+  },
+  {
+    "path": "toy_browser/app/main.py",
+    "lines": 259,
+    "bytes": 11387,
+    "sha256": "2d8438b8274dd9ac0316532c7492bd828df6a32ce4ac7f946a890d9b62ddb6e7",
+    "functions": 5,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/app/navigation.py",
+    "lines": 469,
+    "bytes": 19881,
+    "sha256": "4f5bc67d68ce62b8d6b3afa431ef32a3efba5a45a1c77dae787d3405c9b0bf7a",
+    "functions": 39,
+    "classes": 5
+  },
+  {
+    "path": "toy_browser/app/navigation_state.py",
+    "lines": 209,
+    "bytes": 8501,
+    "sha256": "5643d5afd17062d9e96f23dc776ec5651dac1f68eef7e9a4ebf7ae6ec417b8ab",
+    "functions": 15,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/overlay_protocol.py",
+    "lines": 382,
+    "bytes": 15130,
+    "sha256": "0369fe282d8d4fd9529f34cb89d69dee1f5e66235c711ba1f3f0fe59e6f2a420",
+    "functions": 17,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/png_export.py",
+    "lines": 334,
+    "bytes": 14187,
+    "sha256": "28b5bfd5ca80d558bb5539ed176319b82b321881b4e3448d3d2d73a5964b1b76",
+    "functions": 21,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/app/policy_regression.py",
+    "lines": 478,
+    "bytes": 21163,
+    "sha256": "17bbaa6cabeb95a4bae7b81f18afb3902e47daca7233b214418dfe2c86e1f5ec",
+    "functions": 22,
+    "classes": 5
+  },
+  {
+    "path": "toy_browser/app/request_config.py",
+    "lines": 234,
+    "bytes": 10656,
+    "sha256": "781778a4c384fe1b728b0a4fefdb9cf971facac5d7fddbf1f7baba67e6a3084c",
+    "functions": 14,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/session.py",
+    "lines": 209,
+    "bytes": 7981,
+    "sha256": "e6798604f7fbef6c84acdadeab1c4619b6f2b84fa0d56b0c17c422258185edb4",
+    "functions": 19,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/session_recovery.py",
+    "lines": 482,
+    "bytes": 19792,
+    "sha256": "d1310691e497fd785ae56e2a5dba74cea57fee9f389fb7bfa56979cfc892bebc",
+    "functions": 14,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/session_store.py",
+    "lines": 162,
+    "bytes": 5943,
+    "sha256": "0b1ba9b036413fd9f346bdf96a942ec814c41783f26f1ba6cda16e1d3bb25d85",
+    "functions": 9,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/app/style_cache.py",
+    "lines": 223,
+    "bytes": 10648,
+    "sha256": "f50f18756ea2f68c0ea6bc336f26cde46cab2065aae0336fd4555e9f07b5b9d3",
+    "functions": 11,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/style_cache_lru.py",
+    "lines": 287,
+    "bytes": 12782,
+    "sha256": "582b388b9ef01c397b2008977871b0d2716f0a62689a8525e8cec96ca945b83e",
+    "functions": 24,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/tab_document_orchestrator.py",
+    "lines": 303,
+    "bytes": 13016,
+    "sha256": "2a5af8c27287c2a1c92c4a943bb9dfa4a297f9d2a5bc43c49743f485dae77c3a",
+    "functions": 21,
+    "classes": 3
+  },
+  {
+    "path": "toy_browser/app/tab_identity.py",
+    "lines": 218,
+    "bytes": 9697,
+    "sha256": "e42e38b800fb5e9d436d154b133508aa210043be6bbf7599c264ca053a3c2097",
+    "functions": 16,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/tab_lifecycle.py",
+    "lines": 322,
+    "bytes": 14297,
+    "sha256": "f25bf677f78359b64677ae66c3e297d9a3b411ddd901f024782fdc1e9f2bd39f",
+    "functions": 29,
+    "classes": 5
+  },
+  {
+    "path": "toy_browser/app/tab_session.py",
+    "lines": 276,
+    "bytes": 13372,
+    "sha256": "1ee16416157e4fa137a6be5e53fa48f3030bc364f63e94ab737a61618a39688a",
+    "functions": 14,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/tk_keyboard_binding.py",
+    "lines": 229,
+    "bytes": 9318,
+    "sha256": "efcf47d9c6c1a15556bc750db662aa4b111dcbc0b5996bb0f67002596dd37ff4",
+    "functions": 9,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/transport.py",
+    "lines": 222,
+    "bytes": 9840,
+    "sha256": "03ef090076b2be8abcfcfc478529099bce3e9bdbca36d768f5869c6a1f3d4bbb",
+    "functions": 11,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/app/viewport.py",
+    "lines": 142,
+    "bytes": 6282,
+    "sha256": "881d349f9e9a2ac0664795e8ccf0bc4ef4c021e4c94f25f9a973c0a4586d78df",
+    "functions": 10,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/common/__init__.py",
+    "lines": 1,
+    "bytes": 45,
+    "sha256": "709e360b99e916c6d8348d4714d13efbfe5e79d1017dc5bb989e41a67abb8afc",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/common/mem_guard.py",
+    "lines": 123,
+    "bytes": 4518,
+    "sha256": "233a936c464da77aa17d075cbe77d171e66de0ee89ddb485f37e0ae2c676fa9d",
+    "functions": 7,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/__init__.py",
+    "lines": 1,
+    "bytes": 47,
+    "sha256": "d8fef075db75e603ba8007194e7fb911d52390cb131305117c599fa91bfe721b",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/dom.py",
+    "lines": 46,
+    "bytes": 1945,
+    "sha256": "cd575d4fef2fc2ab4968e5e6f73105032deaac499c098756b5c10024ab6e0836",
+    "functions": 1,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/html_pkg/__init__.py",
+    "lines": 60,
+    "bytes": 2305,
+    "sha256": "0385e19f7c38537076b650f0c4d768d0b6360f5cae330e2f497748086a28be96",
+    "functions": 1,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/html_pkg/build.py",
+    "lines": 213,
+    "bytes": 9541,
+    "sha256": "636d83d00c571a760bcedf2163e1a2d45555766689837a5c526dd04380f9d553",
+    "functions": 4,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/html_pkg/entities.py",
+    "lines": 159,
+    "bytes": 7065,
+    "sha256": "9b2424e9505a6ab9535179bfe704a95ec02e1e3e6ccc0a640488f29b046e66e4",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/document/html_pkg/node.py",
+    "lines": 212,
+    "bytes": 7637,
+    "sha256": "c3342b7f870c44e0b214fe0e90f670ba6e0b780c38d03d7226dc451ffba52e53",
+    "functions": 20,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/document/html_pkg/tokenize.py",
+    "lines": 305,
+    "bytes": 11858,
+    "sha256": "6dd64eb2192301a0e1738785feba1d12a0c8ee748eb7c32b19e7dcbe9e379152",
+    "functions": 5,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/layout/__init__.py",
+    "lines": 1,
+    "bytes": 45,
+    "sha256": "752a994b5343ed10371b4c4f4ec83188ac263c3431c4698928ee26fec904c783",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/layout/layout.py",
+    "lines": 3845,
+    "bytes": 179282,
+    "sha256": "6181f4dd3303f95971d1442a4f388f904aa13e3ff3ad698dfab7e2a9a4daf422",
+    "functions": 33,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/network/__init__.py",
+    "lines": 1,
+    "bytes": 46,
+    "sha256": "169503e65438b765bb818a7bda1acf874b8ba012b93c95e81fb2d66069724a1d",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/network/cookie_store.py",
+    "lines": 355,
+    "bytes": 14694,
+    "sha256": "52db3cd9fe83553027180dca2e082102992d12c7642df67928f9c9169c220fdf",
+    "functions": 14,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/network/net.py",
+    "lines": 2281,
+    "bytes": 96199,
+    "sha256": "4992b09a575cc5b1ec74043ce4982e9e142296e4fa467ba5e9955e2801232f0c",
+    "functions": 87,
+    "classes": 15
+  },
+  {
+    "path": "toy_browser/rendering/__init__.py",
+    "lines": 1,
+    "bytes": 48,
+    "sha256": "c6c3a0c5777db0f185e9a44685f58a841589a4bd7aeb6d5df500399da349f92b",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image.py",
+    "lines": 398,
+    "bytes": 16901,
+    "sha256": "1aa9d137ebf5bfa3077d1c6989fcff720aec170c453f14a2196de188063736e8",
+    "functions": 29,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_fill.py",
+    "lines": 303,
+    "bytes": 13490,
+    "sha256": "68a20599283b3490e6ba888f92ea2c8b61c5647dd62bebe61a19b2130e819c59",
+    "functions": 7,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_formats.py",
+    "lines": 246,
+    "bytes": 10113,
+    "sha256": "73f6fd4372d9189a1458f30bbb4ef447b721c32ed7be38318158cf5830e2534c",
+    "functions": 13,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_glyph.py",
+    "lines": 312,
+    "bytes": 13398,
+    "sha256": "5b0e8747fcb5d007c2cb677c4977572b9e10862742daec6d13f3d1a56c28f93a",
+    "functions": 11,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/rendering/gpu.py",
+    "lines": 1029,
+    "bytes": 47992,
+    "sha256": "3889c6e2ccac9d84bf5741edb0556553890b76f62d1690c60a3f3b779ad821fc",
+    "functions": 52,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/rendering/inline_layout.py",
+    "lines": 439,
+    "bytes": 19341,
+    "sha256": "6de84d331cda27988306086231d838f42dec36d25747a5bc2edb91e79cf3f855",
+    "functions": 22,
+    "classes": 8
+  },
+  {
+    "path": "toy_browser/rendering/paint.py",
+    "lines": 120,
+    "bytes": 4300,
+    "sha256": "69769f4719b92a3ddc2d06961398bff58fdce6880383f18a546f694879b872f8",
+    "functions": 13,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/rendering/paint_engine.py",
+    "lines": 1328,
+    "bytes": 56417,
+    "sha256": "e700d4e5a1900c844234dbe9c9cf2d6b2df5897a51e4c6fe8c001431766d856c",
+    "functions": 25,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/rendering/rasterize_cpu.py",
+    "lines": 391,
+    "bytes": 18051,
+    "sha256": "de2e5670af21e4591d16107c15661c1615264fd832320725a0185c11ddc68021",
+    "functions": 20,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/rendering/renderer/__init__.py",
+    "lines": 35,
+    "bytes": 1476,
+    "sha256": "8b49cd25ebb407493710eedd8a2fb53ab678e61efadd28d02d8e8dcfe1abc1f0",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/rendering/renderer/contracts.py",
+    "lines": 261,
+    "bytes": 11558,
+    "sha256": "b00d1bb531b733eda961a28e9769b0b507457df55d0a728f001d2354437093c5",
+    "functions": 11,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/rendering/renderer/cpu_backend.py",
+    "lines": 102,
+    "bytes": 4489,
+    "sha256": "b5a1723a06181867903553bae0a00211059010391ff78b7ce471460d2a20313d",
+    "functions": 3,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/scripting/__init__.py",
+    "lines": 1,
+    "bytes": 48,
+    "sha256": "c5af2512912684b21e78865dae9f3505c3dfc8632562ae43cfa66541b46a113c",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/scripting/js.py",
+    "lines": 7172,
+    "bytes": 319788,
+    "sha256": "0972b52b77b7466ec030db79e20d35862a585c6a87e48ad062a431a727568cbb",
+    "functions": 302,
+    "classes": 77
+  },
+  {
+    "path": "toy_browser/scripting/script_error.py",
+    "lines": 189,
+    "bytes": 8174,
+    "sha256": "07047bff176302aecb2567c1d656b17f612fc9836360a7bb8ada0f8e4cca8449",
+    "functions": 10,
+    "classes": 4
+  },
+  {
+    "path": "toy_browser/scripting/web_api.py",
+    "lines": 516,
+    "bytes": 18893,
+    "sha256": "be098bee566b6784b689df8b53dbc5083190a942724b31946deac629900079bf",
+    "functions": 57,
+    "classes": 6
+  },
+  {
+    "path": "toy_browser/style/__init__.py",
+    "lines": 1,
+    "bytes": 44,
+    "sha256": "2659be596b489d6eccee8fd28120208c9331182a309c3dd033f6f01e6afdfc80",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/style/css.py",
+    "lines": 2477,
+    "bytes": 104846,
+    "sha256": "0ed31daf934be464ed14e1b2ab69964b7ae41f4d2a18b7e2158fea6e089baa39",
+    "functions": 73,
+    "classes": 16
+  },
+  {
+    "path": "toy_browser/style/transition.py",
+    "lines": 238,
+    "bytes": 9320,
+    "sha256": "d51dc2b2a1b323c92c4a5eb2c788ce0ea919087738cdbce2e0ca4b636606b11c",
+    "functions": 12,
+    "classes": 2
+  },
+  {
+    "path": "toy_browser/typography/__init__.py",
+    "lines": 1,
+    "bytes": 49,
+    "sha256": "bc8393cc398e0ed4ffb5a25843f359757da3898feebb7d00392c76ac44b9afc1",
+    "functions": 0,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/typography/font.py",
+    "lines": 426,
+    "bytes": 16241,
+    "sha256": "611b79747f1635b18c9e14df5638b95949dc1c6063a65c6661aeccd2b9c68dad",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/typography/rasterize.py",
+    "lines": 675,
+    "bytes": 27952,
+    "sha256": "92759279e9b7837507b30d22452093972381c7ba0510b9f287b7fd00e14d7572",
+    "functions": 15,
+    "classes": 1
+  },
+  {
+    "path": "toy_browser/typography/text.py",
+    "lines": 983,
+    "bytes": 44457,
+    "sha256": "839f6a512808313a18b3e858f0bcc708815bda10f31d45582f1fc5dbf4f2de74",
+    "functions": 28,
+    "classes": 0
+  },
+  {
+    "path": "toy_browser/typography/ttf_font.py",
+    "lines": 1559,
+    "bytes": 66262,
+    "sha256": "9bfe0291d79f455cc12ac5aa0c8ad4f69112a2825aae04d090e0b262ff07655d",
+    "functions": 32,
+    "classes": 4
+  },
+  {
+    "path": "tests/gpu_smoke_wgpu.py",
+    "lines": 98,
+    "bytes": 3302,
+    "sha256": "9d3f4985f66e42cbeca7fdb4ba0f7d49778a006a7603e3a2a7ba7f261bb1c71b",
+    "functions": 1,
+    "classes": 0
+  },
+  {
+    "path": "tests/run.py",
+    "lines": 313,
+    "bytes": 12865,
+    "sha256": "fc99c8627da1299d4df9588b95d500d54eb9d1f8458bf3a2db589174caaa84ff",
+    "functions": 5,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_accessibility.py",
+    "lines": 278,
+    "bytes": 9862,
+    "sha256": "3e1f057fcd5cd5618efb0a6e332283d891b049ce5f90c30cc7d333ec1eac9eb2",
+    "functions": 26,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_activation.py",
+    "lines": 222,
+    "bytes": 9943,
+    "sha256": "f18807255e34ff720abaa8be12353de832a2f15f51824334f85b74c9fb9986b8",
+    "functions": 19,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_b_series_gui_wiring.py",
+    "lines": 435,
+    "bytes": 16409,
+    "sha256": "4e22d142dcf055feaa992ef19f2ab947dbfc5814bc626fa0ab7edc17275a2817",
+    "functions": 32,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_browser.py",
+    "lines": 6253,
+    "bytes": 264275,
+    "sha256": "a38c2e8590c46b1bd901758cede8604b2345a4f6a451ec3d6bf40f3fc186af21",
+    "functions": 402,
+    "classes": 4
+  },
+  {
+    "path": "tests/test_caret_explain.py",
+    "lines": 207,
+    "bytes": 7591,
+    "sha256": "0476c7fa0663cd0d5b3c70122fb79b5ea43deb227be7fad39ea1e43f9df00690",
+    "functions": 14,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_cpu_image.py",
+    "lines": 110,
+    "bytes": 3741,
+    "sha256": "b4194a7b8eb48af7636d88f61aaf8b2682856a969d884e71ddc683cc892c784f",
+    "functions": 6,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_cpu_image_fill.py",
+    "lines": 283,
+    "bytes": 10055,
+    "sha256": "dcc7f2a3cb2180ff4eac5041d8acc35a158f4851482ee5d9929949e0217118f8",
+    "functions": 24,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_cpu_image_formats.py",
+    "lines": 205,
+    "bytes": 8107,
+    "sha256": "f7f8ca4d239659edc8458eec153a2c8bfd54c697b71bd2536276601e4a6e36ca",
+    "functions": 14,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_cpu_image_glyph.py",
+    "lines": 277,
+    "bytes": 9987,
+    "sha256": "fad5d78e0e8ee1512ec67cb652dc4658ab1d463062ddaf9812f7c9c41b77afd8",
+    "functions": 19,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_css.py",
+    "lines": 944,
+    "bytes": 40583,
+    "sha256": "c72a796947f2e40b9e4d4a022f777bf784e435a8c9df23e2279bf3cb46b34a40",
+    "functions": 74,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_diag_panel.py",
+    "lines": 130,
+    "bytes": 4449,
+    "sha256": "fae18ffbbce2368ad173a8b7a8e2978660a75cfc3d17a748462e38b343a145e8",
+    "functions": 8,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_diagnostics.py",
+    "lines": 258,
+    "bytes": 9935,
+    "sha256": "0f8c0087ce3d29481b6e8b3748ae77d0aa267433f9a3d900b61b670a22ac6ae2",
+    "functions": 20,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_dirty_region.py",
+    "lines": 260,
+    "bytes": 10080,
+    "sha256": "cde9fc461decde83436d37f23a2a0d32692e9577b7cb90f0740a39621c950b22",
+    "functions": 22,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_display_list.py",
+    "lines": 226,
+    "bytes": 8927,
+    "sha256": "dc5a5c74ed69ab7b7247ada7f771bc377cae23db351b20307103e2b56f819872",
+    "functions": 19,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_context.py",
+    "lines": 226,
+    "bytes": 8926,
+    "sha256": "fd5f33c2ee9c5c265e1c81c13aa63ee54da45c4be7237df5e8cff03dcd82014e",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_controller.py",
+    "lines": 252,
+    "bytes": 9624,
+    "sha256": "d01aff2c316d98fd3cd9a9dc755667b3c2f3958a75c07666be13c06f81ce7a58",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_process.py",
+    "lines": 213,
+    "bytes": 7629,
+    "sha256": "b9bc67e9862462c53f8a6dfc98e616f3caebef773c75f2d2622ae3a6107d2bd7",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_process_spawn.py",
+    "lines": 308,
+    "bytes": 11402,
+    "sha256": "1ae0dcb3bf9607c80b4b2df07e207e1d50dbd41aa37392def0220db5bd00d7c8",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_renderer.py",
+    "lines": 135,
+    "bytes": 5369,
+    "sha256": "d1da5a703352783375a1161e6a216ba2d22b2e43e092544a934c6a91dbe9c85a",
+    "functions": 7,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_document_state_full.py",
+    "lines": 210,
+    "bytes": 7997,
+    "sha256": "83b13fdd93c37a3f4fa83ea15647d6bdffefbeeda8bc256fa16b60f422c5258b",
+    "functions": 13,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_dom.py",
+    "lines": 87,
+    "bytes": 2579,
+    "sha256": "5605446a60c76cbcbcb4151a1589596159baca5307ae3e7e27883515b1d42e20",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_editor.py",
+    "lines": 238,
+    "bytes": 7656,
+    "sha256": "7f792f7d4925856b045ecd0d527af50e28f2868751c1bdfb4f815d81d5fdf60f",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_editor_overlay.py",
+    "lines": 388,
+    "bytes": 12448,
+    "sha256": "4d2c4dbd33023b118db144e49c5e737be01e38bd36b2d7da94f39974108b59f4",
+    "functions": 33,
+    "classes": 2
+  },
+  {
+    "path": "tests/test_field_editing.py",
+    "lines": 153,
+    "bytes": 5360,
+    "sha256": "3e5d9e5f55127a3d9d47f7fac44141f7e38a65c92b2977e404956a4212078884",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_first_screen.py",
+    "lines": 206,
+    "bytes": 7734,
+    "sha256": "3a3a3ed36ca609b5101b2c9cc99048585d7af271c1e8615bd6cb4a6a16e39855",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_focus_routing.py",
+    "lines": 207,
+    "bytes": 7088,
+    "sha256": "e2826d24bd213bda1d1bcd1fcd6db81ffa4824b78b76efc3b083d2eb910ccd70",
+    "functions": 14,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_form_control.py",
+    "lines": 276,
+    "bytes": 10490,
+    "sha256": "1c2a61858f7515a1f85b9c101a053f4e067e066c53a36347cd9e53ef69f8b653",
+    "functions": 25,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_form_task.py",
+    "lines": 264,
+    "bytes": 9263,
+    "sha256": "73f2a00e08173a35e4427dc46b0316310ce5bf4d35bc2468d9fe19be167916f6",
+    "functions": 17,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_frame_ownership.py",
+    "lines": 212,
+    "bytes": 6993,
+    "sha256": "9b387b4571d5b0b00944b22b2332d8fb33cd571512c69bed21a1b12b0928da88",
+    "functions": 13,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_g09_gui_wiring.py",
+    "lines": 237,
+    "bytes": 7937,
+    "sha256": "2b87f2c69461e99a2d1acada4e985e53488eb64ae8901eca5debc669ea55acf4",
+    "functions": 16,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_g11_gui_wiring.py",
+    "lines": 228,
+    "bytes": 7504,
+    "sha256": "f73a32c0147378757187ffbfd63dc5263dc5ff22a59bd502d7de100ff03f19f0",
+    "functions": 21,
+    "classes": 3
+  },
+  {
+    "path": "tests/test_geometry_freeze.py",
+    "lines": 246,
+    "bytes": 8506,
+    "sha256": "1a53377253f13a06cb3efa8a3ae74edcd065bae8e66dbf86d12bbef36bcde1df",
+    "functions": 20,
+    "classes": 4
+  },
+  {
+    "path": "tests/test_gpu_backend.py",
+    "lines": 252,
+    "bytes": 10202,
+    "sha256": "d9fb61b1474d0653f2fd7055cb9ef351fd2f31a538f61c7c4b213535bd71af97",
+    "functions": 16,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_gpu_glyph_atlas.py",
+    "lines": 245,
+    "bytes": 9999,
+    "sha256": "6b07eda063bbe5bc8a86a1aca2fbea0cb318a76443f240c45bdae4ec32464e50",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_gpu_image_cache.py",
+    "lines": 276,
+    "bytes": 12618,
+    "sha256": "73c9732c430307c4df1c15a66286c43119046e2bc0c85aca52d5ac15ab3b77e6",
+    "functions": 17,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_gpu_rasterize.py",
+    "lines": 247,
+    "bytes": 10656,
+    "sha256": "9f38ceb8e120c45770f947579aeac00affe05263fcee773102f3e6d09de042ce",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_gui_activation.py",
+    "lines": 161,
+    "bytes": 5078,
+    "sha256": "3901a30979bf6a38e3a70fedacaef25496e0403984d5530c2fab8fb42af949a8",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_gui_document_bridge.py",
+    "lines": 280,
+    "bytes": 8635,
+    "sha256": "35f81668bfdb2d8b34264bd2edc7e4ef40c1258115f8c7c69e098d7d3288812e",
+    "functions": 21,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_gui_scroll.py",
+    "lines": 204,
+    "bytes": 7032,
+    "sha256": "7869deb9b341d681e7b4e3b2b81dd9579be82190c4d46d2cd84f03f688245b08",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_helpers.py",
+    "lines": 341,
+    "bytes": 9996,
+    "sha256": "8502a37bf65bbcacd5da0286ad35b139f5dc53e7a2ce9c70634f82ca207975ea",
+    "functions": 27,
+    "classes": 2
+  },
+  {
+    "path": "tests/test_history_entry.py",
+    "lines": 167,
+    "bytes": 6051,
+    "sha256": "fdfca2669bed774500de01537dacdcf7f1f23c41bc4c4e129316d7e3a0fd18de",
+    "functions": 13,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_inline_layout.py",
+    "lines": 219,
+    "bytes": 9610,
+    "sha256": "2602a406cae8c9322b4e4042a4db84643afa3afc08d6ab5b9948f08798bdd0ae",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_js.py",
+    "lines": 1971,
+    "bytes": 75911,
+    "sha256": "143d28477f824d07896304f88cd21192601dff6f6733467ae8538a5406c71e70",
+    "functions": 146,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_js_multi_decl.py",
+    "lines": 201,
+    "bytes": 7773,
+    "sha256": "7d99a3b78618f726c6572cfd09ffa5b979b14581839e89e40226e36b201b156b",
+    "functions": 18,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_keyboard_router.py",
+    "lines": 275,
+    "bytes": 9546,
+    "sha256": "71b0e26fa64f4b492f1fcf9b85b6955e4fde4d7832d1be04397c162d96f1547d",
+    "functions": 24,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_layout.py",
+    "lines": 972,
+    "bytes": 41910,
+    "sha256": "c6a876395609898864026042a068e997cc02d96755562875f2af57882f0223a1",
+    "functions": 52,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_layout_diff.py",
+    "lines": 216,
+    "bytes": 7579,
+    "sha256": "2bad17ddc1a2848fe1092b61b97bdd86e016761249b93176b792da6ed64f288e",
+    "functions": 17,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_layout_incremental.py",
+    "lines": 200,
+    "bytes": 8463,
+    "sha256": "15f31c76b5cc56498f2b53dccf4d926ed3ed88726d88b36b0008b0dc18b56644",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_load_phases.py",
+    "lines": 245,
+    "bytes": 9094,
+    "sha256": "3aedb278415558fce853706e602cb8a8daf22225a2be5a908145c68cdf071bef",
+    "functions": 22,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_mem.py",
+    "lines": 155,
+    "bytes": 6558,
+    "sha256": "e56a008d21bb32cf1c12c433ea5ef0a83675a6932c6fd20be01515b1db20c3c7",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_navigation.py",
+    "lines": 269,
+    "bytes": 10719,
+    "sha256": "cbb13c54a9c094f70aa440b24c0e5a4837f5024fdd98967fb057a98db6c69164",
+    "functions": 20,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_navigation_state.py",
+    "lines": 166,
+    "bytes": 6099,
+    "sha256": "9938e34c1c7b263abf648ae90eab6ec87b8767542959edbe3f338aeabe54ccd2",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_net.py",
+    "lines": 151,
+    "bytes": 5748,
+    "sha256": "cf020259bfe3d9881d61e8552f8e33489d430f1e3cdf7386e56254220f06467c",
+    "functions": 6,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_overlay_protocol.py",
+    "lines": 259,
+    "bytes": 8880,
+    "sha256": "0cbc62ce2a24ce18e8b3db729fa46473ab6c04ac195ba55bd0ff40594c08da0c",
+    "functions": 21,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p0_js_budget.py",
+    "lines": 158,
+    "bytes": 6772,
+    "sha256": "604c82b065672cbd1192407ba07775a762aca9a015ff705d2429264e9e51896c",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p0_policy.py",
+    "lines": 208,
+    "bytes": 8976,
+    "sha256": "d711ca5449d7f44d250743276ed82925aa12a233402a398c7250fdc87cbd8de7",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p1_supports.py",
+    "lines": 145,
+    "bytes": 5844,
+    "sha256": "36f3d475def3a9c98e2dc52a35ab37ef2ddbb0821bff2c96c529d0f3e6360523",
+    "functions": 19,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p2.py",
+    "lines": 331,
+    "bytes": 14396,
+    "sha256": "83eefbccf60b022a15bdfc2f19dfd9d78d13d50dcc1b61dd2b8cfcd52f2e5188",
+    "functions": 23,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p3.py",
+    "lines": 194,
+    "bytes": 7698,
+    "sha256": "63de7095ab2ab04315925ffb4eea00e7102ff106faffaefc160cb81f8b0831b6",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34.py",
+    "lines": 563,
+    "bytes": 24490,
+    "sha256": "6da8154463b0347264534fcbda98f16eb2faf4fcc82c5f317ec94966497f1d96",
+    "functions": 36,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_css_memo.py",
+    "lines": 68,
+    "bytes": 2946,
+    "sha256": "85a2255c613aed43755381d419468b2605eedc6bfc50780bc2f95ca8d417de4c",
+    "functions": 4,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r2.py",
+    "lines": 278,
+    "bytes": 12213,
+    "sha256": "d36e8b85f55f7ed390e63b177fcffe04ba6e8fcc51c46f76e4ff85d039969973",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r3.py",
+    "lines": 295,
+    "bytes": 12106,
+    "sha256": "fa592fc79d708bc0557b386e7154a49c9b59975ac9f0ae0f04c54ac564e0f952",
+    "functions": 19,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r4.py",
+    "lines": 260,
+    "bytes": 11124,
+    "sha256": "b8f33a5fe413400b3f39497218375f7565897a76dfd12c57173e796ca4c6ad85",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r5.py",
+    "lines": 203,
+    "bytes": 8837,
+    "sha256": "205223dadfb619f1ae377993c80662f3d9ac8a358b89e326087c2a53faae6513",
+    "functions": 13,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r6.py",
+    "lines": 327,
+    "bytes": 13337,
+    "sha256": "1a74ffbf3b63f3a712cc71522052f879abafdf3bf04a85733ddb203440a39076",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r7.py",
+    "lines": 204,
+    "bytes": 8330,
+    "sha256": "7e6fefa77e03623d9d3922e5a9e27d4d46f9d9dfc7b500f1722f13c2af404960",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r8.py",
+    "lines": 205,
+    "bytes": 8803,
+    "sha256": "a7c11e03c6b22257b83642c96b22e330be2fd43720ff336698901fc8c3e304b8",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_p34_r9.py",
+    "lines": 163,
+    "bytes": 6547,
+    "sha256": "7dd8ff019a450b6d14a8c02f5b906f2442027b5c0ea55064d0f92e6ceb2dc102",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_paint.py",
+    "lines": 740,
+    "bytes": 31200,
+    "sha256": "484dde675ab9076dc77085183499494fc76c90299c96dea151a6c5f974d3d7a2",
+    "functions": 39,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_png_export.py",
+    "lines": 275,
+    "bytes": 10996,
+    "sha256": "6a45f0576ea368fccb7ff98795e81f004c147c535dca6f97bd191198b6fcac63",
+    "functions": 21,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_policy_regression.py",
+    "lines": 345,
+    "bytes": 13723,
+    "sha256": "befd640381127450e7b0f085a3b491a98eab3475fab683cd4a25c009c9e6201d",
+    "functions": 30,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_r1.py",
+    "lines": 301,
+    "bytes": 12783,
+    "sha256": "d2cd56b6308e8a5a52f2cd31c4bfd886520a45525650760d4d67e8c0f08a5c55",
+    "functions": 28,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_r2.py",
+    "lines": 339,
+    "bytes": 13525,
+    "sha256": "58b32a275e4866cf49313a4912bac4595a125c5281616bf4e7e9455adecd2d07",
+    "functions": 21,
+    "classes": 5
+  },
+  {
+    "path": "tests/test_r3.py",
+    "lines": 165,
+    "bytes": 6896,
+    "sha256": "35ac7424b70d4c3273a3a0b6132ae1a87d1e9fb2c6e7f03da452ac34bb6af29d",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_r4.py",
+    "lines": 612,
+    "bytes": 30359,
+    "sha256": "271ce50dae6abecfc9492cbb9d0949c29adce8759f85ee09eeea691f5d577e00",
+    "functions": 34,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_r4_perf.py",
+    "lines": 121,
+    "bytes": 4745,
+    "sha256": "f0e3d56cc32afe084784581ce08d3c17adfc9b247de57f2fa26225a5bb1c4607",
+    "functions": 6,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_r4_regression.py",
+    "lines": 398,
+    "bytes": 17010,
+    "sha256": "7a3ec4763c8bb49133b4364144986ca6c5499b94258502cab633f7f8b513af73",
+    "functions": 12,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_r5.py",
+    "lines": 419,
+    "bytes": 17443,
+    "sha256": "666952385a80ce57ddddaddc9006975d16f308f77adcbf4c563ac01f58119efe",
+    "functions": 16,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_rasterize_cpu.py",
+    "lines": 663,
+    "bytes": 25369,
+    "sha256": "3a8ffa689bcb500363979eceb5ff69df6ad6ee3b345cb1245f134e6100cc17fa",
+    "functions": 43,
+    "classes": 2
+  },
+  {
+    "path": "tests/test_request_config.py",
+    "lines": 193,
+    "bytes": 7333,
+    "sha256": "bb6101cf643ed241c4b2f0ccd17fa379d340b9e58b27a6e0030d910135df9031",
+    "functions": 12,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_script_error.py",
+    "lines": 217,
+    "bytes": 9139,
+    "sha256": "d5c0a383d31dc897bd67218dbd7e478727149eb466d98c7c68322e9c5196a142",
+    "functions": 17,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_session_recovery.py",
+    "lines": 315,
+    "bytes": 10290,
+    "sha256": "79c57c3ec3e27bf1d8d472f26da940bca923c619003ad865f97615b2aec97498",
+    "functions": 26,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_style_cache.py",
+    "lines": 236,
+    "bytes": 9180,
+    "sha256": "0bed74733f8a9e2ccefaf16ce18671de7c85229bc3ff103cef7c3645e559cb7b",
+    "functions": 18,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_style_cache_lru.py",
+    "lines": 282,
+    "bytes": 9469,
+    "sha256": "4c6a0e15439e72d778cf3b244136901d103df6a4b868994d4db7eb02b67d1671",
+    "functions": 21,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_tab_document_orchestrator.py",
+    "lines": 312,
+    "bytes": 9144,
+    "sha256": "9c1d2a22fd266025b931cb2eadc998ee06864b961e4711caf95d49a5126a2639",
+    "functions": 24,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_tab_identity.py",
+    "lines": 270,
+    "bytes": 10916,
+    "sha256": "b8c12f66533328297afe32d23a5ef91a106b933017d95b0a3d29dd5153e3bd2c",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_tab_lifecycle.py",
+    "lines": 247,
+    "bytes": 8659,
+    "sha256": "4ba1439f3316f7f24b2403cb1582d6c916c060669e1a3cfca68d0e6997a014ac",
+    "functions": 15,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_tab_session.py",
+    "lines": 298,
+    "bytes": 9632,
+    "sha256": "cdaef54571590aa22a4ac8ce67363d48a9b2f2733471c7dc065e20f3d2e620c7",
+    "functions": 21,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_tk_keyboard_binding.py",
+    "lines": 310,
+    "bytes": 10788,
+    "sha256": "29b6571d8dda58baf6403f64a1b44786feaf0b738e42543064af3ceb310e8abe",
+    "functions": 25,
+    "classes": 1
+  },
+  {
+    "path": "tests/test_transport.py",
+    "lines": 173,
+    "bytes": 7394,
+    "sha256": "e7ef720e8460257feee8d2e84063adaf275ed4aacd06bf445d1b95e3a69a7113",
+    "functions": 13,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_viewport.py",
+    "lines": 138,
+    "bytes": 5259,
+    "sha256": "a4999ddce179f61da818c5b472db25a8da333853df6e61c7d7df1d93ef78ef8a",
+    "functions": 10,
+    "classes": 0
+  },
+  {
+    "path": "tests/test_web_api.py",
+    "lines": 306,
+    "bytes": 10706,
+    "sha256": "ea08ee0e6fc1ee18872fa25aaf73084bef68a6b08de314649c1220d8cd9234d6",
+    "functions": 23,
+    "classes": 0
+  },
+  {
+    "path": "tools/benchmarks/p34r3_perf.py",
+    "lines": 102,
+    "bytes": 3502,
+    "sha256": "aea0f214399964b33c914ba88f5e80e9f49b389acd3b8f831945d9fdd9bf2106",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "tools/benchmarks/p34r4_perf.py",
+    "lines": 102,
+    "bytes": 3514,
+    "sha256": "ed9461e93919879bf1fa89afc7beefc8735ee0edc1a357dc5ef118cba7fc362e",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "tools/benchmarks/p34r5_perf.py",
+    "lines": 102,
+    "bytes": 3506,
+    "sha256": "0a23b800c250f4a7924a5b33aad8d551097e2a5a0ae8064ebebf832395a15e53",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "tools/benchmarks/p34r6_perf.py",
+    "lines": 102,
+    "bytes": 3506,
+    "sha256": "73fd476922ed15f45ca3349d4743977e06656af7dc78efc6922c0c589e2916a0",
+    "functions": 3,
+    "classes": 0
+  },
+  {
+    "path": "tools/online_regression.py",
+    "lines": 124,
+    "bytes": 4094,
+    "sha256": "ce2bb76e9e7bbb79f73061a1ed6d0a1b82313274db07e6eaa3aa908688ca07e8",
+    "functions": 4,
+    "classes": 0
+  },
+  {
+    "path": "tools/prof_r4.py",
+    "lines": 266,
+    "bytes": 11233,
+    "sha256": "4ebb9416f657158a343f40047b47bafa52a5c47486679a8c7c1151b6d2dfc1a7",
+    "functions": 5,
+    "classes": 2
+  }
+]

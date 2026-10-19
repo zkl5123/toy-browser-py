@@ -24,6 +24,10 @@ class DisplayCommand:
     text: str = ""
     text_color: Color | None = None
     font_px: float = 16.0
+    # R7-C02 — 文本命令必须携带具体 face：测量与绘制必须使用同一
+    # 字体（审计 §5 "text DisplayCommand 无 font_family →
+    # 测量/绘制能追踪具体 face"）。
+    font_family: str = "monospace"
     align: str = "left"
     max_width: float = 0.0
     # P3.1 — embedded image pixel data
@@ -89,6 +93,34 @@ class DisplayCommand:
     # P34.3 — declared here (default 0) so emit_commands no longer needs
     # a hasattr-based defaulting loop over 20k+ commands.
     _layer: int = 0
+    # ------------------------------------------------------------------
+    # R7-P02 第 3 点 — 资源引用 / clip / transform / opacity / font run
+    # 审计 §5 "GPU 从缺字段结构猜测字体"：DisplayList 必须携带资源
+    # 标识与字形 run 结构，让 GPU render pass 不靠字段缺失去猜。
+    # ------------------------------------------------------------------
+    # 图片资源稳定标识：内容哈希（见 gpu.ImageTextureCache._img_key）。
+    # emit 端填 "md5:<hex>"；GPU 端按此 key 复用/上传纹理，同尺寸
+    # 不同内容（红/蓝图）不再碰撞。
+    img_resource_key: str = ""
+    # 资源失效版本：同一 key 内容变化时 +1，GPU 据此判断是否需重传。
+    img_resource_version: int = 0
+    # 命令级 opacity（0.0–1.0）：独立于颜色的全局 alpha，GPU 在合成
+    # 阶段应用（P02 第 6 点"透明合成"前置——基础字段先就位）。
+    opacity: float = 1.0
+    # transform 2D 仿射矩阵 [a, b, c, d, e, f]（CSS transform 子集：
+    # translate/scale/rotate）。GPU render pass 据此变换顶点，CPU 端
+    # 可保持不实现（先有字段，GPU 通路消费）。
+    transform_a: float = 1.0
+    transform_b: float = 0.0
+    transform_c: float = 0.0
+    transform_d: float = 1.0
+    transform_e: float = 0.0
+    transform_f: float = 0.0
+    # font run 结构：一条 text 命令内的字形 run 序列
+    # ``[(text, font_family, font_px, font_weight, style), ...]``。
+    # GPU 字形图集（P06）按 run 查 atlas UV，不再从单条 text 字段猜
+    # 字体。空时退化为整条 text 用 font_family/font_px/font_weight。
+    font_runs: list = field(default_factory=list)
 
 
 class DisplayList:
@@ -408,6 +440,25 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
     # stage 5 border-box paint origin the content top-left is the
     # border-box origin advanced by the border + padding insets.
     if is_img and img_pixels is not None:
+        # R7-P02 第 3 点 — 图片资源稳定标识：按像素内容哈希（GPU 侧
+        # 同 key 复用纹理；同尺寸不同内容不再碰撞）。有 src 时优先
+        # 用 src 作资源 key（同 URL 同资源），无 src（内嵌）退化为
+        # 内容哈希。version 默认 0，内容变化时由调用方 +1。
+        import hashlib as _hashlib
+        _res_key = str(bx.dom.attr("src")) if bx.dom is not None else ""
+        # 资源 key 优先用 src（同 URL 同资源）；无 src（内嵌）用像素
+        # 内容摘要。img_pixels 可能是 8-bit RGBA 或 24-bit 打包值
+        # （>255），直接 bytes() 会越界——摘要时逐像素取低 8 位投影
+        # （像素数 + 逐字节摘要），同尺寸不同内容（红/蓝）仍不同。
+        if _res_key:
+            img_resource_key = f"src:{_res_key}"
+        else:
+            _pix = list(img_pixels or [])
+            _digest_src = (
+                len(_pix).to_bytes(4, "big")
+                + b"".join(bytes([p & 0xFF]) for p in _pix[:256]))
+            img_resource_key = "digest:" + _hashlib.md5(
+                _digest_src).hexdigest()
         _emit_one(
             _dc(
                 "img", eff_x + _bdr_l + _pad_l, eff_y + _bdr_t + _pad_t,
@@ -416,6 +467,8 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 img_src_w=img_pixel_w,
                 img_src_h=img_pixel_h,
                 radius=border_radius,
+                img_resource_key=img_resource_key,
+                img_resource_version=0,
             )
         )
         # Border around the embedded image.
@@ -590,6 +643,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 text=opt_label,
                 text_color=bx.text_color or Color(0, 0, 0),
                 font_px=font_px,
+                font_family=font_family,
                 control_type="select",
             )
         )
@@ -618,6 +672,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 text=file_label,
                 text_color=bx.text_color or Color(0, 0, 0),
                 font_px=font_px,
+                font_family=font_family,
                 control_type="file",
             )
         )
@@ -699,6 +754,7 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                     color=text_shadow_color,
                     text=text_content,
                     font_px=font_px,
+                    font_family=font_family,
                     align=text_align,
                     max_width=max_w if max_w > 0 else r.w,
                     text_shadow_radius=text_shadow_r,
@@ -738,6 +794,8 @@ def _emit(bx: LayoutBox, dl: DisplayList) -> None:
                 color=tc,
                 text=text_content,
                 font_px=font_px,
+                # R7-C02 — 携带具体 face（测量/绘制同源）。
+                font_family=font_family,
                 align=text_align,
                 max_width=max_w if max_w > 0 else r.w,
                 # P20.5 — letter-spacing + text-rendering.

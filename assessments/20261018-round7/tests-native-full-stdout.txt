@@ -1,0 +1,262 @@
+[mode=full] 90 in-process modules, 1893 in-process tests, 1 tcl-isolated module(s)
+ok   _js_step_budget exists
+ok   _js_max_recursion exists
+ok   _js_step_budget default 2M
+ok   _js_max_recursion default 256
+ok   infinite recursion raises _BudgetExceeded
+ok   bounded for-loop completes without budget log
+ok   1000-iteration while completes without budget log
+ok   execute(infinite loop) does not raise
+ok   execute logs a budget-exceeded message
+ok   reduced cap still catches recursion
+ok   arrow recursion caught by guard
+ok   normal function call returns 7
+  [bench] 1000-node pipeline: 2539.6 ms (soft threshold 100 ms)
+  [bench] 10000-node: bitmap 800x600, ~1.8 MB bitmap
+  [bench] 10000-node pipeline: 47.183 s (informational)
+ok   culling: offscreen-right rect skipped
+ok   culling: on-screen rect painted
+ok   culling: offscreen-bottom rect skipped
+ok   culling: negative-left rect clipped
+ok   culling: fully-off-left rect skipped
+ok   culling: zero-area text at origin drawn
+ok   text fast path: text box exists
+ok   text fast path: text_content set
+ok   text fast path: dom is None
+ok   text fast path: child_index set
+ok   text fast path: font_family inherited
+ok   text fast path: color resolved
+ok   line-clamp is a special prop
+ok   text slow path: line-clamp propagated to text box
+ok   wrap decision: short text measures under 100px
+ok   wrap decision: single-line content
+ok   wrap decision: long text exceeds 50px
+ok   wrap decision: overflow wraps to >1 lines
+ok   e2e: text box present
+ok   e2e: single-line box height ≈ line height
+ok   _layer is a DisplayCommand field
+ok   _layer defaults to 0
+ok   fresh DisplayCommand._layer is 0
+ok   emit_commands: layers are non-decreasing
+ok   empty box: emit_commands returns a DisplayList
+ok   measure cache == direct advance
+ok   empty string
+ok   distinct strings distinct widths
+ok   long string width
+ok   adv_width_tables empty after clear
+ok   doc_width_cache empty after clear
+ok   layout.clear_caches cleared doc_width_cache
+ok   layout.clear_caches cleared metrics_memo
+ok   half-leading consistent across boxes
+ok   ascent_px > 0
+ok   every command has int _layer
+ok   default z-index commands carry _layer=0
+ok   all commands have int _layer
+ok   commands emitted
+ok   measure() on cached string is fast
+ok   measure() on novel strings works
+   3000-node pipeline: 10920.8 ms
+ok   3000-node pipeline under 15s (P34.3 was ~9.6s)
+ok   css._candidate_rules_cache exists
+ok   css.clear_caches clears candidate cache
+ok   apply() drops stale candidate cache
+ok   div found in styled tree
+ok   div color=red still applied
+ok   all 3 p found
+ok   all 2 span found
+ok   same-identity p nodes get identical color
+ok   same-identity span nodes get identical font-weight
+ok   no shorthand: returns same dict object
+ok   with shorthand: returns new dict
+ok   with shorthand: longhands added
+ok   with shorthand: original key kept
+ok   advance_text deterministic
+ok   second advance_text call does not grow the char cache
+ok   clear_advance_cache drops adv_char_cache
+ok   layout.clear_caches drops css candidate cache
+ok   500-node pipeline produces non-empty bitmap
+ok   two identical renders produce identical pixels
+   3000-node pipeline: 15907.5 ms
+FAIL 3000-node pipeline not slower than P34.4 (~9.5s)  got 15.9s
+ok   line-height inherited (parent carries it)
+ok   child line-height matches parent
+ok   no spurious inheritance when parent carries no text props
+ok   font-family inherited from parent
+ok   child font-weight overrides parent
+ok   pure container: no spurious rect
+ok   pure container: no spurious border
+ok   pure container: text commands still present
+ok   background box: rect still emitted
+ok   border box: border still emitted
+ok   outline box: not skipped by fast path
+ok   shadow box: not skipped by fast path
+ok   canvas box: rect emitted (is_canvas guard)
+ok   leaf div: rect has positive width
+ok   leaf div: found in layout tree
+ok   nested divs: layout tree has expected box count
+ok   500-node pipeline: non-empty bitmap
+ok   two identical renders: identical pixels
+   10k-node pipeline: 46427 ms
+FAIL 10k-node pipeline not slower than P34.4 (~29.4s)  got 46.4s
+ok   parse-error script contained (no escape)
+ok   script after a failing one runs
+ok   one script error recorded for one failing script
+ok   entry has source/kind/error keys
+ok   entry kind is inline
+ok   entry error names the fault
+ok   clean page records zero script errors
+ok   external parse failure does not escape
+ok   external failure recorded with its URL
+ok   external entry kind is external
+ok   uncaught throw logged (legacy path)
+ok   uncaught throw not double-recorded
+ok   runaway recursion contained (no escape)
+ok   live location global is a web_api.ToyLocation
+ok   location.href matches make_location
+ok   location.protocol matches make_location
+ok   location.host matches make_location
+ok   location.hostname matches make_location
+ok   location.port matches make_location
+ok   location.pathname matches make_location
+ok   location.search matches make_location
+ok   location.hash matches make_location
+ok   location.origin matches make_location
+ok   non-default port: port part readable
+ok   non-default port: host part readable
+ok   non-default port: origin carries the port (spec)
+ok   replace() emits one navigation task
+ok   replace target is the http URL (baidu shape)
+ok   replace is a replace-history navigation
+ok   replace source is script
+ok   assign() emits one navigation task
+ok   relative assign resolves against doc base
+ok   assign is a new-history navigation
+ok   href = … emits one navigation task
+ok   href = resolves the relative path
+ok   href = is a new-history (assign) navigation
+ok   reload() emits one navigation task
+ok   reload targets the current URL
+ok   reload is a replace-history navigation
+ok   clean page emits zero navigation tasks
+ok   absolute replace passes through the target
+ok   _is_url_like('http://www.baidu.com') is a URL form
+ok   _is_url_like('https://example.com/p') is a URL form
+ok   _is_url_like('about:blank') is a URL form
+ok   _is_url_like('file:///c/x.html') is a URL form
+ok   _is_url_like('localhost:8000') is a URL form
+ok   _is_url_like('example.com') is a URL form
+ok   _is_url_like('www.baidu.com') is a URL form
+ok   _is_url_like('localhost:8000/app') is a URL form
+ok   _is_url_like('hello world') is not a URL form
+ok   _is_url_like('foo bar') is not a URL form
+ok   _is_url_like('') is not a URL form
+ok   _is_url_like('   ') is not a URL form
+ok   _is_url_like('search baidu') is not a URL form
+ok   existing local file routes to local_file
+ok   https launch arg routes to url (unified controller)
+ok   about:blank launch arg routes to url
+ok   bare host launch arg routes to url
+ok   launch arg '' routes to blank
+ok   launch arg '   ' routes to blank
+ok   launch arg 'hello world' routes to blank
+ok   launch arg 'foo bar' routes to blank
+ok   local-file check has precedence over URL-form
+ok   router returns an InitialRoute dataclass
+ok   non-local URL-form path routes to url
+
+============================================================
+RESULT: 1914/1914 passed in 760.5s (90 modules, mode=full)
+
+============================================================
+PER-MODULE TIMING (slowest first):
+   760.5s  (tcl-isolated)                     21/21   #################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+   258.3s  test_p34_r6                         5/5    ####################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+    93.6s  test_p2                            21/21   ###########################################################################################################################################################################################
+    89.7s  test_p34_r5                         8/8    ###################################################################################################################################################################################
+    73.6s  test_p34_r4                         9/9    ###################################################################################################################################################
+    59.2s  test_browser                      357/357  ######################################################################################################################
+    55.3s  test_gpu_glyph_atlas               13/13   ##############################################################################################################
+    14.9s  test_gpu_rasterize                  9/9    #############################
+    12.2s  test_gpu_backend                   14/14   ########################
+    11.6s  test_r4_perf                        3/3    #######################
+    11.5s  test_r4_regression                  5/5    ######################
+    10.0s  test_r5                            12/12   ####################
+     9.4s  test_p0_js_budget                   8/8    ##################
+     8.3s  test_r4                            30/30   ################
+     7.7s  test_g11_gui_wiring                12/12   ###############
+     6.8s  test_g09_gui_wiring                10/10   #############
+     6.4s  test_gpu_image_cache               13/13   ############
+     5.4s  test_document_process_spawn        12/12   ##########
+     5.2s  test_r1                            28/28   ##########
+     3.4s  test_p34                           27/27   ######
+     2.3s  test_rasterize_cpu                 35/35   ####
+     2.2s  test_r2                            12/12   ####
+     2.0s  test_editor_overlay                23/23   ####
+     1.6s  test_css                           69/69   ###
+     1.3s  test_paint                         36/36   ##
+     1.2s  test_b_series_gui_wiring           29/29   ##
+     0.9s  test_document_process              14/14   #
+     0.9s  test_mem                           12/12   #
+     0.6s  test_js                           146/146  #
+     0.6s  test_gui_activation                 4/4    #
+     0.5s  test_focus_routing                 10/10   #
+     0.5s  test_layout                        42/42   
+     0.4s  test_p34_r2                         9/9    
+     0.3s  test_cpu_image                      6/6    
+     0.2s  test_document_renderer              6/6    
+     0.2s  test_p0_policy                     16/16   
+     0.2s  test_p34_r7                         7/7    
+     0.1s  test_net                            5/5    
+     0.1s  test_p3                            10/10   
+     0.1s  test_p34_r3                        13/13   
+     0.1s  test_transport                      9/9    
+     0.1s  test_tab_identity                  14/14   
+     0.0s  test_r3                            12/12   
+     0.0s  test_session_recovery              24/24   
+     0.0s  test_png_export                    18/18   
+     0.0s  test_web_api                       22/22   
+     0.0s  test_p34_r8                         9/9    
+     0.0s  test_geometry_freeze               14/14   
+     0.0s  test_document_controller           13/13   
+     0.0s  test_js_multi_decl                 15/15   
+     0.0s  test_policy_regression             26/26   
+     0.0s  test_cpu_image_glyph               17/17   
+     0.0s  test_form_task                     15/15   
+     0.0s  test_dom                            3/3    
+     0.0s  test_cpu_image_fill                21/21   
+     0.0s  test_navigation                    19/19   
+     0.0s  test_layout_diff                   14/14   
+     0.0s  test_tab_lifecycle                 14/14   
+     0.0s  test_document_state_full            8/8    
+     0.0s  test_tab_session                   20/20   
+     0.0s  test_tab_document_orchestrator     23/23   
+     0.0s  test_form_control                  20/20   
+     0.0s  test_document_context              15/15   
+     0.0s  test_diag_panel                     7/7    
+     0.0s  test_keyboard_router               23/23   
+     0.0s  test_layout_incremental            15/15   
+     0.0s  test_inline_layout                 14/14   
+     0.0s  test_p1_supports                   19/19   
+     0.0s  test_overlay_protocol              20/20   
+     0.0s  test_frame_ownership               11/11   
+     0.0s  test_viewport                      10/10   
+     0.0s  test_display_list                  19/19   
+     0.0s  test_style_cache_lru               20/20   
+     0.0s  test_activation                    16/16   
+     0.0s  test_request_config                11/11   
+     0.0s  test_p34_r9                         9/9    
+     0.0s  test_dirty_region                  22/22   
+     0.0s  test_gui_scroll                    14/14   
+     0.0s  test_gui_document_bridge           20/20   
+     0.0s  test_style_cache                   18/18   
+     0.0s  test_script_error                  16/16   
+     0.0s  test_navigation_state              10/10   
+     0.0s  test_load_phases                   13/13   
+     0.0s  test_history_entry                 12/12   
+     0.0s  test_first_screen                  15/15   
+     0.0s  test_field_editing                  9/9    
+     0.0s  test_editor                        16/16   
+     0.0s  test_diagnostics                   19/19   
+     0.0s  test_cpu_image_formats             13/13   
+     0.0s  test_caret_explain                 13/13   
+     0.0s  test_accessibility                 24/24   

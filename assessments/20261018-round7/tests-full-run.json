@@ -1,0 +1,10 @@
+{
+  "command": [
+    "C:\\Users\\zklzk\\.workbuddy\\binaries\\python\\versions\\3.13.12\\python.exe",
+    "D:\\Desktop\\1\\toy-browser-py\\test.py",
+    "--full",
+    "--report"
+  ],
+  "returncode": 1,
+  "wall_seconds": 403.2697361000173
+}

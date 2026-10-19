@@ -23,6 +23,7 @@ from toy_browser.app.activation import FormField
 from toy_browser.app.document_context import DocumentContext
 from toy_browser.app.navigation import NavigationController, NavRequest, SRC_ADDRESS
 from toy_browser.app.request_config import RequestConfig
+from skip_support import require_tk
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +326,7 @@ def _make_stub_tabbrowser(initial_url="about:blank"):
     ``object.__new__(TabBrowser)`` 模式一致：避免构建完整 Tk UI，只
     验证 BGuiWiring 分派映射 + 既有导航执行路径的接线。
     """
+    require_tk()  # R7-Q01 — 缺 Tk 环境 → SKIP，不算功能失败
     from toy_browser.app.gui import TabBrowser
     tb = object.__new__(TabBrowser)
     tb.tabs = [_PageStub(initial_url)]

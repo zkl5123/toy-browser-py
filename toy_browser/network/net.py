@@ -33,6 +33,7 @@ import socket
 import ssl
 import time
 import urllib.parse
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -267,6 +268,49 @@ class ResponseTooLarge(Exception):
     host treats it like any other fetch failure: log it and move on
     to the next sub-resource."""
 
+# R7-S04 — chunk size for the bounded response reader.  Every
+# ``read(amt)`` call asks for at most this many bytes, so a hostile
+# server cannot make the reader allocate an unbounded intermediate
+# buffer in one call, and the accumulated body never exceeds
+# ``max_bytes + 1`` before the cap check fires.
+_READ_CHUNK = 64 * 1024
+
+
+def _read_response_bounded(resp, max_bytes: int) -> bytes:
+    """R7-S04 — read the whole response body under a *pre-allocation*
+    byte cap (shared by the GET and POST paths).
+
+    The legacy code called ``resp.read()`` with no argument, which
+    buffers the entire body in RAM *before* any size check could run
+    (the S04 audit probe ``read_before_cap`` proved a 129-byte reply
+    was fully allocated before ``ResponseTooLarge`` fired).  This
+    reader instead pulls at most
+    ``min(_READ_CHUNK, max_bytes + 1 - len(out))`` bytes per call, so:
+
+    * no single ``read(amt)`` ever asks for an unbounded amount,
+    * the accumulated buffer never exceeds ``max_bytes + 1`` bytes,
+    * a body larger than *max_bytes* raises :class:`ResponseTooLarge`
+      **before** the oversized buffer is returned to the caller.
+
+    The caller must treat the connection as dead when this raises
+    (bytes remain unread, so the socket cannot be pooled).
+    """
+    out = bytearray()
+    while True:
+        want = min(_READ_CHUNK, max_bytes + 1 - len(out))
+        if want <= 0:
+            break  # len(out) == max_bytes + 1 → over cap
+        chunk = resp.read(want)
+        if not chunk:
+            break  # EOF — body fully consumed
+        out += chunk
+        if len(out) > max_bytes:
+            break
+    if len(out) > max_bytes:
+        raise ResponseTooLarge(
+            f"response body exceeds cap {max_bytes} bytes")
+    return bytes(out)
+
 # P22.1 — redirect chain cap (上限 5 层) + 循环检测。
 MAX_REDIRECTS = 5
 _REDIRECT_STATUS = (301, 302, 303, 307, 308)
@@ -367,9 +411,10 @@ class HttpResponse:
         if not csp:
             return False
         # The specific directive takes precedence; fall back to
-        # default-src when absent.
-        values = csp.get(source_kind, csp.get("default-src", []))
-        if not values:
+        # default-src when absent (R7-S02: a present-but-empty
+        # directive is 'none', not "no constraint").
+        values = _csp_values_for(csp, source_kind)
+        if values is None:
             return False  # no constraint
         return _csp_blocks(values, source_value, doc_origin)
 
@@ -460,7 +505,7 @@ def _origin_str(url_str: str) -> str:
     return f"{p.scheme.lower()}://{netloc}"
 
 
-def _csp_blocks(values: list, source_value: str,
+def _csp_blocks(values: "list | None", source_value: str,
                 doc_origin: str = "") -> bool:
     """GPT P0-4 — return True when *source_value* is blocked by the
     CSP source-list *values* (the same token-matching logic as
@@ -473,12 +518,26 @@ def _csp_blocks(values: list, source_value: str,
     *doc_origin*.  When *doc_origin* is blank the legacy behaviour is
     preserved (``'self'`` is a pass-through) so existing fixtures that
     do not track origins are unaffected.
+
+    R7-S02 — *values* distinguishes three states: ``None`` (no
+    directive at all → no constraint, nothing is blocked), a
+    non-empty list (token matching below), and ``[]`` — a directive
+    present with no values, which per CSP is equivalent to
+    ``'none'`` and blocks everything.
     """
-    if not values:
+    if values is None:
         return False  # no constraint
+    if not values:
+        return True  # present-but-empty directive == 'none'
     for tok in values:
         tok_lower = tok.lower()
         tok_bare = tok_lower.strip("'")
+        if tok_bare == "*":
+            # R7-S02 — the wildcard permits any http(s) URL (it does
+            # not cover data: / blob: schemes).
+            if source_value.lower().startswith(("http://", "https://")):
+                return False
+            continue
         if tok_bare == "self":
             if not doc_origin:
                 # Legacy: no origin tracking → treat 'self' as permit.
@@ -569,6 +628,16 @@ def parse_csp_directives(csp_header: str) -> dict[str, list[str]]:
 
     Toy semantics: only the values are recorded; no enforcement is done
     here (enforcement is left to the caller / CSS/JS engine).
+
+    R7-S02 — two spec corrections:
+
+    * a directive present with **no values** (``img-src`` alone) is
+      recorded as an empty list, which the enforcement helpers treat
+      as ``'none'`` (block everything) — it is NOT the same as a
+      missing directive (which falls back to ``default-src``);
+    * when a directive is **repeated**, the first occurrence wins
+      (CSP3 §4.2.3: "if the directive is repeated, ignore all but the
+      first").
     """
     if not csp_header:
         return {}
@@ -587,8 +656,36 @@ def parse_csp_directives(csp_header: str) -> dict[str, list[str]]:
             continue
         name = tokens[0].lower()
         values = tokens[1:]
-        directives[name] = values
+        # R7-S02 — first occurrence of a directive wins.
+        if name not in directives:
+            directives[name] = values
     return directives
+
+
+def _csp_values_for(csp_directives: dict,
+                    kind: str) -> "list | None":
+    """R7-S02 — the source list governing *kind* (a resource kind like
+    ``"img"`` or a full directive name like ``"img-src"``).
+
+    Distinguishes the three CSP states the legacy ``.get(...,
+    default)`` chain collapsed into one:
+
+    * neither ``<kind>-src`` nor ``default-src`` present → ``None``
+      (no constraint — everything is permitted);
+    * the directive present with values → that list;
+    * the directive present with **no values** → ``[]``, which per
+      CSP is equivalent to ``'none'`` (block everything).
+
+    *kind* is normalized so both ``"img"`` and ``"img-src"`` work.
+    """
+    if not csp_directives:
+        return None
+    key = kind if kind.endswith("-src") else f"{kind}-src"
+    if key in csp_directives:
+        return csp_directives[key]
+    if "default-src" in csp_directives:
+        return csp_directives["default-src"]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -680,24 +777,23 @@ class DocumentPolicy:
         """Return True when *source_value* is permitted by this
         document policy's CSP *source_kind* directive (falling back to
         ``default-src``), evaluated against :attr:`doc_origin`.
-        Blank directive map (no CSP header) permits everything.
+        A blank directive map (no CSP header) permits everything.
 
-        A bare ``'none'`` token list blocks unconditionally (an empty
-        value list means "no constraint"; ``['none']`` means "no
-        source may be used").  ``'nonce-…'`` / hash tokens are left to
-        the JS-engine's inline gate (R4 stage 2); they never match a
-        URL here.
+        R7-S02 — a directive present with **no values** (``img-src``
+        alone) is equivalent to ``'none'`` and blocks everything; it
+        is not the same as a missing directive (which falls back to
+        ``default-src``).  A bare ``'none'`` token list likewise
+        blocks unconditionally.  ``'nonce-…'`` / hash tokens are left
+        to the JS-engine's inline gate (R4 stage 2); they never match
+        a URL here.
         """
         if not self.csp_directives:
             return True
-        # The directive name for a resource kind is ``<kind>-src``
-        # ("script" → "script-src", "style" → "style-src", …); fall
-        # back to default-src when the specific directive is absent.
-        values = (self.csp_directives.get(f"{source_kind}-src")
-                   or self.csp_directives.get("default-src")
-                   or [])
+        values = _csp_values_for(self.csp_directives, source_kind)
+        if values is None:
+            return True   # no constraint
         if not values:
-            return True
+            return False  # present-but-empty directive == 'none'
         if [v.strip("'").lower() for v in values] == ["none"]:
             return False  # script-src 'none' et al.
         return not _csp_blocks(values, source_value, self.doc_origin)
@@ -899,6 +995,31 @@ class HttpClient:
             return
         self._conn_pool[key] = conn
 
+    @staticmethod
+    def _headers_from_response(resp) -> dict:
+        """R7-S05 — lowercase the response headers, preserving EVERY
+        ``Set-Cookie`` value.
+
+        The legacy ``{k.lower(): v for k, v in resp.getheaders()}``
+        dict comprehension collapsed a multi-line ``Set-Cookie``
+        response to its LAST value (the audit's
+        ``cookie_scope_validation`` probe: two Set-Cookie lines left
+        only ``second`` in the jar).  Duplicated Set-Cookie headers
+        are collected into a list under ``"set-cookie"`` — the shape
+        :meth:`CookieJar.ingest_response` already understands.
+        """
+        out: dict = {}
+        set_cookies: list = []
+        for k, v in resp.getheaders():
+            lk = k.lower()
+            if lk == "set-cookie":
+                set_cookies.append(v)
+            else:
+                out[lk] = v
+        if set_cookies:
+            out["set-cookie"] = set_cookies
+        return out
+
     def close_pool(self) -> None:
         """P33.R2 — close every pooled connection (call on shutdown)."""
         for conn in self._conn_pool.values():
@@ -977,6 +1098,7 @@ class HttpClient:
 
         last_exc: Exception | None = None
         for attempt in (0, 1):
+            conn = None
             try:
                 # P33.R2 — acquire a (possibly reused) connection; a
                 # first attempt on a stale socket raises
@@ -998,9 +1120,7 @@ class HttpClient:
                 # the stale cached body and refresh freshness.
                 if resp.status == 304:
                     body = stale_body
-                    headers_out = {
-                        k.lower(): v for k, v in resp.getheaders()
-                    }
+                    headers_out = self._headers_from_response(resp)
                     # Merge in the cached headers (the 304 body is
                     # the cached one; keep its content-type, etc.).
                     self._release_conn(url, conn, dead=(
@@ -1013,28 +1133,30 @@ class HttpClient:
                         final_url=url.to_string(),
                         from_cache=True,
                     )
-                body = resp.read()
-                # P0 (GPT report) — cap the raw (pre-decompression)
-                # body so a malicious server cannot exhaust RAM.
-                if len(body) > self.max_response_bytes:
-                    raise ResponseTooLarge(
-                        f"response body {len(body)} bytes exceeds "
-                        f"cap {self.max_response_bytes}")
-                headers_out = {
-                    k.lower(): v for k, v in resp.getheaders()
-                }
+                # R7-S04 — bounded chunked read: the cap fires while
+                # reading, before the oversized buffer ever exists
+                # (the legacy read()-then-check allocated everything
+                # first — the S04 read_before_cap probe).
+                body = _read_response_bounded(
+                    resp, self.max_response_bytes)
+                # R7-S05 — keep every Set-Cookie line (the legacy dict
+                # comprehension dropped all but the last).
+                headers_out = self._headers_from_response(resp)
                 # P32.3 — ingest Set-Cookie into the jar before the
                 # response leaves the client.
                 if self.cookies is not None:
                     self.cookies.ingest_response(url, headers_out)
                 final = url.to_string()
-                # P22.2 — transparent gzip decode.
+                # P22.2 — transparent gzip decode (R7-S04: bounded
+                # incremental decode against the instance cap, not a
+                # full decompress followed by a size check).
                 body = maybe_gunzip(
                     _TransientResp(status=resp.status,
                                    status_text=resp.reason or "",
                                    headers=headers_out,
                                    body=body,
-                                   final_url=final))
+                                   final_url=final),
+                    self.max_response_bytes)
                 self._release_conn(url, conn, dead=("close" in connection_hdr
                                                      or resp.status >= 400
                                                      and resp.status == 401))
@@ -1045,6 +1167,17 @@ class HttpClient:
                     body=body,
                     final_url=final,
                 )
+            except ResponseTooLarge:
+                # R7-S04 — the body exceeded the cap mid-read (or the
+                # bounded gunzip rejected a decompression-bomb): the
+                # connection still has unread bytes, so it is closed
+                # and must NOT return to the keep-alive pool.
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                raise
             except (socket.timeout, socket.error,
                     http.client.HTTPException, OSError,
                     http.client.RemoteDisconnected) as e:
@@ -1061,7 +1194,8 @@ class HttpClient:
     def get(self, url: "URL | str",
             headers: dict | None = None,
             follow_redirects: bool = True,
-            max_redirects: int = MAX_REDIRECTS) -> HttpResponse:
+            max_redirects: int = MAX_REDIRECTS,
+            cookie_context: dict | None = None) -> HttpResponse:
         """GET *url*; P22.1 — follow 3xx redirects up to
         *max_redirects* (cap 5) with loop detection.  ``follow_redirects``
         False (the P21 behavior) returns the first 3xx as-is.
@@ -1071,6 +1205,14 @@ class HttpClient:
         with an ETag is revalidated (``If-None-Match``); a 304 reuses
         the body.  P23.4 — emits load-progress events when a sink is
         attached.
+
+        R7-S05 — *cookie_context* carries the real request metadata
+        (cross-site / method / top-level) for the cookie jar's
+        SameSite filter; the legacy default was "same-site top-level
+        GET" for every caller, which leaked Lax cookies onto
+        cross-site subresource requests.  Subresource loaders pass
+        their own context; document navigations keep the legacy
+        default when it is omitted.
 
         Raises :class:`RedirectLoop` when the chain loops or exceeds
         the cap.  4xx/5xx returned as-is so the caller renders the
@@ -1099,6 +1241,7 @@ class HttpClient:
             max_redirects=max_redirects, follow=follow_redirects,
             revalidate_etag=(stale.etag if stale else ""),
             stale_body=(stale.body if stale else b""),
+            cookie_context=cookie_context,
         )
 
         # P23.2 — store successful, cacheable responses.
@@ -1124,7 +1267,8 @@ class HttpClient:
              headers: dict | None = None,
              follow_redirects: bool = True,
              max_redirects: int = MAX_REDIRECTS,
-             cookie_context: dict | None = None) -> HttpResponse:
+             cookie_context: dict | None = None,
+             method: str = "POST") -> HttpResponse:
         """P23 — POST *url* with a body.
 
         *data* may be a mapping (encoded as
@@ -1134,6 +1278,10 @@ class HttpClient:
         caching non-idempotent methods is out of scope for the toy).
         P23.4 — emits load-progress events when a sink is attached.
 
+        R7-J03 — *method* lets a caller issue another verb (PUT /
+        DELETE / PATCH …) through the same body-carrying path; the
+        default stays "POST" for every legacy caller.
+
         P0 (GPT report) — *cookie_context* carries the cross-site /
         top-level metadata for the cookie jar's SameSite filter; a
         cross-site POST must not carry a SameSite=Lax cookie.
@@ -1142,6 +1290,7 @@ class HttpClient:
             url = parse_url(url)
         if url.scheme not in ("http", "https"):
             raise UnsupportedScheme(url.scheme)
+        m = (method or "POST").upper()
 
         hdrs = dict(headers or {})
         body_bytes = b""
@@ -1167,7 +1316,7 @@ class HttpClient:
             cookie_hdr = self.cookies.cookie_header_for(
                 url,
                 is_cross_site=ctx.get("is_cross_site", False),
-                method="POST",
+                method=m,
                 is_top_level=ctx.get("is_top_level", False),
             )
             if cookie_hdr:
@@ -1183,19 +1332,29 @@ class HttpClient:
 
         last_exc: Exception | None = None
         for attempt in (0, 1):
+            conn = None
             try:
                 # P33.R2 — acquire a (possibly reused) connection; a
                 # first attempt on a stale socket raises
                 # ConnectionResetError / RemoteDisconnected and the
                 # retry loop opens a fresh one.
                 conn = self._acquire_conn(url)
-                conn.request("POST", path, body=body_bytes,
+                conn.request(m, path, body=body_bytes,
                              headers=hdrs)
                 resp = conn.getresponse()
-                body = resp.read()
-                headers_out = {
-                    k.lower(): v for k, v in resp.getheaders()
-                }
+                # R7-S04 — bounded chunked read.  The legacy POST path
+                # called resp.read() with no cap at all (the S04
+                # response_limits_and_cookie_ingest probe returned a
+                # 4096-byte body under a 128-byte cap).
+                body = _read_response_bounded(
+                    resp, self.max_response_bytes)
+                # R7-S05 — keep every Set-Cookie line (the legacy dict
+                # comprehension dropped all but the last).
+                headers_out = self._headers_from_response(resp)
+                # R7-S05 — POST responses are ingested too (the legacy
+                # POST path never touched the cookie jar).
+                if self.cookies is not None:
+                    self.cookies.ingest_response(url, headers_out)
                 conn_hdr = (resp.getheader("Connection") or "").lower()
                 self._release_conn(url, conn, dead=("close" in conn_hdr))
                 return HttpResponse(
@@ -1205,6 +1364,15 @@ class HttpClient:
                     body=body,
                     final_url=url.to_string(),
                 )
+            except ResponseTooLarge:
+                # R7-S04 — the POST body exceeded the cap mid-read:
+                # close the connection, keep it out of the pool.
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                raise
             except (socket.timeout, socket.error,
                     http.client.HTTPException, OSError,
                     http.client.RemoteDisconnected) as e:
@@ -1618,20 +1786,38 @@ class FetchTransport:
         # own origin exactly like the browser's URL resolver does.
         self._base_url = base_url
 
-    def fetch(self, url: str) -> "HttpResponse | None":
+    def fetch(self, url: str, method: str = "GET",
+              body: "str | bytes | None" = None,
+              headers: "dict | None" = None) -> "HttpResponse | None":
+        """R7-J03 — the JS-facing transport used by in-page ``fetch()`` /
+        ``XMLHttpRequest``.
+
+        *method* / *body* / *headers* let the engine issue real non-GET
+        requests (XHR ``open('POST', …)`` + ``send(body)``): a non-GET
+        method routes through :meth:`HttpClient.post` with the given
+        body and headers.  ``fetch(url)`` (the legacy 1-arg form) is
+        unchanged — a plain GET.
+        """
         if not isinstance(url, URL):
             # Relative resolution needs the document base; an empty
             # base makes a relative path unresolvable → fail the fetch
             # (None) rather than guess.
             base = self._base_url or None
             url = parse_url(url, base=base) if base else parse_url(url)
+        m = (method or "GET").upper()
         try:
             # follow_redirects=True mirrors the spec's default fetch
             # behaviour (a 3xx chain yields the final resource, not a
             # 3xx body).  Network-layer errors → None; HTTP error
             # statuses are returned as real responses (the engine
             # rejects the promise / fires onerror on !ok).
-            return self._client.get(url, follow_redirects=True)
+            if m in ("GET", "HEAD"):
+                return self._client.get(url, headers=dict(headers or {}) or None,
+                                        follow_redirects=True)
+            return self._client.post(
+                url, data=body if body is not None else "",
+                headers=dict(headers or {}),
+                follow_redirects=True, method=m)
         except (OSError, socket.timeout, socket.error,
                 http.client.HTTPException):
             return None
@@ -1683,23 +1869,58 @@ def maybe_gunzip(resp: "HttpResponse",
     body unchanged when the header is absent or decoding fails (a
     failed gunzip must not break the page).
 
-    P0 (GPT report) — the gunzip path is also capped at *max_bytes*
-    so a decompression-bomb (a small gzip that expands to multi-GB)
-    cannot exhaust the host's RAM.  When the expanded body exceeds
-    the cap, :class:`ResponseTooLarge` is raised.
+    R7-S04 — the decode is *incremental and bounded*.  The legacy
+    implementation ran ``gzip.decompress(body)`` to completion and
+    only then compared the result against the cap, so a
+    decompression-bomb had already exhausted RAM by the time the
+    check fired.  This version feeds the compressed bytes through
+    :func:`gunzip_bounded`, which limits the output per call and
+    raises :class:`ResponseTooLarge` as soon as the expansion would
+    exceed *max_bytes*.
     """
     enc = resp.headers.get("content-encoding", "").lower()
     if "gzip" not in enc:
         return resp.body
+    return gunzip_bounded(resp.body, max_bytes)
+
+
+def gunzip_bounded(body: bytes,
+                   max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    """R7-S04 — bounded incremental gzip decode (concatenated members
+    supported, like :func:`gzip.decompress`).
+
+    Raises :class:`ResponseTooLarge` when the decoded output would
+    exceed *max_bytes* — the check fires *while* decompressing, not
+    after the whole expansion is allocated.  Undecodable input (not
+    gzip / truncated stream) returns *body* unchanged, preserving the
+    lenient P22.2 contract.
+    """
+    out = bytearray()
+    data = bytes(body)
     try:
-        out = gzip.decompress(resp.body)
-    except (OSError, EOFError, gzip.BadGzipFile):
-        return resp.body
-    if len(out) > max_bytes:
-        raise ResponseTooLarge(
-            f"gzip-decompressed body {len(out)} bytes exceeds "
-            f"cap {max_bytes}")
-    return out
+        while data:
+            d = zlib.decompressobj(31)  # 31 = gzip header + trailer
+            want = max_bytes + 1 - len(out)
+            if want <= 0:
+                raise ResponseTooLarge(
+                    f"gzip-decompressed body exceeds cap {max_bytes} "
+                    f"bytes")
+            out += d.decompress(data, want)
+            if len(out) > max_bytes or d.unconsumed_tail:
+                # Output limit reached with compressed input still
+                # pending → the full expansion exceeds the cap.
+                raise ResponseTooLarge(
+                    f"gzip-decompressed body exceeds cap {max_bytes} "
+                    f"bytes")
+            if not d.eof:
+                # Truncated member — same lenient contract as P22.2
+                # (gzip.decompress would raise → raw body returned).
+                return body
+            data = d.unused_data  # next concatenated member, or b""
+    except (zlib.error, EOFError):
+        # Not valid gzip — return the raw body unchanged (P22.2).
+        return body
+    return bytes(out)
 
 
 def _follow_redirects(client: "HttpClient",
@@ -1708,12 +1929,18 @@ def _follow_redirects(client: "HttpClient",
                      max_redirects: int = MAX_REDIRECTS,
                      follow: bool = True,
                      revalidate_etag: str = "",
-                     stale_body: bytes = b"") -> HttpResponse:
+                     stale_body: bytes = b"",
+                     cookie_context: dict | None = None) -> HttpResponse:
     """P22.1 — follow a 3xx redirect chain (cap *max_redirects*,
     loop-detect via the set of visited URLs).  P23.3 — the *first*
     hop may carry a conditional GET (``If-None-Match``) when
     *revalidate_etag* is set; a 304 is surfaced as a 200 backed by
-    *stale_body*."""
+    *stale_body*.
+
+    R7-S05 — *cookie_context* is threaded to every hop so the jar's
+    SameSite filter sees the real request metadata on each request of
+    the chain (the legacy code dropped it, so every hop silently used
+    the "same-site top-level GET" default)."""
     visited: list[URL] = []
     cur = url
     hops = 0
@@ -1724,6 +1951,7 @@ def _follow_redirects(client: "HttpClient",
             cur, headers,
             revalidate_etag=(revalidate_etag if first else ""),
             stale_body=(stale_body if first else b""),
+            cookie_context=cookie_context,
         )
         first = False
         if not follow or resp.status not in _REDIRECT_STATUS \
@@ -1791,13 +2019,19 @@ def fetch_html(url: "URL | str", client: HttpClient | None = None,
 
 def fetch_resource(url: "URL | str",
                    client: HttpClient | None = None,
-                   timeout: float | None = None) -> "HttpResponse | None":
+                   timeout: float | None = None,
+                   cookie_context: dict | None = None) -> "HttpResponse | None":
     """P22.4 — fetch a subresource (stylesheet / image / script).
 
     Returns the :class:`HttpResponse` (body bytes) on success, or
     ``None`` on any failure (network error, 4xx/5xx, bad content).
     Subresource loading must never block or crash the page — the
     caller ignores ``None``.
+
+    R7-S05 — *cookie_context* carries the request's cross-site /
+    method / top-level metadata to the cookie jar (subresources are
+    not top-level navigations; a cross-origin subresource must not
+    carry a Lax cookie).
     """
     c = client or (
         HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
@@ -1805,12 +2039,32 @@ def fetch_resource(url: "URL | str",
     if not isinstance(url, URL):
         url = parse_url(url)
     try:
-        resp = c.get(url)
+        resp = c.get(url, cookie_context=cookie_context)
     except Exception:
         return None
     if not resp.ok:
         return None
     return resp
+
+
+def _subresource_cookie_context(absu: URL, doc_origin: str) -> dict:
+    """R7-S05 — the cookie context for a subresource request: not a
+    top-level navigation, and cross-site when the resource's
+    registrable site differs from the document's (computed on
+    scheme + registrable domain, not a raw host comparison)."""
+    from toy_browser.network import cookie_store as _cs
+    is_cross_site = True
+    if doc_origin:
+        try:
+            doc_site = _cs.site_for_cookies(doc_origin)
+            res_site = _cs.site_for_cookies(absu.to_string())
+            is_cross_site = (doc_site != res_site)
+        except Exception:
+            is_cross_site = not is_origin_match(
+                doc_origin, _origin_str(absu.to_string()))
+    return {"is_cross_site": is_cross_site,
+            "method": "GET",
+            "is_top_level": False}
 
 
 # ---------------------------------------------------------------------------
@@ -1849,6 +2103,14 @@ def collect_subresources(dom_root) -> list[dict]:
     URL pipeline can download external scripts and feed them to the
     JS engine (the legacy pipeline only collected stylesheets and
     images; external scripts were silently ignored).
+
+    R7-S06 — each spec also carries the attributes that decide the
+    fetch mode: ``crossorigin`` (``""`` for a bare attribute,
+    ``"anonymous"`` / ``"use-credentials"`` for explicit values,
+    absent → ``None``) and ``script_type`` (the ``type`` attribute).
+    A classic script without ``crossorigin`` loads in ``no-cors``
+    mode; ``type=module`` or any ``crossorigin`` value makes it a
+    cors-mode fetch (see :func:`_subresource_cors_mode`).
     """
     out: list[dict] = []
 
@@ -1859,22 +2121,49 @@ def collect_subresources(dom_root) -> list[dict]:
             href = n.attr("href")
             if href and rel.strip().lower() in ("stylesheet",
                                                 "alternate stylesheet"):
-                out.append({"kind": "stylesheet", "src": href})
+                out.append({"kind": "stylesheet", "src": href,
+                            "crossorigin": n.attr("crossorigin")})
         elif tag == "img":
             src = n.attr("src")
             if src:
-                out.append({"kind": "image", "src": src})
+                out.append({"kind": "image", "src": src,
+                            "crossorigin": n.attr("crossorigin")})
         elif tag == "script":
             # P0 (retest report) — external script: <script src>
             # (inline <script> with no src has no subresource).
             src = n.attr("src")
             if src:
-                out.append({"kind": "script", "src": src})
+                out.append({"kind": "script", "src": src,
+                            "crossorigin": n.attr("crossorigin"),
+                            "script_type": (n.attr("type") or "").lower()})
         for c in getattr(n, "children", []):
             _walk(c)
 
     _walk(dom_root)
     return out
+
+
+def _subresource_cors_mode(spec: dict) -> bool:
+    """R7-S06 — True when the subresource *spec* is fetched in CORS
+    mode (its response is read by JS, so a cross-origin response must
+    carry a matching ``Access-Control-Allow-Origin``).
+
+    * a **classic script** (``type`` absent / ``classic`` /
+      ``text/javascript``) **without** a ``crossorigin`` attribute
+      loads in ``no-cors`` mode — the spec default — and executes
+      without needing ACAO (the audit's ``classic_cross_origin_script``
+      case: a third-party classic script must not be blocked for a
+      missing ACAO);
+    * ``type=module`` scripts and any element carrying
+      ``crossorigin`` (bare = anonymous, or explicit
+      ``anonymous`` / ``use-credentials``) are cors-mode;
+    * stylesheets and images are no-cors subresources.
+    """
+    if spec.get("kind") != "script":
+        return False
+    if spec.get("script_type") == "module":
+        return True
+    return spec.get("crossorigin") is not None
 
 
 def load_subresources(dom_root, base_url, client: HttpClient | None = None,
@@ -1930,10 +2219,12 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     """
     # R4 stage 0 — unify on the DocumentPolicy context when supplied.
     if policy is None and doc_csp:
-        _legacy_base = base_url_from_dom(dom_root) or base_url
-        _legacy_origin = (_origin_str(_legacy_base.to_string())
-                          if isinstance(_legacy_base, URL)
-                          else _origin_str(str(_legacy_base)))
+        # R7-S02 — the policy's origin is the DOCUMENT url; a
+        # <base href> only rewrites relative resolution below, never
+        # the origin used for 'self' / CORS / SameSite decisions.
+        _legacy_origin = (_origin_str(base_url.to_string())
+                          if isinstance(base_url, URL)
+                          else _origin_str(str(base_url)))
         policy = DocumentPolicy(doc_origin=_legacy_origin,
                                 csp_directives=parse_csp_directives(doc_csp))
     if policy is not None:
@@ -1953,7 +2244,15 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
     by_kind: dict = {}
     done = 0
     # GPT P0-4 — the document's origin (for CORS cross-origin check).
-    doc_origin = _origin_str(eff_base.to_string()) if eff_base else ""
+    # R7-S02 — computed from the DOCUMENT url (*base_url*), NOT from
+    # the <base href>-resolved effective base: <base> must not be able
+    # to rewrite the origin that 'self' / CORS / SameSite are
+    # evaluated against.
+    doc_origin = (_origin_str(base_url.to_string())
+                  if isinstance(base_url, URL)
+                  else _origin_str(str(base_url)))
+    kind_map = {"stylesheet": "style", "image": "img",
+                "script": "script"}
     for spec in specs:
         src = spec["src"]
         # data: URIs are inline — no network fetch.
@@ -1964,53 +2263,56 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         if progress is not None:
             progress.emit(LoadProgress(
                 PHASE_SUBRESOURCE, done / max(total, 1), absu.to_string()))
-        resp = fetch_resource(absu, client=c)
+        # R7-S02 — pre-request CSP gate: a subresource blocked by the
+        # document's CSP must never hit the wire (the audit's
+        # "img-src none → server request count is zero" probe).  The
+        # post-fetch check below stays as defence in depth.
+        if (policy is not None and policy.enforce
+                and not policy.csp_allowed(
+                    kind_map.get(spec["kind"], spec["kind"]),
+                    absu.to_string())):
+            by_kind.setdefault(spec["kind"], {})[absu.to_string()] = None
+            done += 1
+            continue
+        # R7-S05 — subresource requests carry their real cookie
+        # context (subresource = not top-level; cross-site when the
+        # registrable site differs from the document's).
+        _sub_ctx = _subresource_cookie_context(absu, doc_origin)
+        resp = fetch_resource(absu, client=c, cookie_context=_sub_ctx)
         # GPT P0-4 — enforce CORS/CSP on the fetched subresource.
         # When *doc_csp* is supplied the document's CSP header is
         # used to gate the subresource (the real browser behaviour);
         # otherwise the subresource's own response header is checked
         # (legacy behaviour).
         # P1 (assessment report) — per-resource-kind CORS mode:
-        # * stylesheets (``<link rel=stylesheet>``) are loaded as
-        #   *no-cors* subresources in browsers; they do NOT need
-        #   ``Access-Control-Allow-Origin`` to apply (the green-
+        # * stylesheets (``<link rel=stylesheet>``) and images are
+        #   loaded as *no-cors* subresources in browsers; they do NOT
+        #   need ``Access-Control-Allow-Origin`` to apply (the green-
         #   background cross-origin CSS case in the report).
-        # * scripts are loaded as *cors* when fetched via
-        #   ``<script src>``; a cross-origin fetch without ACAO is
-        #   blocked (CSP ``script-src`` is the primary gate).
+        # * classic scripts (no ``crossorigin``, no ``type=module``)
+        #   are *no-cors* too (R7-S06 — the spec default; only
+        #   module / crossorigin scripts are cors-mode).
         # * images are *no-cors* (like stylesheets).
-        # ``is_cors_needed[spec["kind"]]`` controls whether the
-        # CORS cross-origin read check applies.
-        _cors_needed = {
-            "stylesheet": False,
-            "image": False,
-            "script": True,
-            "connect": True,
-        }
         if enforce_policy and resp is not None:
-            kind_map = {"stylesheet": "style", "image": "img",
-                       "script": "script"}
             res_kind = kind_map.get(spec["kind"], spec["kind"])
             if doc_csp:
-                # Build a temporary policy view from the document's
-                # CSP header + the subresource's CORS headers.
+                # Defence in depth: the pre-request gate above already
+                # blocked CSP-forbidden subresources before the wire;
+                # re-check the fetched URL so a caller that skips the
+                # gate still gets the same answer.
                 csp_directives = parse_csp_directives(doc_csp)
-                csp_blocked = False
-                if csp_directives:
-                    values = (csp_directives.get(
-                        f"{res_kind}-src",
-                        csp_directives.get("default-src", [])))
-                    if values:
-                        csp_blocked = _csp_blocks(
-                            values, absu.to_string(), doc_origin)
-                # P1 (assessment report) — the CORS cross-origin check
-                # applies only to kinds that are read as ``cors``
-                # mode (scripts, fetch/XHR).  Stylesheets and images
-                # load in ``no-cors`` mode: a cross-origin response
-                # without ACAO is still usable for rendering.
-                needs_cors = _cors_needed.get(spec["kind"], True)
+                values = _csp_values_for(csp_directives, res_kind)
+                csp_blocked = _csp_blocks(
+                    values, absu.to_string(), doc_origin)
+                # R7-S06 — CORS read check: only for cors-mode
+                # resources, and only when the resource is actually
+                # cross-origin (same-origin never requires ACAO —
+                # the audit's csp_self_same_origin_script case).
+                needs_cors = _subresource_cors_mode(spec)
                 cors_ok = True
-                if needs_cors and doc_origin:
+                if (needs_cors and doc_origin
+                        and not is_origin_match(
+                            doc_origin, _origin_str(absu.to_string()))):
                     cors_ok = resp.is_cors_allowed(doc_origin)
                 if not cors_ok or csp_blocked:
                     resp = None  # policy-blocked → treat as failed
@@ -2061,10 +2363,11 @@ def load_subresources_parallel(dom_root, base_url,
     """
     # R4 stage 0 — unify on the DocumentPolicy context when supplied.
     if policy is None and doc_csp:
-        _legacy_base = base_url_from_dom(dom_root) or base_url
-        _legacy_origin = (_origin_str(_legacy_base.to_string())
-                          if isinstance(_legacy_base, URL)
-                          else _origin_str(str(_legacy_base)))
+        # R7-S02 — the policy's origin is the DOCUMENT url; <base>
+        # only rewrites relative resolution below.
+        _legacy_origin = (_origin_str(base_url.to_string())
+                          if isinstance(base_url, URL)
+                          else _origin_str(str(base_url)))
         policy = DocumentPolicy(doc_origin=_legacy_origin,
                                 csp_directives=parse_csp_directives(doc_csp))
     if policy is not None:
@@ -2091,38 +2394,45 @@ def load_subresources_parallel(dom_root, base_url,
             net_specs.append(spec)
 
     # GPT P0-4 — the document's origin (for CORS cross-origin check).
-    doc_origin = _origin_str(eff_base.to_string()) if eff_base else ""
+    # R7-S02 — from the DOCUMENT url (*base_url*), never from the
+    # <base href>-resolved effective base.
+    doc_origin = (_origin_str(base_url.to_string())
+                  if isinstance(base_url, URL)
+                  else _origin_str(str(base_url)))
     kind_map = {"stylesheet": "style", "image": "img",
-               "script": "script"}
+                "script": "script"}
 
-    def _apply_policy(resp, absu, spec_kind):
+    def _csp_pre_blocked(absu, spec) -> bool:
+        """R7-S02 — pre-request CSP gate (never send a blocked
+        request)."""
+        if policy is None or not policy.enforce:
+            return False
+        return not policy.csp_allowed(
+            kind_map.get(spec["kind"], spec["kind"]),
+            absu.to_string())
+
+    def _apply_policy(resp, absu, spec):
         if resp is None:
             return None
         if not enforce_policy:
             return resp
+        spec_kind = spec["kind"]
         res_kind = kind_map.get(spec_kind, spec_kind)
-        # P1 (assessment report) — CSS / image subresources load in
-        # ``no-cors`` mode: cross-origin responses without ACAO are
-        # still usable.  Only script / connect kinds need a CORS read.
-        _cors_needed = {"stylesheet": False, "image": False,
-                       "script": True, "connect": True}
-        needs_cors = _cors_needed.get(spec_kind, True)
         if doc_csp:
-            # P0 (retest report) — gate subresources against the
-            # document's CSP header (mirrors the sequential loader);
-            # fall back to CORS for cross-origin reads (cors-mode kinds
-            # only, P1 assessment report).
+            # Defence in depth: the pre-request gate already blocked
+            # CSP-forbidden subresources before the wire.
             csp_directives = parse_csp_directives(doc_csp)
-            csp_blocked = False
-            if csp_directives:
-                values = (csp_directives.get(
-                    f"{res_kind}-src",
-                    csp_directives.get("default-src", [])))
-                if values:
-                    csp_blocked = _csp_blocks(
-                        values, absu.to_string(), doc_origin)
+            values = _csp_values_for(csp_directives, res_kind)
+            csp_blocked = _csp_blocks(
+                values, absu.to_string(), doc_origin)
+            # R7-S06 — cors-mode resources only, and only when the
+            # resource is actually cross-origin (same-origin never
+            # requires ACAO).
+            needs_cors = _subresource_cors_mode(spec)
             cors_ok = True
-            if needs_cors and doc_origin:
+            if (needs_cors and doc_origin
+                    and not is_origin_match(
+                        doc_origin, _origin_str(absu.to_string()))):
                 cors_ok = resp.is_cors_allowed(doc_origin)
             if not cors_ok or csp_blocked:
                 return None
@@ -2141,8 +2451,15 @@ def load_subresources_parallel(dom_root, base_url,
                 progress.emit(LoadProgress(
                     PHASE_SUBRESOURCE, done / max(total, 1),
                     absu.to_string()))
+            if _csp_pre_blocked(absu, spec):
+                by_kind.setdefault(spec["kind"], {})[absu.to_string()] = None
+                done += 1
+                continue
             resp = _apply_policy(
-                fetch_resource(absu, client=c), absu, spec["kind"])
+                fetch_resource(absu, client=c,
+                               cookie_context=_subresource_cookie_context(
+                                   absu, doc_origin)),
+                absu, spec)
             by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
             done += 1
     else:
@@ -2151,8 +2468,13 @@ def load_subresources_parallel(dom_root, base_url,
 
         def _fetch(spec):
             absu = parse_url(spec["src"], base=eff_base)
+            if _csp_pre_blocked(absu, spec):
+                return spec, absu, None
             try:
-                resp = fetch_resource(absu, client=c)
+                resp = fetch_resource(
+                    absu, client=c,
+                    cookie_context=_subresource_cookie_context(
+                        absu, doc_origin))
             except Exception:
                 resp = None
             return spec, absu, resp
@@ -2162,7 +2484,7 @@ def load_subresources_parallel(dom_root, base_url,
             futs = [pool.submit(_fetch, s) for s in net_specs]
             for fut in futs:
                 spec, absu, resp = fut.result()
-                resp = _apply_policy(resp, absu, spec["kind"])
+                resp = _apply_policy(resp, absu, spec)
                 by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
                 done += 1
                 if progress is not None:

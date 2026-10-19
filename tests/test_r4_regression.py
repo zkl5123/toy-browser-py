@@ -294,7 +294,12 @@ class _FakeTransport:
                 "" if path.startswith("/") else "/") + path
             self._by_abs[absu] = info
 
-    def fetch(self, url: str):
+    def fetch(self, url: str, method: str = "GET", body=None,
+              headers=None):
+        # R7-J03 — the engine's fetch/XHR pass method / body / headers
+        # through the transport (net.FetchTransport gained the same
+        # parameters); the offline replay only serves GET-shaped
+        # fixtures, so the extra arguments are accepted and ignored.
         info = self._by_abs.get(url)
         if info is None:
             return None
@@ -303,7 +308,7 @@ class _FakeTransport:
             status_text="OK",
             headers={"Content-Type": info.get("content_type", "text/plain")},
             body=(info["body"].encode("utf-8")
-                   if isinstance(info["body"], str) else info["body"]),
+                  if isinstance(info["body"], str) else info["body"]),
             final_url=url,
         )
 

@@ -17,6 +17,7 @@ _project_os.chdir(_PROJECT_ROOT)
 # so they run without external network access.
 
 import os as _os
+from skip_support import require_tk
 
 
 def test_r2_http_client_pool_exists():
@@ -260,6 +261,7 @@ def test_r2_sequential_fast_path_short_list():
 def test_r2_gui_page_scroll_max():
     """PageInstance.scroll_max / scroll_ratio reflect the content
     height vs. the viewport (pure arithmetic, no Tk needed)."""
+    require_tk()  # R7-Q01 — gui 模块级 import tkinter；缺 Tk → SKIP
     from toy_browser.app import gui
     p = gui.PageInstance()
     p.width, p.height = 800, 600
@@ -278,6 +280,7 @@ def test_r2_gui_page_scroll_max():
 def test_r2_gui_clip_bitmap_rows():
     """_clip_bitmap crops the scroll window out of the full-document
     bitmap (row offsets, not a copy of the whole document)."""
+    require_tk()  # R7-Q01 — gui 模块级 import tkinter；缺 Tk → SKIP
     from toy_browser.app import gui
     from toy_browser.rendering import paint
     p = gui.PageInstance()
@@ -304,6 +307,7 @@ def test_r2_gui_clip_bitmap_rows():
 def test_r2_gui_content_height_probe():
     """_content_height_probe measures the document's full content
     height from the layout tree (independent of the viewport)."""
+    require_tk()  # R7-Q01 — gui 模块级 import tkinter；缺 Tk → SKIP
     from toy_browser.app import gui
     from toy_browser.document import dom
     from toy_browser.style import css

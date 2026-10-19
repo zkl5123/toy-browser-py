@@ -214,10 +214,11 @@ def test_kbd_enter_editor_by_id():
     # 未知 id 不切换域
     r2 = s.enter_editor("zzz")
     assert r2["domain"] == FOCUS_EDITOR  # 保持 editor（enter_editor 仅切换已知）
-    # 已知才移动
+    # 已知才移动；未知 id 在任何起始域都不切换（R7-Q01: 去掉恒真 or True）
     s2 = _session()
     s2.tab()
-    assert s2.enter_editor("zzz")["domain"] == FOCUS_CHROME or True
+    before_domain = s2.domain
+    assert s2.enter_editor("zzz")["domain"] == before_domain
 
 
 def test_kbd_report_snapshot():

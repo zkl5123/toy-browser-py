@@ -75,6 +75,7 @@ def test_c01_restate_keeps_node_ids_and_host():
     host = _host()
     ds.new_document(tree, host, base_url="https://a")
     before_rev = ds.doc_version.layout_revision
+    doc_id_before = ds.doc_version.document_id
     ids_before = dict(ds.node_ids)
     host_before = ds.script_host
     # 多次重排
@@ -86,8 +87,8 @@ def test_c01_restate_keeps_node_ids_and_host():
     assert ds.node_ids == ids_before
     # Host 仍是同一个对象（重排不重建 Host）
     assert ds.script_host is host_before
-    # 文档身份不变（重排不 new_document）
-    assert ds.doc_version.document_id == ids_before.get("__doc__", None) or True
+    # 文档身份不变（重排不 new_document；R7-Q01: 去掉恒真 or True）
+    assert ds.doc_version.document_id == doc_id_before
 
 
 def test_c01_node_id_stable_across_restate():

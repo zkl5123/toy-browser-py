@@ -332,6 +332,184 @@ def parse_calc(expr: str) -> Value:
 _NTH_CHILD_RE = __import__("re").compile(r"([+-]?\d*)n\s*([+-]\s*\d+)?\s*$")
 
 
+# ---------------------------------------------------------------------------
+# R7-C01 — specificity, attribute selectors and :not() helpers
+# ---------------------------------------------------------------------------
+
+#: Pseudo-*elements* count at the TYPE level (CSS Selectors 4 §16); every
+#: other pseudo-thing counts at the class level.
+_PSEUDO_ELEMENTS = frozenset({
+    "before", "after", "first-line", "first-letter", "selection",
+    "placeholder", "marker", "backdrop", "cue", "part", "slotted",
+})
+
+#: ``[attr]`` / ``[attr op value]`` — one attribute selector per bracket.
+_ATTR_SEL_RE = __import__("re").compile(
+    # NOTE: no "^" anchor — the pattern is matched at an arbitrary offset
+    # via ``pattern.match(text, pos)``, and "^" would only match at
+    # offset 0 (or after a newline), silently missing every attribute
+    # selector that follows a tag name such as ``input[type=text]``.
+    r"\[\s*(?P<name>[-\w:]+)\s*(?:(?P<op>[~|^$*]?=)\s*(?P<val>[^\]]*?))?\s*\]"
+)
+
+
+def _split_compound(simple: str) -> "tuple[str, list, str | None]":
+    """R7-C01 — peel attribute selectors and ``:not(...)`` off a compound.
+
+    Returns ``(rest, attrs, not_arg)`` where *attrs* is a list of
+    ``(op, name, value)`` triples (``op`` is ``""`` / ``"="`` / ``"~="`` /
+    ``"|="`` / ``"^="`` / ``"$="`` / ``"*="``) and *not_arg* is the raw
+    argument text of the rightmost ``:not(...)`` (``None`` when absent).
+
+    ``input[type=text]:not(.x)`` → ``("input", [("=", "type", "text")], ".x")``
+    """
+    attrs: list = []
+    not_arg = None
+    rest: list = []
+    i = 0
+    n = len(simple)
+    while i < n:
+        c = simple[i]
+        if c == "[":
+            m = _ATTR_SEL_RE.match(simple, i)
+            if m is not None:
+                attrs.append((
+                    m.group("op") or "",
+                    (m.group("name") or "").lower(),
+                    (m.group("val") or "").strip().strip("\"'"),
+                ))
+                i = m.end()
+                continue
+            rest.append(simple[i:])
+            break
+        if c == ":" and simple[i:i + 5].lower() == ":not(":
+            depth = 1
+            j = i + 5
+            while j < n:
+                if simple[j] == "(":
+                    depth += 1
+                elif simple[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            not_arg = simple[i + 5:j]
+            i = j + 1
+            continue
+        rest.append(c)
+        i += 1
+    return "".join(rest), attrs, not_arg
+
+
+def _attr_matches(node, op: str, name: str, val: str) -> bool:
+    """R7-C01 — match one attribute selector against *node*."""
+    if not node.is_element():
+        return False
+    raw = node.attr(name)
+    if raw is None:
+        return False
+    if op == "":
+        return True
+    if op == "=":
+        return raw == val
+    if op == "~=":
+        return val in raw.split()
+    if op == "|=":
+        return raw == val or raw.startswith(val + "-")
+    if op == "^=":
+        return val != "" and raw.startswith(val)
+    if op == "$=":
+        return val != "" and raw.endswith(val)
+    if op == "*=":
+        return val != "" and val in raw
+    return False
+
+
+def _part_specificity(part: str) -> "tuple[int, int, int]":
+    """R7-C01 — ``(id, class/attribute/pseudo-class, type/pseudo-element)``
+    for ONE simple-selector part.
+
+    The legacy classifier looked only at the part's first character, so
+    ``[type=text]`` was counted as a type selector and ``p::before``
+    ignored its pseudo-element.  This scanner walks the part instead:
+
+    * a leading ``tag`` (or ``*``) → type level;
+    * ``#id`` → id level;
+    * ``.class`` → class level (each dot in ``.a.b`` counts separately);
+    * ``[attr…]`` → class level;
+    * ``:pseudo-class`` / ``::pseudo-element`` → class / type level;
+    * ``:not(arg)`` is handled by the caller (its specificity is its
+      argument's, per Selectors 4 §16).
+    """
+    import re as _re
+    a = b = c = 0
+    part = part.strip()
+    if part.startswith("::"):
+        # A bare "::before" part (no tag) — pseudo-element, type level.
+        return (0, 0, 1)
+    n = len(part)
+    i = 0
+    m = _re.match(r"^(\*|[a-zA-Z][\w-]*)", part)
+    if m:
+        if m.group(1) != "*":
+            c += 1
+        i = m.end()
+    while i < n:
+        ch = part[i]
+        if ch == "#":
+            j = i + 1
+            while j < n and (part[j].isalnum() or part[j] in "-_"):
+                j += 1
+            a += 1
+            i = j
+        elif ch == ".":
+            j = i + 1
+            while j < n and (part[j].isalnum() or part[j] in "-_"):
+                j += 1
+            b += 1
+            i = j
+        elif ch == "[":
+            m2 = _ATTR_SEL_RE.match(part, i)
+            if m2 is not None:
+                b += 1
+                i = m2.end()
+            else:
+                j = part.find("]", i)
+                i = n if j < 0 else j + 1
+        elif ch == ":":
+            j = i + 1
+            if j < n and part[j] == ":":
+                j += 1
+            start = j
+            while j < n and (part[j].isalnum() or part[j] in "-_"):
+                j += 1
+            name = part[start:j].lower()
+            if name == "not":
+                # Selectors 4 §16 — :not() contributes the specificity of
+                # ITS ARGUMENT, which :meth:`Selector.parse` adds from the
+                # parsed inner selector; counting the functional pseudo
+                # itself here would double-count it.
+                pass
+            elif part[i:i + 2] == "::" or name in _PSEUDO_ELEMENTS:
+                c += 1
+            else:
+                b += 1
+            # Skip a functional pseudo's argument: :not(...), :nth-child(...)
+            if j < n and part[j] == "(":
+                depth = 1
+                j += 1
+                while j < n and depth:
+                    if part[j] == "(":
+                        depth += 1
+                    elif part[j] == ")":
+                        depth -= 1
+                    j += 1
+            i = j
+        else:
+            i += 1
+    return (a, b, c)
+
+
 @dataclass(frozen=True)
 class Selector:
     """A compound selector.
@@ -349,6 +527,61 @@ class Selector:
     specificity: tuple[int, int, int, int]  # P25.1 — (inline, id, cls, type)
     pseudo: str = ""  # ":hover" / ":focus" / ""
     selector_text: str = ""  # P32.4 — raw source text (DevTools provenance)
+    # R7-C01 — ``:not(<selector>)`` on the rightmost part.  Per CSS
+    # Selectors 4 the negation's specificity IS its argument's
+    # specificity, so it is folded into ``specificity`` at parse time and
+    # evaluated as "argument must NOT match" in :meth:`matches`.
+    not_selector: "Selector | None" = None
+    # R7-C02 — combinator between ``parts[i]`` and ``parts[i+1]``
+    # (``" "`` descendant / ``">"`` child).  The legacy single
+    # ``combinator`` field could only remember the LAST combinator, so
+    # ``main div > p`` applied ">" to every step and failed to match.
+    combinators: tuple[str, ...] = ()
+
+    # R7-C01 — pseudo-classes whose result depends on the node's
+    # POSITION among its siblings.  A candidate-rule cache keyed on the
+    # node's own identity (tag / class / id) must never be reused across
+    # siblings for these: the first sibling's ":first-child" match is not
+    # the second sibling's.
+    @property
+    def is_position_sensitive(self) -> bool:
+        p = self.pseudo
+        if p in (":first-child", ":last-child", ":only-child",
+                 ":first-of-type", ":last-of-type", ":only-of-type",
+                 ":empty", ":nth-child", ":nth-last-child",
+                 ":nth-of-type", ":nth-last-of-type"):
+            return True
+        if p.startswith(":nth-child") or p.startswith(":nth-last-child") \
+                or p.startswith(":nth-of-type") or p.startswith(":nth-last-of-type"):
+            return True
+        if self.not_selector is not None and self.not_selector.is_position_sensitive:
+            return True
+        return False
+
+    @property
+    def is_identity_unsafe(self) -> bool:
+        """R7-C01 — can this selector's match be cached by node identity?
+
+        The candidate-rule cache key is the node's own identity
+        (tag / class / [id] / hover / focus).  A selector is unsafe to
+        cache when its result depends on anything *else*:
+
+        * a compound selector (``div p``) — the ancestor chain;
+        * a structural pseudo-class — the position among siblings;
+        * an attribute selector (``a[href^=https]``) — the node's
+          attributes are not part of the identity, so two <a> elements
+          with the same tag/class would share the first one's match.
+
+        Unsafe selectors fall back to the correct per-node walk
+        ("正确性优先于命中率", R7-C01 §2).
+        """
+        if len(self.parts) > 1:
+            return True
+        if self.is_position_sensitive:
+            return True
+        if any("[" in p for p in self.parts):
+            return True
+        return False
 
     def matches(self, node: Node, interaction_state: dict | None = None) -> bool:
         """Match this selector against a DOM node.
@@ -371,45 +604,54 @@ class Selector:
         # state is provided (the rule can never match in headless mode).
         if self.pseudo in (":hover", ":focus") and interaction_state is None:
             return False
-        # P8.1 / P10.1 — pseudo-class check on the rightmost part.
-        if self.pseudo:
-            if self.pseudo == ":hover":
-                if interaction_state.get("hover") != node.attr("id"):
+        # R7-C01 — :not(<selector>): the argument must NOT match.
+        if self.not_selector is not None:
+            try:
+                if self.not_selector.matches(node, interaction_state):
                     return False
-            elif self.pseudo == ":focus":
-                if interaction_state.get("focus") != node.attr("id"):
-                    return False
-            # P10.1 — child-position pseudo-classes (DOM-structure based).
-            elif self.pseudo == ":first-child":
-                if not self._is_first_child(node):
-                    return False
-            elif self.pseudo == ":last-child":
-                if not self._is_last_child(node):
-                    return False
-            elif self.pseudo.startswith(":nth-child"):
-                idx = self._child_index(node)
-                if idx is None:
-                    return False
-                if not self._nth_matches(self.pseudo, idx):
-                    return False
+            except Exception:
+                # An unparseable argument never matches the node, so the
+                # negation as a whole still matches (CSS: an invalid
+                # :not() argument is a parse error, but failing soft
+                # keeps the rest of the rule usable).
+                pass
+        # P8.1 / P10.1 / R7-C02 — pseudo-class check on the rightmost
+        # part.  Every pseudo-class goes through :meth:`_pseudo_matches`,
+        # which returns False for anything the engine cannot evaluate:
+        # an unknown pseudo-class must never silently match.
+        if self.pseudo and not self._pseudo_matches(node, interaction_state):
+            return False
         if not self._simple_matches(self.parts[-1], node):
             return False
         if len(self.parts) == 1:
             return True
 
-        if self.combinator == ">":
-            # Walk the immediate ancestor chain (no skipping allowed).
-            ancestor = node.parent
-            for part in reversed(self.parts[:-1]):
-                if ancestor is None:
+        # R7-C02 — walk the parts right-to-left honouring the combinator
+        # of EACH step (``main div > p`` is a descendant step followed by
+        # a child step; the legacy code applied the last combinator to
+        # every step, so mixed selectors never matched).
+        cur = node
+        for i in range(len(self.parts) - 2, -1, -1):
+            comb = self.combinators[i] if i < len(self.combinators) \
+                else self.combinator
+            if comb == ">":
+                # Child step: the next part must match the IMMEDIATE parent.
+                cur = cur.parent
+                if cur is None or not self._simple_matches(self.parts[i], cur):
                     return False
-                if not self._simple_matches(part, ancestor):
-                    return False
-                ancestor = ancestor.parent
-            return True
-
-        # Descendant: every leftward part must match some ancestor.
-        return self._ancestor_chain(self.parts[:-1], node.parent)
+                continue
+            # Descendant step: the next part must match SOME ancestor.
+            anc = cur.parent
+            found = None
+            while anc is not None:
+                if self._simple_matches(self.parts[i], anc):
+                    found = anc
+                    break
+                anc = anc.parent
+            if found is None:
+                return False
+            cur = found
+        return True
 
     def _ancestor_chain(self, left_parts: tuple[str, ...], start: Node | None) -> bool:
         """Walk ``start``'s ancestors matching each left part (right-to-left)."""
@@ -455,6 +697,27 @@ class Selector:
         # P0 — universal selector: matches every element node.
         if simple == "*":
             return node.is_element()
+        # R7-C01 — attribute selectors ([attr], [attr=val], [attr~=val],
+        # [attr|=val], [attr^=val], [attr$=val], [attr*=val]) and
+        # :not(...) are peeled off before the tag/class/id check: a
+        # compound such as ``input[type=text]:not(.x)`` must match on all
+        # of its components.
+        _rest, _attrs, _not = _split_compound(simple)
+        for _op, _name, _val in _attrs:
+            if not _attr_matches(node, _op, _name, _val):
+                return False
+        if _not is not None:
+            try:
+                if Selector.parse(_not).matches(node, None):
+                    return False
+            except Exception:
+                pass
+        simple = _rest
+        if not simple:
+            # The part was only attribute selectors / :not() → matched.
+            return node.is_element()
+        if simple == "*":
+            return node.is_element()
 
         # Split into segments: a leading bare tag name, then ``.class``
         # and ``#id`` segments.  ``p.x`` → ("p", ".x"); ``div#box`` →
@@ -489,6 +752,78 @@ class Selector:
                     return False
         return True
 
+    def _pseudo_matches(self, node: Node, interaction_state: dict | None) -> bool:
+        """R7-C02 — evaluate the rightmost pseudo-class.
+
+        Returns ``False`` for a pseudo-class the engine cannot evaluate
+        (unknown names, and stateful ones such as ``:visited`` that need
+        real browsing state): silently treating them as a match would
+        paint every element with the rule (CSS Selectors §4: "an unknown
+        pseudo-class is a parse error and the selector is invalid").
+
+        Implemented here:
+
+        * interaction — ``:hover`` / ``:focus`` (from *interaction_state*);
+        * structure — ``:first-child`` / ``:last-child`` / ``:only-child`` /
+          ``:empty`` / ``:root``;
+        * type structure — ``:first-of-type`` / ``:last-of-type`` /
+          ``:only-of-type``;
+        * ``:nth-child`` / ``:nth-last-child`` / ``:nth-of-type`` /
+          ``:nth-last-of-type`` with ``N`` / ``even`` / ``odd`` / ``An+B``.
+        """
+        p = self.pseudo
+        if p == ":hover":
+            if interaction_state is None:
+                return False
+            return interaction_state.get("hover") == node.attr("id")
+        if p == ":focus":
+            if interaction_state is None:
+                return False
+            return interaction_state.get("focus") == node.attr("id")
+        if p == ":first-child":
+            return self._is_first_child(node)
+        if p == ":last-child":
+            return self._is_last_child(node)
+        if p == ":only-child":
+            return self._is_first_child(node) and self._is_last_child(node)
+        if p == ":empty":
+            # CSS :empty — no children at all (elements or text).
+            return not getattr(node, "children", None)
+        if p == ":root":
+            parent = node.parent
+            return parent is None or getattr(parent, "node_type", "") == "document"
+        if p.startswith(":nth-child"):
+            idx = self._child_index(node)
+            if idx is None:
+                return False
+            return self._nth_matches(p, idx)
+        if p.startswith(":nth-last-child"):
+            idx = self._reverse_child_index(node)
+            if idx is None:
+                return False
+            return self._nth_matches(":nth-child" + p[len(":nth-last-child"):], idx)
+        if p in (":first-of-type", ":last-of-type", ":only-of-type"):
+            ti, tt = self._type_index(node)
+            if ti is None:
+                return False
+            if p == ":first-of-type":
+                return ti == 1
+            if p == ":last-of-type":
+                return ti == tt
+            return tt == 1
+        if p.startswith(":nth-of-type") or p.startswith(":nth-last-of-type"):
+            ti, tt = self._type_index(node)
+            if ti is None:
+                return False
+            if p.startswith(":nth-last-of-type"):
+                ti = tt - ti + 1
+                inner = p[len(":nth-last-of-type"):]
+            else:
+                inner = p[len(":nth-of-type"):]
+            return self._nth_matches(":nth-child" + inner, ti)
+        # Unknown / unimplemented → never match (no silent pass-through).
+        return False
+
     # --- P10.1 — child-position pseudo-class helpers -------------------------
 
     @staticmethod
@@ -515,6 +850,38 @@ class Selector:
                 if c is node:
                     return idx
         return None
+
+    @staticmethod
+    def _reverse_child_index(node: Node) -> int | None:
+        """R7-C02 — 1-based position from the END of the sibling list."""
+        parent = node.parent
+        if parent is None:
+            return None
+        kids = [c for c in parent.children if c.is_element()]
+        for i, c in enumerate(reversed(kids)):
+            if c is node:
+                return i + 1
+        return None
+
+    @staticmethod
+    def _type_index(node: Node) -> tuple[int | None, int]:
+        """R7-C02 — ``(index, total)`` of *node* among siblings of the
+        same tag (1-based), for ``:*-of-type`` pseudo-classes."""
+        parent = node.parent
+        if parent is None:
+            return (None, 0)
+        tag = node.tag_name()
+        idx = 0
+        total = 0
+        for c in parent.children:
+            if not c.is_element():
+                continue
+            if c.tag_name() != tag:
+                continue
+            total += 1
+            if c is node:
+                idx = total
+        return (idx if idx else None, total)
 
     @classmethod
     def _is_first_child(cls, node: Node) -> bool:
@@ -593,12 +960,20 @@ class Selector:
 
         parts: list[str] = []
         combinator = " "
+        # R7-C02 — per-step combinators: ``combinators[i]`` is the
+        # combinator between ``parts[i]`` and ``parts[i+1]``.  The legacy
+        # single ``combinator`` flag latched to ">" forever, so ``main
+        # div > p`` required every step to be a direct-child step and
+        # never matched (assessment §4 "main div > p | 不匹配").
+        combinators: list[str] = []
+        pending_comb = " "
         pseudo = ""
         i = 0
         while i < len(tokens):
             tok = tokens[i]
             if tok == ">":
                 combinator = ">"
+                pending_comb = ">"
                 i += 1
                 continue
             # P8.1 / P10.1 — strip a trailing pseudo-class from the rightmost token.
@@ -606,56 +981,82 @@ class Selector:
             # ":nth-child(N)" / ":nth-child(2n+1)" are matched at
             # interaction / DOM-structure time, not parse time.
             if ":" in tok:
-                base, p = tok.rsplit(":", 1)
-                p = p.strip()
-                if base:  # avoid empty base from a leading ":"
-                    parts.append(base)
-                    if p in ("hover", "focus"):
-                        pseudo = ":" + p
-                    elif p in ("first-child", "last-child"):
-                        pseudo = ":" + p
-                    elif p.startswith("nth-child"):
-                        # ":nth-child(N)" — keep the full pseudo with its arg.
-                        pseudo = ":" + p
-                    i += 1
-                    continue
+                # R7-C01 — do NOT split blindly on ":" any more:
+                #   * "p::before"  → rsplit gave base "p:" (a stray colon
+                #     that then counted as an unknown class-level pseudo);
+                #   * "div:not(.y)" → the whole ":not(...)" was dropped,
+                #     so the selector matched every <div>.
+                # Functional (:not / :nth-child) and pseudo-element
+                # ("::") forms keep their text in the part; the matcher
+                # and :func:`_part_specificity` interpret it.
+                if ":not(" in tok.lower() or "::" in tok:
+                    new_part = tok
+                    # A standalone ":not(...)" still needs a base for the
+                    # tag/class check; the matcher treats an all-pseudo
+                    # part as "no type constraint".
                 else:
-                    # Standalone pseudo-class token like ":hover" (no base)
-                    # — treat as a whole part and record the pseudo.
-                    parts.append(tok)
-                    if p in ("hover", "focus", "first-child", "last-child"):
+                    base, p = tok.rsplit(":", 1)
+                    p = p.strip()
+                    if base:  # avoid empty base from a leading ":"
+                        new_part = base
+                        # R7-C02 — record EVERY pseudo-class (not just the
+                        # previously whitelisted hover/focus/first-child/
+                        # last-child/nth-child).  An unrecognised pseudo
+                        # used to be silently dropped, so ``div:madeup``
+                        # degraded into ``div`` and matched every <div>
+                        # (assessment §4 "未知伪类不能静默当匹配").
+                        # :meth:`_pseudo_matches` rejects the ones the
+                        # engine cannot evaluate.
                         pseudo = ":" + p
-                    elif p.startswith("nth-child"):
+                    else:
+                        # Standalone pseudo-class token like ":hover" (no base)
+                        # — treat as a whole part and record the pseudo.
+                        new_part = tok
                         pseudo = ":" + p
-                    i += 1
-                    continue
-            parts.append(tok)
+            else:
+                new_part = tok
+            if parts:
+                combinators.append(pending_comb)
+            parts.append(new_part)
+            pending_comb = " "
             i += 1
 
         if not parts:
             raise ValueError(f"selector has no simple parts: {text!r}")
 
-        # P25.1 — Compute 4-tuple specificity: (inline, id, cls, type).
-        # Inline = 0 here (inline styles are handled separately in the
-        # cascade); we only compute the selector part.
+        # R7-C01 — Compute the 4-tuple specificity
+        # ``(inline, id, class/attribute/pseudo-class, type/pseudo-element)``
+        # component-wise.  The legacy code classified a part by its first
+        # character only, so an attribute selector ``[type=text]`` was
+        # counted as a *type* (0,0,0,1) instead of a class-level (0,0,1,0),
+        # and ``:not(...)`` contributed nothing at all.
         spec_a = spec_b = spec_c = 0
         for p in parts:
-            p = p.strip()
-            if p.startswith("#"):
-                spec_a += 1  # id
-            elif p.startswith("."):
-                # Count classes/attrs: ".a" → 1, ".a.b" → 2
-                body = p[1:]
-                cls_count = body.count(".") + 1
-                spec_b += cls_count
-            else:
-                spec_c += 1  # element type
-        # P8.1 / P10.1 — any pseudo-class adds one class-level point.
-        if pseudo:
+            a, b, c = _part_specificity(p)
+            spec_a += a
+            spec_b += b
+            spec_c += c
+        # P8.1 / P10.1 — the rightmost pseudo-class adds one class-level
+        # point (pseudo-*elements* are type-level and are counted by
+        # :func:`_part_specificity`).
+        if pseudo and not pseudo.startswith("::"):
             spec_b += 1
+        # R7-C01 — :not(<sel>) adds the specificity of its argument, and
+        # is evaluated as "argument must not match" in :meth:`matches`.
+        not_sel = None
+        _rest, _attrs, _not_arg = _split_compound(parts[-1])
+        if _not_arg:
+            try:
+                not_sel = cls.parse(_not_arg)
+                spec_a += not_sel.specificity[1]
+                spec_b += not_sel.specificity[2]
+                spec_c += not_sel.specificity[3]
+            except Exception:
+                not_sel = None
         # P25.1 — 4-tuple: (inline=0, id, cls, type)
         return cls(tuple(parts), combinator, (0, spec_a, spec_b, spec_c), pseudo,
-                   selector_text=text)
+                   selector_text=text, not_selector=not_sel,
+                   combinators=tuple(combinators))
 
     def specificity_sum(self) -> tuple[int, int, int, int]:
         return self.specificity
@@ -1085,7 +1486,12 @@ def _parse_rulesheet_nocache_impl(css_text: str,
         sels = parse_selector_list(selector_text)
         if not sels:
             continue
-        max_spec = max((s.specificity_sum() for s in sels), key=sum, default=(0, 0, 0, 0))
+        # R7-C01 — a rule with a selector list takes the HIGHEST
+        # specificity of its selectors, compared component-wise (a
+        # ``#id`` beats any number of classes/types; summing the tuple
+        # let ``.a.b`` outrank ``#x``).
+        max_spec = max((s.specificity_sum() for s in sels),
+                       default=(0, 0, 0, 0))
         # P25.2 — detect if any declaration in this rule is !important.
         rule_important = any(
             isinstance(v, ImportantDecl) and v.important
@@ -2171,8 +2577,21 @@ def apply(
     # Interaction state (hover/focus id) is always part of the key —
     # :hover/:focus rules match a specific node, not its siblings.
     global _identity_includes_id, _identity_ancestor_sensitive
+    # R7-C01 — the node id must be part of the identity key not only for
+    # ``#id`` selectors but also for :hover / :focus rules: those match on
+    # ``node.attr("id") == state["hover"]``, so two nodes with the same
+    # (tag, class) and *different* ids must never share a cached match
+    # list.  Without this, hovering one <p class=c> painted every sibling
+    # <p class=c> as well.
+    # R7-C02 — the id must also be part of the key for a *compound* part
+    # such as ``div#x``: ``part.startswith("#")`` missed it, so the
+    # ``div#x`` rule's match leaked from #x onto every sibling <div>
+    # (assessment §4 "div#x | id=y兄弟也红").
     _identity_includes_id = any(
-        part.startswith("#") for r in rules for s in r.selectors for part in s.parts
+        "#" in part for r in rules for s in r.selectors for part in s.parts
+    ) or any(
+        s.pseudo in (":hover", ":focus")
+        for r in rules for s in r.selectors
     )
     # P34.5 — a compound selector (multi-part: "div p", "div > p")
     # matches on the ancestor chain, not on the node's own identity.
@@ -2181,8 +2600,22 @@ def apply(
     # for all rules; the cache would silently produce wrong matches
     # for the compound ones).  Simple single-part selectors (tag /
     # .class / #id) remain cached.
+    # R7-C01 — a structural pseudo-class (:first-child / :last-child /
+    # :nth-child(…)) matches on the node's POSITION among its siblings,
+    # which is not part of the node identity (tag, class, id).  The
+    # legacy flag only looked at compound selectors, so two sibling
+    # <div>s sharing tag+class also shared the cached candidate list and
+    # the first child's ":first-child" match leaked onto the second —
+    # the assessment's "first-child/id 匹配结果在相同 tag/class 兄弟间
+    # 错误复用".  Position-sensitive selectors therefore bypass the
+    # identity cache and run the correct per-node walk (correctness
+    # first, per the round-7 plan).
+    # R7-C01 — also unsafe for attribute selectors: ``a[href^=https]``
+    # matches on an attribute value, which the identity key (tag / class
+    # / id) does not carry, so the first <a>'s match leaked onto every
+    # other sibling <a>.
     _identity_ancestor_sensitive = any(
-        len(s.parts) > 1 for r in rules for s in r.selectors
+        s.is_identity_unsafe for r in rules for s in r.selectors
     )
     clear_caches()
     root_sn = StyledNode(dom_root)
@@ -2239,7 +2672,12 @@ def _cascade_key(r: Rule) -> tuple:
     rule (regardless of specificity) ahead of every UA rule
     (except !important, which still wins over author normal).
     """
-    spec_sum = sum(r.specificity)
+    # R7-C01 — specificity is compared COMPONENT-WISE (CSS Selectors
+    # 4 §16: (id, class, type) in that order), never summed.  The legacy
+    # key used ``sum(r.specificity)``, so ``#x`` → (0,1,0,0) → 1 LOST to
+    # ``.a.b`` → (0,0,2,0) → 2 — exactly the assessment's counter-example
+    # "``#x`` 被 ``.a.b`` 压过".  Comparing the tuple keeps an id ahead of
+    # any number of classes and a class ahead of any number of types.
     # P0 — author rules (specificity >= 0) always beat UA rules
     # (specificity >= 0) in the normal layer.  The legacy key's
     # first element was ``r.source == "author"`` which is True for
@@ -2248,7 +2686,40 @@ def _cascade_key(r: Rule) -> tuple:
     # concatenated UA CSS into the author CSS text before parsing,
     # so every rule got ``source="author"``.  The P0 fix in
     # browser.py parses the UA sheet separately with source="ua".
-    return (r.source == "author", r.important, spec_sum)
+    # R7-C01 — CSS Cascading 4 §6.6.1: the origin order is
+    #   normal:     UA < author
+    #   important:  author < UA   (the important layer reverses it)
+    # so the key sorts the important layer first (all !important beats all
+    # normal) and, inside it, puts UA ahead of author.  The legacy key
+    # ``(author, important, spec)`` let an author !important declaration
+    # beat a UA !important one.
+    if r.important:
+        origin_rank = 0 if r.source == "author" else 1
+    else:
+        origin_rank = 1 if r.source == "author" else 0
+    return (1 if r.important else 0, origin_rank, r.specificity)
+
+
+def _tag_key_of(part: str) -> str:
+    """R7-C01 — the tag name a compound simple-selector constrains.
+
+    ``input[type=text]`` → ``"input"``; ``div:not(.y)`` → ``"div"``;
+    ``p::before`` → ``"p"``; ``a.x#y`` → ``"a"``; ``.c`` → ``""`` (no tag
+    constraint → the rule is a wildcard candidate).  ``*`` is returned
+    verbatim for the universal selector.
+    """
+    import re as _re
+    part = part.strip()
+    if not part:
+        return ""
+    if part == "*":
+        return "*"
+    m = _re.match(r"^(?P<tag>[a-zA-Z][\w-]*)", part)
+    if m is None:
+        # No leading identifier (``.c``, ``#id``, ``[type=text]``,
+        # ``::before``) → no tag constraint.
+        return ""
+    return m.group("tag").lower()
 
 
 def _build_tag_rule_index(rules: list[Rule]) -> dict[str, list[int]]:
@@ -2273,7 +2744,15 @@ def _build_tag_rule_index(rules: list[Rule]) -> dict[str, list[int]]:
                 index.setdefault("*", []).append(i)
                 continue
             last = parts[-1].strip()
-            tag_part = last.split(".", 1)[0].split("#", 1)[0]
+            # R7-C01 — the rightmost part may be a *compound*:
+            # ``input[type=text]``, ``div:not(.y)``, ``p::before``,
+            # ``a.x#y`` …  Splitting on "." / "#" alone left ``"input[type"``
+            # as the tag key, so the rule was never a candidate for an
+            # <input> node: attribute / :not() / pseudo-element selectors
+            # silently matched nothing.  Peel the attribute brackets, the
+            # functional pseudo arguments and the pseudo-element marker
+            # before extracting the tag name.
+            tag_part = _tag_key_of(last)
             if tag_part:
                 index.setdefault(tag_part, []).append(i)
             else:

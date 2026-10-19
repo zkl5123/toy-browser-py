@@ -8,6 +8,13 @@ All new globals are *toys*: they implement the observable behaviour
 (keys, getters, event dispatch) but no real network / disk I/O.
 Memory governance (6 GB cap) is preserved by capping the localStorage
 quota at 5 MiB (a real browser's typical 5 MiB origin quota).
+
+R7-S01 — every object installed as a JS global declares an explicit
+capability table (readable / writable properties + callable methods)
+via ``js.register_host_object_policy``.  The interpreter's generic
+getattr/setattr fallbacks are gone: page script can no longer reach
+``localStorage.__class__``, ``location._host``, ``WebSocket._sent``
+or any other private host state — off-table names read as undefined.
 """
 from __future__ import annotations
 
@@ -514,3 +521,49 @@ def install_in_js_module(js_mod) -> None:
 
     js_mod.Host.__init__ = _new_init
     js_mod.Host._web_api_installed = True
+
+
+# ---------------------------------------------------------------------------
+# R7-S01 — capability tables for the globals installed above.
+#
+# Imported lazily to avoid a circular import at module load (js imports
+# web_api from Host.__init__).  Registration is idempotent and global;
+# the interpreter consults these tables on every property read / write
+# / method call against a host object.
+# ---------------------------------------------------------------------------
+
+def _install_web_api_policies() -> None:
+    from toy_browser.scripting import js as _js
+
+    P = _js._HostObjectPolicy
+    reg = _js.register_host_object_policy
+    reg(Storage, P(
+        read=("length",),
+        call=("getItem", "setItem", "removeItem", "clear", "key"),
+    ))
+    reg(ToyWebSocket, P(
+        read=("readyState", "url", "sent_messages"),
+        write=("onopen", "onmessage", "onclose", "onerror"),
+        call=("send", "close"),
+    ))
+    reg(ToyURL, P(
+        read=("href", "protocol", "host", "hostname", "port", "pathname",
+              "search", "hash", "origin", "searchParams"),
+        call=("toString",),
+    ))
+    reg(ToyURLSearchParams, P(
+        read=("size",),
+        call=("append", "get", "getAll", "has", "delete", "set",
+              "toString"),
+    ))
+    reg(ToyLocation, P(
+        # URL parts resolve through ToyLocation.__getattr__ → the same
+        # names as the legacy make_location dict.
+        read=("href", "protocol", "host", "hostname", "port", "pathname",
+              "search", "hash", "origin"),
+        write=("href",),  # href setter → assign() navigation task
+        call=("assign", "replace", "reload", "as_dict"),
+    ))
+
+
+_install_web_api_policies()

@@ -17,24 +17,43 @@ Architecture (refactored):
     summary and, with ``--report``, a per-module timing table.
     ``--verbose`` restores the per-test "ok <name>" stream.
 
+Result contract (R7-Q01, round-7 assessment):
+  Every enqueued test lands in exactly one of five states — PASS, FAIL,
+  ERROR, SKIP, TIMEOUT — and all five are counted in the summary
+  denominator:
+
+  * PASS    — the test function returned without raising.
+  * FAIL    — the test function raised (a genuine assertion failure).
+  * ERROR   — infrastructure failure (module import error, Tcl
+              subprocess crash / missing summary / timeout bookkeeping).
+  * SKIP    — the test raised ``skip_support.SkipTest(reason)``; the
+              environment cannot support it.  A SKIP is *never* a PASS.
+  * TIMEOUT — the Tcl-isolated subprocess exceeded its wall budget.
+
+  Import failures are ERROR results (and a non-zero exit), never a
+  silent shrink of the denominator.  An unknown or empty ``--only``
+  selection is a hard error.  ``--json PATH`` writes a machine-readable
+  report (per-test id / status / duration / detail + environment).
+
 Run:
     python test.py            # fast tier (default; 78 modules, ~50 s)
     python test.py --full     # full suite (all 1889 tests, ~7 min)
     python test.py --only test_css test_js   # run a subset of modules
     python test.py --verbose  # print every passing test
     python test.py --report   # also print the per-module timing table
-
-Every test function and its assertions are unchanged — only the
-*orchestration* (discovery, tiering, output) is reworked.
+    python test.py --json report.json        # machine-readable report
+    python test.py --junit report.xml         # JUnit XML report
 """
 from __future__ import annotations
 
 import importlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -43,6 +62,8 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "tools" / "benchmarks"))
 sys.path.insert(0, str(_ROOT / "tests"))
 os.chdir(_ROOT)
+
+from skip_support import SkipTest  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Expensive modules — the ones that dominate the wall clock.  Measured
@@ -55,8 +76,8 @@ os.chdir(_ROOT)
 #   test_p34_r4                   ~39 s (3000-node pipeline benchmark)
 #   test_gpu_glyph_atlas          ~27 s (wgpu glyph-atlas rasterisation)
 #   test_gpu_rasterize            ~12 s (wgpu texture upload / read-back)
-#   test_gpu_backend               ~7 s
-#   test_gpu_image_cache           ~4 s
+#   test_gpu_backend              ~7 s
+#   test_gpu_image_cache          ~4 s
 #   test_document_process_spawn    ~4 s (real multiprocessing spawn)
 # Together ~350 s when serial.  The *default* fast tier skips these so a
 # day-to-day logic regression finishes in ~50 s; ``--full`` includes them.
@@ -88,6 +109,25 @@ if "--only" in sys.argv:
 
 _REPORT = "--report" in sys.argv
 _VERBOSE = "--verbose" in sys.argv
+_JSON: str | None = None
+if "--json" in sys.argv:
+    _j = sys.argv.index("--json")
+    if _j + 1 < len(sys.argv) and not sys.argv[_j + 1].startswith("-"):
+        _JSON = sys.argv[_j + 1]
+_JUNIT: str | None = None
+if "--junit" in sys.argv:
+    _u = sys.argv.index("--junit")
+    if _u + 1 < len(sys.argv) and not sys.argv[_u + 1].startswith("-"):
+        _JUNIT = sys.argv[_u + 1]
+
+# Wall budget for a Tcl-isolated subprocess (R7-Q01: the legacy runner
+# had no timeout at all and swallowed the child's stderr).
+_TCL_TIMEOUT_S = 600.0
+
+# Result states (R7-Q01).  PASS/FAIL are per-test outcomes; ERROR is an
+# infrastructure failure; SKIP is an environment-gated non-run; TIMEOUT
+# is a subprocess wall-budget overrun.
+_PASS, _FAIL, _ERROR, _SKIP, _TIMEOUT = "PASS", "FAIL", "ERROR", "SKIP", "TIMEOUT"
 
 
 def _p_has_tests(path: Path) -> bool:
@@ -129,20 +169,29 @@ def _import_group(path: Path) -> tuple[str, list]:
 _TCL_ISOLATED: set[str] = {"test_tk_keyboard_binding"}
 
 
-def _run_tcl_isolated(mod_names: list[str]) -> tuple[int, int, list[tuple[str, str]]]:
-    """Run Tcl-sensitive modules in a clean subprocess; return (passed, enqueued, failures).
+def _run_tcl_isolated(mod_names: list[str]) -> dict:
+    """Run Tcl-sensitive modules in a clean subprocess.
+
+    Returns a result dict::
+
+        {"statuses": [(test_id, status, detail), …],
+         "stderr_path": str | None, "timed_out": bool}
 
     The subprocess boots a *fresh* Tcl interpreter, imports only the
     requested modules, runs their TESTS, and reports machine-parseable
-    lines on stdout.  Any stderr from the child (including harmless Tcl
-    warnings) is swallowed.  If the child crashes the module is marked
-    failed so the parent never reports a phantom pass.
+    JSON lines on stdout (one per test: PASS/FAIL/SKIP + reason) plus a
+    final summary line ``{"P": n, "F": n, "S": n, "enq": n}``.  R7-Q01:
+    the child has a wall-clock timeout, its stderr is preserved to a
+    file (never silently swallowed), and the summary must be present and
+    internally consistent (P + F + S == enq) or the whole group is an
+    ERROR — the parent never credits phantom passes.
     """
     py = sys.executable
     boot = (
         "import sys, importlib, json\n"
         f"for p in {json.dumps([str(_ROOT), str(_ROOT / 'tools' / 'benchmarks'), str(_ROOT / 'tests')])}:\n"
         "    sys.path.insert(0, p)\n"
+        "from skip_support import SkipTest\n"
         f"mods = {json.dumps(mod_names)}\n"
         "results = []\n"
         "enq = 0\n"
@@ -152,21 +201,53 @@ def _run_tcl_isolated(mod_names: list[str]) -> tuple[int, int, list[tuple[str, s
         "        enq += 1\n"
         "        try:\n"
         "            fn()\n"
-        "            results.append('P')\n"
+        "            results.append({'m': m, 'n': name, 'st': 'P'})\n"
+        "        except SkipTest as e:\n"
+        "            results.append({'m': m, 'n': name, 'st': 'S', 'd': str(e)})\n"
         "        except Exception as e:\n"
-        "            results.append('F')\n"
-        "            print(json.dumps({'m': m, 'n': name, 'e': repr(e)}))\n"
-        "print(json.dumps({'P': results.count('P'), 'enq': enq}))\n"
+        "            results.append({'m': m, 'n': name, 'st': 'F', 'd': repr(e)})\n"
+        "for r in results:\n"
+        "    print(json.dumps(r))\n"
+        "print(json.dumps({'summary': True, 'P': sum(1 for r in results if r['st'] == 'P'), "
+        "'F': sum(1 for r in results if r['st'] == 'F'), "
+        "'S': sum(1 for r in results if r['st'] == 'S'), 'enq': enq}))\n"
     )
-    proc = subprocess.run(
-        [py, "-c", boot],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    passed = 0
-    enqueued = 0
-    failures: list[tuple[str, str]] = []
+    stderr_path = os.path.join(
+        tempfile.gettempdir(),
+        f"toy_browser_tcl_isolated_{int(time.time())}.stderr.log")
+    timed_out = False
+    proc = None
+    try:
+        proc = subprocess.run(
+            [py, "-c", boot],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=_TCL_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        timed_out = True
+        out = (e.stdout or "") if isinstance(e.stdout, str) else ""
+        err = (e.stderr or "") if isinstance(e.stderr, str) else ""
+        with open(stderr_path, "w", encoding="utf-8") as fh:
+            fh.write("TCL-ISOLATED SUBPROCESS TIMEOUT "
+                     f"({_TCL_TIMEOUT_S}s)\n--- stdout ---\n{out}\n"
+                     f"--- stderr ---\n{err}\n")
+        return {
+            "statuses": [(f"tcl_isolated::{m}", _TIMEOUT,
+                          f"subprocess exceeded {_TCL_TIMEOUT_S}s wall budget")
+                         for m in mod_names],
+            "stderr_path": stderr_path,
+            "timed_out": True,
+        }
+
+    # Preserve the child's stderr for diagnostics (never swallow it).
+    with open(stderr_path, "w", encoding="utf-8") as fh:
+        fh.write(proc.stderr or "")
+    stderr_path = stderr_path if (proc.stderr or "").strip() else None
+
+    statuses: list[tuple[str, str, str]] = []
+    summary = None
     for line in proc.stdout.splitlines():
         line = line.strip()
         if not line or not line.startswith("{"):
@@ -175,20 +256,33 @@ def _run_tcl_isolated(mod_names: list[str]) -> tuple[int, int, list[tuple[str, s
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if "e" in rec:  # a single failure line
-            failures.append((f"{rec['m']}::{rec['n']}", rec["e"]))
-        elif "P" in rec:  # the summary line
-            passed = int(rec["P"])
-            enqueued = int(rec["enq"])
+        if rec.get("summary"):
+            summary = rec
+        elif "st" in rec:
+            statuses.append((f"{rec['m']}::{rec['n']}", rec["st"], rec.get("d", "")))
+
+    group_error = None
     if proc.returncode != 0:
-        # Child crashed / non-zero exit: don't credit phantom passes.
-        failures.append((
-            "tcl_isolated",
-            f"subprocess exit {proc.returncode}: "
-            f"{(proc.stderr or proc.stdout).strip()[:200]}",
-        ))
-        return 0, 0, failures
-    return passed, enqueued, failures
+        group_error = (f"subprocess exit {proc.returncode}"
+                       + (f"; stderr: {(proc.stderr or '').strip()[:200]}" if proc.stderr else ""))
+    elif summary is None:
+        group_error = "subprocess produced no valid summary line"
+    elif summary["P"] + summary["F"] + summary["S"] != summary["enq"]:
+        group_error = (f"inconsistent summary P+F+S={summary['P'] + summary['F'] + summary['S']} "
+                       f"!= enq={summary['enq']}")
+    elif len(statuses) != summary["enq"]:
+        group_error = (f"summary enq={summary['enq']} but {len(statuses)} "
+                       "per-test records reported")
+
+    if group_error is not None:
+        # Do not credit whatever partial records we saw: the group is an
+        # infrastructure ERROR (one entry per module, no phantom passes).
+        return {
+            "statuses": [(f"tcl_isolated::{m}", _ERROR, group_error) for m in mod_names],
+            "stderr_path": stderr_path,
+            "timed_out": False,
+        }
+    return {"statuses": statuses, "stderr_path": stderr_path, "timed_out": False}
 
 
 def main() -> int:
@@ -200,11 +294,16 @@ def main() -> int:
     names = [p.stem for p in paths]
 
     if _ONLY is not None:
-        run_names = [n for n in names if n in _ONLY]
-        skipped: list[str] = []
         unknown = sorted(_ONLY - set(names))
         if unknown:
-            print(f"  WARN: --only module(s) not found: {unknown}")
+            print(f"ERROR: --only module(s) not found: {unknown}")
+            print(f"       discovered modules: {len(names)}")
+            return 2
+        run_names = [n for n in names if n in _ONLY]
+        skipped: list[str] = []
+        if not run_names:
+            print("ERROR: --only selected no modules (empty selection set)")
+            return 2
     elif _FULL:
         run_names = list(names)
         skipped = []
@@ -223,18 +322,25 @@ def main() -> int:
     tcl_names = [n for n in run_names if n in _TCL_ISOLATED]
 
     groups: list[tuple[str, list]] = []
+    results: list[tuple[str, str, str, float]] = []  # (id, status, detail, ms)
+    import_errors: list[str] = []
     for name in inline_names:
         try:
             groups.append(_import_group(path_by_stem[name]))
         except Exception as e:  # noqa: BLENT0
-            print(f"  WARN: failed to import {name}: {e}")
+            # R7-Q01: an import failure is an ERROR result — never a
+            # silent shrink of the denominator followed by a "success".
+            import_errors.append(name)
+            results.append((f"module_import::{name}", _ERROR, repr(e), 0.0))
+            print(f"  ERROR: failed to import {name}: {e}")
 
     inline_enqueued = sum(len(t) for _, t in groups)
-    total_enqueued = inline_enqueued
     mode_label = "full" if _FULL else "fast"
     if _ONLY is not None:
         mode_label = f"only({','.join(sorted(_ONLY))})"
     extra = f", {len(tcl_names)} tcl-isolated module(s)" if tcl_names else ""
+    if import_errors:
+        extra += f", {len(import_errors)} module(s) failed to import"
     if not _FULL and _ONLY is None:
         print(
             f"[mode={mode_label}] "
@@ -247,8 +353,6 @@ def main() -> int:
             f"{inline_enqueued} in-process tests{extra}"
         )
 
-    passed = 0
-    failed: list[tuple[str, str]] = []
     module_times: list[tuple[float, str, int, int]] = []
     t_wall = time.time()
 
@@ -259,14 +363,23 @@ def main() -> int:
         t0 = time.time()
         mod_passed = 0
         for name, fn in tests:
+            tt = time.time()
             try:
                 fn()
                 mod_passed += 1
-                passed += 1
+                results.append((f"{mod_name}::{name}", _PASS, "", time.time() - tt))
                 if _VERBOSE:
                     print(f"  ok  [{mod_name}] {name}")
+            except SkipTest as e:
+                # R7-Q01: environment-gated non-run — an explicit SKIP,
+                # never a PASS.
+                results.append((f"{mod_name}::{name}", _SKIP,
+                                str(e) or "skipped", time.time() - tt))
+                if _VERBOSE:
+                    print(f"  skip[{mod_name}] {name}: {e}")
             except Exception as e:  # noqa: BLENT0
-                failed.append((f"{mod_name}::{name}", repr(e)))
+                results.append((f"{mod_name}::{name}", _FAIL, repr(e),
+                                time.time() - tt))
                 if _VERBOSE:
                     import traceback
                     print(f"  FAIL [{mod_name}] {name}: {e}")
@@ -278,20 +391,33 @@ def main() -> int:
     # 3b. Tcl-sensitive modules in a clean subprocess (fresh Tcl).
     # ------------------------------------------------------------------
     if tcl_names:
-        iso_passed, iso_enqueued, iso_failures = _run_tcl_isolated(tcl_names)
-        passed += iso_passed
-        total_enqueued += iso_enqueued
-        failed.extend(iso_failures)
-        module_times.append((time.time() - t_wall, "(tcl-isolated)",
-                             iso_passed, iso_enqueued))
+        t0 = time.time()
+        iso = _run_tcl_isolated(tcl_names)
+        results.extend((tid, st, detail, 0.0)
+                       for tid, st, detail in iso["statuses"])
+        iso_pass = sum(1 for _, st, _ in iso["statuses"] if st == _PASS)
+        iso_enq = len(iso["statuses"])
+        module_times.append((time.time() - t0, "(tcl-isolated)",
+                             iso_pass, iso_enq))
+        if iso["stderr_path"]:
+            print(f"  tcl-isolated child stderr saved to: {iso['stderr_path']}")
+        for tid, st, detail in iso["statuses"]:
+            if st != _PASS:
+                print(f"  {st} [{tid}]: {detail}")
 
     # ------------------------------------------------------------------
-    # 4. Summary.
+    # 4. Summary — every state is counted; nothing is silently dropped.
     # ------------------------------------------------------------------
     wall = time.time() - t_wall
+    counts = {_PASS: 0, _FAIL: 0, _ERROR: 0, _SKIP: 0, _TIMEOUT: 0}
+    for _tid, st, _d, _ms in results:
+        counts[st] = counts.get(st, 0) + 1
+    total = len(results)
     print(f"\n{'=' * 60}")
     print(
-        f"RESULT: {passed}/{total_enqueued} passed in {wall:.1f}s "
+        f"RESULT: {counts[_PASS]} passed, {counts[_FAIL]} failed, "
+        f"{counts[_ERROR]} errors, {counts[_SKIP]} skipped, "
+        f"{counts[_TIMEOUT]} timeouts (total {total}) in {wall:.1f}s "
         f"({len(groups)} modules, mode={mode_label})"
     )
     if skipped:
@@ -301,12 +427,107 @@ def main() -> int:
         for d, m, p, t in sorted(module_times, reverse=True):
             bar = "#" * int(d * 2)
             print(f"  {d:6.1f}s  {m:32s} {p:4d}/{t:<4d} {bar}")
-    if failed:
-        print(f"FAILED ({len(failed)}):")
-        for n, e in failed:
-            print(f"  - {n}: {e}")
-        return 1
-    return 0
+
+    problems = [r for r in results if r[1] != _PASS and r[1] != _SKIP]
+    if problems:
+        print(f"FAILED ({len(problems)}):")
+        for tid, st, detail, _ms in problems:
+            print(f"  - {st} [{tid}]: {detail[:300]}")
+    elif counts[_SKIP]:
+        print(f"NOTE: {counts[_SKIP]} test(s) SKIPped (environment); "
+              "skips are not passes.")
+
+    if _JSON:
+        report = {
+            "mode": mode_label,
+            "environment": {
+                "python": sys.version,
+                "platform": platform.platform(),
+                "executable": sys.executable,
+                "tkinter": _env_has_tk(),
+            },
+            "counts": counts,
+            "total": total,
+            "duration_s": round(wall, 3),
+            "tests": [
+                {"id": tid, "status": st, "detail": detail,
+                 "duration_ms": round(ms * 1000, 3)}
+                for tid, st, detail, ms in results
+            ],
+        }
+        try:
+            Path(_JSON).write_text(json.dumps(report, indent=2,
+                                              ensure_ascii=False),
+                                   encoding="utf-8")
+            print(f"machine-readable report written to {_JSON}")
+        except OSError as e:
+            print(f"WARN: could not write JSON report: {e}")
+
+    if _JUNIT:
+        _write_junit(_JUNIT, mode_label, results, counts, wall)
+
+    # SKIP alone does not fail the run (the environment simply lacks a
+    # capability); FAIL / ERROR / TIMEOUT do.
+    return 1 if problems else 0
+
+
+def _xml_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _write_junit(path: str, mode: str,
+                 results: list[tuple[str, str, str, float]],
+                 counts: dict, wall: float) -> None:
+    """R7-Q01 — JUnit XML report (CI-friendly machine-readable output).
+
+    Status mapping: PASS→passed; FAIL/ERROR/TIMEOUT→failure (ERROR and
+    TIMEOUT additionally carry a distinguishing ``type``); SKIP→skipped
+    with the reason as the message.
+    """
+    suite_name = f"toy-browser-py-{mode}"
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        f'<testsuite name="{_xml_escape(suite_name)}" '
+        f'tests="{len(results)}" failures="{counts[_FAIL]}" '
+        f'errors="{counts[_ERROR] + counts[_TIMEOUT]}" '
+        f'skipped="{counts[_SKIP]}" time="{wall:.3f}">',
+    ]
+    for tid, st, detail, ms in results:
+        name = tid.split("::", 1)[-1] if "::" in tid else tid
+        classname = tid.split("::", 1)[0] if "::" in tid else tid
+        t = f"{ms:.3f}"
+        if st == _PASS:
+            lines.append(f'  <testcase name="{_xml_escape(name)}" '
+                         f'classname="{_xml_escape(classname)}" time="{t}"/>')
+        elif st == _SKIP:
+            lines.append(
+                f'  <testcase name="{_xml_escape(name)}" '
+                f'classname="{_xml_escape(classname)}" time="{t}">'
+                f'<skipped message="{_xml_escape(detail[:300])}"/>'
+                f'</testcase>')
+        else:
+            kind = "error" if st in (_ERROR, _TIMEOUT) else "failure"
+            lines.append(
+                f'  <testcase name="{_xml_escape(name)}" '
+                f'classname="{_xml_escape(classname)}" time="{t}">'
+                f'<{kind} message="{_xml_escape(detail[:300])}" '
+                f'type="{st}">{_xml_escape(detail)}</{kind}>'
+                f'</testcase>')
+    lines.append("</testsuite>")
+    try:
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"JUnit XML report written to {path}")
+    except OSError as e:
+        print(f"WARN: could not write JUnit report: {e}")
+
+
+def _env_has_tk() -> bool:
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":

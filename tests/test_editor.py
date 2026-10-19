@@ -197,7 +197,9 @@ def test_g03_script_change_sync_editing():
     e2.sync_from_dom("ZZ")  # 脚本覆盖组合区外（示例：同段）
     # 组合区 (2, 4) 替换为 ZZ
     assert e2.value == "ab" + "ZZ"
-    assert not e2.is_composing or True
+    # R7-Q01 — 真实契约：组合进行中 sync_from_dom 保留组合态并更新组合区
+    assert e2.is_composing
+    assert e2.composition_range == (2, 4)
 
 
 def test_g03_paste_replaces_selection():
