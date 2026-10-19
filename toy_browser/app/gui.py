@@ -100,6 +100,19 @@ class PageInstance:
         self.active_form_field: int | None = None  # index of the active input
         self._form_states: dict[int, dict] = {}  # index → {value, checked}
         self._interaction_state: dict = {}
+        # R7-U01 (G06) — unified coordinate transform for the hit tree.
+        # 审计实施方案 R7-U01 第 3 点："resize/scroll/zoom/DPR 使用统一
+        # 坐标变换，命中测试应用逆变换；验收 150%/200% 缩放点击位置
+        # 正确"。此前 hit_test_at 只用裸 ``y + yoffset``（纯垂直滚动），
+        # 没把 zoom / device_scale 接进命中坐标——150%/200% 缩放下
+        # 点同一物理位置会落到错误的 CSS 坐标。这里给页面挂一个
+        # :class:`ViewportState`，命中坐标经它的 ``logical_to_css``
+        # （(ui - 0) / (zoom·dpr) + scroll）转回 CSS 文档坐标；默认
+        # zoom=1.0 / device_scale=1.0，此时 ``logical_to_css`` 退化为
+        # ``ui + scroll``，与旧的 ``y + yoffset`` 行为完全一致（向后
+        # 兼容，未启用缩放/DPI 的现有路径不变）。
+        from toy_browser.app.viewport import ViewportState
+        self._viewport = ViewportState()
         # P0 (assessment report) — the script-executed DOM tree and the
         # shared JS Host: when set (HTTP / script-running loads), re-render
         # paths must reuse them instead of re-parsing the source HTML
@@ -216,11 +229,36 @@ class PageInstance:
         """
         max_off = max(0, self.content_height - self.height)
         self.yoffset = max(0, min(int(yoffset), max_off))
+        # R7-U01 (G06) — keep the unified coordinate transform in sync
+        # with the scroll offset so hit_test_at's logical_to_css uses
+        # the current scroll (审计: "命中测试应用逆变换").
+        self._viewport.scroll_y = self.yoffset
+        self._viewport.scroll_x = 0
         self._reclip()
 
     def scroll_by(self, dy: int) -> None:
         """P33.R2 — relative scroll (the GUI's MouseWheel handler)."""
         self.scroll_to(self.yoffset + int(dy))
+
+    def set_zoom(self, zoom: float) -> None:
+        """R7-U01 (G06) — set the page zoom so the hit-test inverse
+        transform (``logical_to_css``) scales UI pixels to CSS document
+        coordinates correctly.
+
+        The audit's acceptance ("150%/200% 缩放点击位置正确") requires
+        the zoom to feed the hit-test coordinate inverse transform.  A
+        re-layout is *not* performed here (调用方在需要时经
+        :meth:`render` 重排)；本方法只更新缩放状态并夹紧滚动到新的
+        可滚范围（G06 step 4: 尺寸 / zoom 变化 → 夹紧滚动）。
+        """
+        zoom = max(0.1, min(4.0, float(zoom)))
+        self._viewport.page_zoom = zoom
+        # 夹紧滚动到新的可滚范围（文档内容不变，只有视口 CSS 尺寸变）。
+        # 直接夹紧 + 同步 _viewport，不经 scroll_to（避免 _reclip 副作用）。
+        max_off = max(0, self.content_height - self.height)
+        self.yoffset = max(0, min(int(self.yoffset), max_off))
+        self._viewport.scroll_y = self.yoffset
+        self._viewport.scroll_x = 0
 
     def scroll_max(self) -> int:
         """P33.R2 — the largest valid :attr:`yoffset`."""
@@ -505,14 +543,29 @@ class PageInstance:
     def hit_test_at(self, x: int, y: int) -> int | None:
         """P33.P1 — hit-test at viewport coordinates (x, y), returning
         the DOM node index of the topmost element under the cursor,
-        or ``None`` when nothing is hit.  Accounts for the current
-        scroll offset (y + yoffset in document coordinates)."""
+        or ``None`` when nothing is hit.  Coordinates are converted to
+        CSS document space via the unified :class:`ViewportState`
+        inverse transform (R7-U01 / G06): ``logical_to_css`` divides by
+        ``zoom × device_scale`` and adds the scroll offset.  When the
+        page is at 100% with no DPI scaling this degrades exactly to
+        the legacy ``y + yoffset`` behaviour, so existing 100%-zoom
+        callers are unaffected."""
         from toy_browser.layout import layout as _layout_mod
         root = getattr(self, "_layout_root", None)
         if root is None:
             return None
-        doc_y = y + self.yoffset
-        hit = _layout_mod.hit_test(root, float(x), float(doc_y))
+        # R7-U01 (G06) — unified coordinate inverse transform.  The
+        # click coordinates come in as Tk *logical* UI pixels; convert
+        # them to CSS document coordinates (the space the layout boxes
+        # live in) so a hit at the same physical point resolves to the
+        # same element at any zoom / DPI.  Falls back to the legacy
+        # ``y + yoffset`` when no ``_viewport`` exists (pre-G06 state).
+        vp = getattr(self, "_viewport", None)
+        if vp is not None:
+            doc_x, doc_y = vp.logical_to_css(float(x), float(y))
+        else:
+            doc_x, doc_y = float(x), float(y) + self.yoffset
+        hit = _layout_mod.hit_test(root, float(doc_x), float(doc_y))
         if hit is None or hit.dom is None:
             return None
         # R7-U01 — build the index map (DOM node → element-order index).
@@ -2148,12 +2201,24 @@ class TabBrowser:
         elif action in ("edit",):
             # 编辑层（G03 批次 39）：有活动编辑覆盖层时，可打印字符
             # / Backspace / Delete / Enter 路由到覆盖层编辑。
+            # R7-U02 — IME 组合路由：中文输入法在 Tk 下发可打印字符
+            # 时若组合进行中（state.is_composing），走 ime-update
+            # （组合区内替换拼音，不派发 input）而非 insert-text；
+            # 组合外的可打印字符仍走 insert-text（向后兼容）。
             ov = getattr(self, "_g03_overlay", None)
             if ov is not None and ov.active:
                 key = getattr(event, "keysym", "")
                 ch = getattr(event, "char", "")
+                st = ov.state
+                composing = bool(st and st.is_composing)
                 if ch and key not in ("BackSpace", "Delete", "Return"):
-                    self._g03_dispatch("insert-text", ch)
+                    if composing:
+                        # 组合进行中：可打印字符是拼音/候选中间态，
+                        # 走 ime-update（mark 用当前 caret）。
+                        self._g03_dispatch("ime-update", ch,
+                                           st.caret if st else 0)
+                    else:
+                        self._g03_dispatch("insert-text", ch)
                 elif key == "BackSpace":
                     self._g03_dispatch("delete-backward")
                 elif key == "Delete":
