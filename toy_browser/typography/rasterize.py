@@ -101,12 +101,94 @@ def _contour_to_points(pts, scale, origin_x, origin_y, flip_y=True):
 
 
 # ---------------------------------------------------------------------------
+# T01 — multi-contour flattening (outer boundary + holes)
+# ---------------------------------------------------------------------------
+
+def _flatten_contour(pts, scale, origin_x, origin_y, flip_y=True):
+    """T01 — flatten a single TTF contour (list of (x, y, on_curve))
+    into a pixel-space polygon.  Same off-curve midpoint rule as
+    :func:`_contour_to_points`, but the wrapping closure uses this
+    contour's own first point instead of the merged flat list's.
+    """
+    if not pts:
+        return []
+    n = len(pts)
+    poly: list = []
+    i = 0
+    while i < n:
+        x, y, on_curve = pts[i]
+        if on_curve:
+            poly.append((x, y))
+            i += 1
+        else:
+            run = []
+            while i < n and not pts[i][2]:
+                run.append((pts[i][0], pts[i][1]))
+                i += 1
+            for k in range(len(run) - 1):
+                poly.append(((run[k][0] + run[k + 1][0]) / 2.0,
+                             (run[k][1] + run[k + 1][1]) / 2.0))
+            if run:
+                next_pt = pts[i] if i < n else pts[0]
+                poly.append(((run[-1][0] + next_pt[0]) / 2.0,
+                              (run[-1][1] + next_pt[1]) / 2.0))
+    if not poly:
+        return []
+    result: list = []
+    for px, py in poly:
+        fx = origin_x + px * scale
+        fy = origin_y - py * scale if flip_y else origin_y + py * scale
+        result.append((fx, fy))
+    return result
+
+
+def _flatten_outline(outline, scale, origin_x, origin_y, flip_y=True):
+    """T01 — flatten all contours of a :class:`GlyphOutline` into a
+    list of pixel-space polygons (one per TTF contour).
+
+    If ``outline.contours`` is present (new parser), each inner list
+    is flattened independently so the even-odd rule can distinguish
+    outer boundaries from holes.  Otherwise the legacy flat
+    ``outline.points`` is treated as a single contour (backward
+    compatible with old outline objects).
+    """
+    if outline is None:
+        return []
+    if getattr(outline, "contours", None):
+        polys = []
+        for c in outline.contours:
+            p = _flatten_contour(c, scale, origin_x, origin_y, flip_y)
+            if p:
+                polys.append(p)
+        return polys
+    pts = outline.points
+    if not pts:
+        return []
+    p = _flatten_contour(list(pts), scale, origin_x, origin_y, flip_y)
+    return [p] if p else []
+
+
+def _dilate_polys(polys: list, radius: float) -> list:
+    """T01 — dilate every polygon in *polys* independently (so a
+    hole's dilation stays inside its outer boundary's dilation)."""
+    if radius <= 0:
+        return list(polys)
+    return [_dilate_poly(p, radius) for p in polys if len(p) >= 3]
+
+
+# ---------------------------------------------------------------------------
 # P20.2 — scanline fill with 2× coverage antialiasing
 # ---------------------------------------------------------------------------
 
-def _fill_polygon(bmp: Bitmap, polygon: list, color: Color,
+def _fill_polygon(bmp: Bitmap, polygon, color: Color,
                  antialias: bool = True) -> None:
-    """Even-odd scanline fill of *polygon* into *bmp*.
+    """T01 — even-odd scanline fill into *bmp*.
+
+    *polygon* may be either a legacy flat list of ``(x, y)`` vertices
+    (single contour) or a T01 list of contours (a list of lists, each
+    an ``(x, y)`` vertex list).  All contours' edges are merged before
+    the even-odd scanline pass, so a glyph's outer boundary and holes
+    cancel correctly.
 
     ``antialias`` (P20.5): True → sample at 2× resolution (each output
     pixel subdivided into four ½×½ sub-squares; coverage 0..4 →
@@ -114,10 +196,15 @@ def _fill_polygon(bmp: Bitmap, polygon: list, color: Color,
     centre (coverage is a hard 0/1), which is faster but produces aliased
     edges.  Used for the ``text-rendering: optimizeSpeed`` hint.
     """
-    if len(polygon) < 3:
+    # T01 — accept either a flat polygon or a list of contours.
+    if polygon and isinstance(polygon[0], list):
+        merged = [p for c in polygon for p in c]
+    else:
+        merged = list(polygon)
+    if len(merged) < 3:
         return
-    xs = [p[0] for p in polygon]
-    ys = [p[1] for p in polygon]
+    xs = [p[0] for p in merged]
+    ys = [p[1] for p in merged]
     x_min = max(0, int(math.floor(min(xs))))
     x_max = min(bmp.width, int(math.ceil(max(xs))) + 1)
     y_min = max(0, int(math.floor(min(ys))))
@@ -125,15 +212,15 @@ def _fill_polygon(bmp: Bitmap, polygon: list, color: Color,
     if x_max <= x_min or y_max <= y_min:
         return
 
-    n = len(polygon)
+    n = len(merged)
     if not antialias:
         # P20.5 — hard-edged single-sample fill (optimizeSpeed).
         for py in range(y_min, y_max):
             sample_y = py + 0.5
             crossings: list = []
             for i in range(n):
-                x1, y1 = polygon[i]
-                x2, y2 = polygon[(i + 1) % n]
+                x1, y1 = merged[i]
+                x2, y2 = merged[(i + 1) % n]
                 if (y1 <= sample_y < y2) or (y2 <= sample_y < y1):
                     t = (sample_y - y1) / (y2 - y1)
                     crossings.append(x1 + t * (x2 - x1))
@@ -167,8 +254,8 @@ def _fill_polygon(bmp: Bitmap, polygon: list, color: Color,
         crossings_lo: list = []  # at y = py + 0.25
         crossings_hi: list = []  # at y = py + 0.75
         for i in range(n):
-            x1, y1 = polygon[i]
-            x2, y2 = polygon[(i + 1) % n]
+            x1, y1 = merged[i]
+            x2, y2 = merged[(i + 1) % n]
             ylo = py + 0.25
             yhi = py + 0.75
             if (y1 <= ylo < y2) or (y2 <= ylo < y1):
@@ -267,17 +354,18 @@ def draw_glyph_curves(
     """
     if outline is None or outline.is_empty or not outline.points:
         return 0
-    poly = _contour_to_points(list(outline.points), scale, origin_x, origin_y, flip_y=True)
-    if len(poly) < 3:
+    polys = _flatten_outline(outline, scale, origin_x, origin_y, flip_y=True)
+    all_pts = [p for poly in polys for p in poly]
+    if len(all_pts) < 3:
         return 0
-    # P20.3 — synthetic bold: dilate the polygon in pixel space.
+    # P20.3 — synthetic bold: dilate each polygon in pixel space
+    # (per-contour so a hole's dilation stays inside its outer
+    # boundary's dilation).
     if weight > 1.0:
-        # Dilation radius scales with the font size (in pixels) so that
-        # bold is visible at both small and large point sizes.
         dilate_px = max(1.0, (weight - 1.0) * (scale * 2048.0) * 0.15)
-        poly = _dilate_poly(poly, dilate_px)
-    _fill_polygon(bmp, poly, color, antialias=antialias)
-    return len(poly)
+        polys = _dilate_polys(polys, dilate_px)
+    _fill_polygon(bmp, polys, color, antialias=antialias)
+    return sum(len(p) for p in polys)
 
 
 def glyph_bbox(outline, scale: float):
@@ -290,13 +378,16 @@ def glyph_bbox(outline, scale: float):
     """
     if outline is None or outline.is_empty or not outline.points:
         return None
-    xs = [p[0] * scale for p in outline.points]
-    ys = [p[1] * scale for p in outline.points]
+    pts = outline.flat()
+    xs = [p[0] * scale for p in pts]
+    ys = [p[1] * scale for p in pts]
     return (min(xs), min(ys), max(xs), max(ys))
 
 
 def rasterize_glyph_mask(outline, scale: float, weight: float = 1.0,
-                         antialias: bool = True) -> "GlyphMask | None":
+                         antialias: bool = True,
+                         left_side_bearing_px: float = 0.0,
+                         ascent_px: float = 0.0) -> "GlyphMask | None":
     """P33.R1 — rasterize one glyph outline into a standalone 8-bit
     *coverage mask* that can be cached and OR-blended onto a 32-bit
     pixel buffer.
@@ -304,18 +395,34 @@ def rasterize_glyph_mask(outline, scale: float, weight: float = 1.0,
     The mask coordinates are in **unflipped** font-pixel space (origin
     = glyph bbox top-left, y up).  Returns a :class:`GlyphMask`, or
     ``None`` when the outline is empty / malformed.
+
+    T02 — *left_side_bearing_px* and *ascent_px* (both in pixels, from
+    the resolved face's hmtx / hhea scaled to the requested font size)
+    are used to anchor the mask's top-left to the glyph's
+    baseline-left origin: ``bitmap_left`` is the hmtx left-side-bearing
+    (the mask's left column sits that many pixels right of the pen),
+    and ``bitmap_top`` is the face's ascent (the mask's top row sits
+    that many pixels above the baseline).  Without these two values
+    the legacy ``baseline - mask.h`` placement assumed the ink always
+    fills the entire ascent, which is wrong for letters with short
+    ascenders (e.g. 'x') and for glyphs with a non-zero left-side
+    bearing (e.g. most italic or bold variants).
     """
     if outline is None or outline.is_empty or not outline.points:
         return None
-    poly = _contour_to_points(list(outline.points), scale, 0.0, 0.0,
-                              flip_y=False)
-    if len(poly) < 3:
+    polys = _flatten_outline(outline, scale, 0.0, 0.0, flip_y=False)
+    if not polys:
+        return None
+    # Collect all vertices for the bbox.
+    all_pts = [p for poly in polys for p in poly]
+    if len(all_pts) < 3:
         return None
     if weight > 1.0:
         dilate_px = max(1.0, (weight - 1.0) * (scale * 2048.0) * 0.15)
-        poly = _dilate_poly(poly, dilate_px)
-    xs = [p[0] for p in poly]
-    ys = [p[1] for p in poly]
+        polys = _dilate_polys(polys, dilate_px)
+        all_pts = [p for poly in polys for p in poly]
+    xs = [p[0] for p in all_pts]
+    ys = [p[1] for p in all_pts]
     x0 = int(math.floor(min(xs)))
     y0 = int(math.floor(min(ys)))
     x1 = int(math.ceil(max(xs)))
@@ -324,10 +431,34 @@ def rasterize_glyph_mask(outline, scale: float, weight: float = 1.0,
     h = y1 - y0 + 1
     if w <= 0 or h <= 0 or w > 2048 or h > 2048:
         return None
-    # Shift the polygon so the mask origin is its top-left in *flipped*
+    # Shift the polygons so the mask origin is its top-left in *flipped*
     # space: a font point (fx, fy) lands at pixel (fx - x0, h - 1 - (fy - y0)).
-    shifted = [(px - x0, h - 1 - (py - y0)) for (px, py) in poly]
-    mask = GlyphMask(w, h)
+    # T01 — shift each contour independently, then pass the list of
+    # contours to _fill_polygon_mask which merges them for even-odd.
+    shifted = [[(px - x0, h - 1 - (py - y0)) for (px, py) in c] for c in polys]
+    # T02 — anchor the mask to the face's hmtx metrics: the left column
+    # sits ``left_side_bearing_px`` to the right of the pen, and the top
+    # row sits ``ascent_px`` above the baseline.
+    #
+    # *left_side_bearing_px* is the hmtx LSB scaled to pixels: it is
+    # the *ink* offset of the glyph's leftmost point relative to the
+    # pen.  The mask's left column (x0 in font units, the ink's leftmost
+    # pixel) corresponds to that LSB in pixel space, so the blit's
+    # origin lands exactly at ``pen_x + LSB_px``.
+    #
+    # *ascent_px* is the face's hhea ascent scaled to pixels: the mask's
+    # top row (y1 in font units, the ink's topmost pixel) corresponds to
+    # the face's ascent, so the blit's top row lands at
+    # ``baseline_y - ascent_px``.  This is the T02 "anchor to the face's
+    # vertical metrics" fix — the legacy ``baseline - mask.h`` used the
+    # *ink* height instead of the face's ascent, which mis-placed any
+    # glyph whose ink does not fill the entire em box (the common case
+    # for x-height letters like 'x', 'n', 'o').
+    bitmap_left = int(round(left_side_bearing_px)) if left_side_bearing_px else 0
+    bitmap_top = int(round(ascent_px)) if ascent_px else 0
+    mask = GlyphMask(w, h,
+                     bitmap_left=bitmap_left,
+                     bitmap_top=bitmap_top)
     _fill_polygon_mask(mask, shifted, antialias=antialias)
     return mask
 
@@ -349,12 +480,30 @@ class GlyphMask:
     dense CJK glyph this is a small win (~1 blank row skipped per
     mask); the big win for CJK is the P34.2 mask cache — without it the
     per-occurrence cost was a full ~3 ms curve fill, not a blit.
-    """
-    __slots__ = ("w", "h", "rows", "ink_rows")
 
-    def __init__(self, w: int, h: int):
+    T02 — ``bitmap_left`` / ``bitmap_top`` record the mask's offset
+    from the *glyph's baseline-left origin* (the pen position where the
+    baseline row meets the advance origin).  ``bitmap_top`` is the
+    vertical distance from the baseline up to the mask's top row (so
+    the blit's top row lands at ``baseline_y - bitmap_top``);
+    ``bitmap_left`` is the horizontal offset of the mask's left column
+    relative to the pen (so the blit's left column lands at
+    ``pen_x + bitmap_left``).  Both are computed by
+    :func:`rasterize_glyph_mask` from the outline's vertex bbox and the
+    face's hmtx left-side-bearing: when the face is available the mask
+    is anchored to the real hmtx advance/LSB, which makes a glyph's
+    ink start exactly where the pen is, even for negative-LSB glyphs
+    (where the ink protrudes to the left of the pen).
+    """
+    __slots__ = ("w", "h", "rows", "ink_rows",
+                 "bitmap_left", "bitmap_top")
+
+    def __init__(self, w: int, h: int,
+                 bitmap_left: int = 0, bitmap_top: int = 0):
         self.w = w
         self.h = h
+        self.bitmap_left = bitmap_left
+        self.bitmap_top = bitmap_top
         self.rows = [bytearray(w) for _ in range(h)]
         self.ink_rows = None  # lazily computed by compute_ink_rows()
 
@@ -410,8 +559,42 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
     while a semi-transparent color still blends per-channel.
     """
     w, h = mask.w, mask.h
-    x0 = origin_x
-    y0 = origin_y - h
+    # T02 — the mask's top-left is anchored to the face's hmtx
+    # left-side-bearing and vertical ascent, NOT to the pen's baseline
+    # minus the ink height.  The legacy ``y0 = origin_y - h`` assumed
+    # the ink always fills the entire ascent, which is wrong for
+    # x-height letters (e.g. 'x') and for glyphs with a non-zero
+    # left-side-bearing (e.g. italic / bold variants).  The corrected
+    # placement:
+    #   x0 = origin_x + bitmap_left   (the ink's left column sits
+    #       ``bitmap_left`` pixels right of the pen's advance origin)
+    #   y0 = origin_y - bitmap_top    (the ink's top row sits
+    #       ``bitmap_top`` pixels above the baseline)
+    #
+    # For legacy masks (``bitmap_left == 0`` and ``bitmap_top == 0``)
+    # the placement degenerates to the old ``origin_x, origin_y - h``
+    # only when the caller still passes the legacy baseline (the
+    # ``h + top`` row).  New callers (``text.draw_text``) now pass the
+    # *line's* top, not the baseline, so the legacy fallback is the
+    # top-anchored placement: the mask's top row lands at
+    # ``origin_y - bitmap_top`` where ``origin_y`` is the line's top
+    # in screen space.
+    x0 = origin_x + getattr(mask, "bitmap_left", 0)
+    top = getattr(mask, "bitmap_top", 0)
+    # Legacy fallback: when the caller has not updated to pass a
+    # top-anchored origin (i.e. it still passes the baseline as
+    # origin_y), use the old ``origin_y - h`` placement so the mask's
+    # top row still lands at the baseline minus the ink height.
+    # We detect this by checking whether the mask's bitmap_top was
+    # populated (a legacy mask has bitmap_top == 0); when it is 0 and
+    # the ink height h is positive, the caller is on the legacy path
+    # and we keep the old ``origin_y - h``.  When bitmap_top is set
+    # (the T02 path), the caller is passing a top-anchored origin and
+    # we use ``origin_y - top``.
+    if top:
+        y0 = origin_y - top
+    else:
+        y0 = origin_y - h
     bw = bmp.width
     bh = bmp.height
     pixels = bmp.pixels
@@ -524,33 +707,42 @@ def blit_glyph_mask(bmp: Bitmap, mask: "GlyphMask",
             pixels[idx] = (mr << 16) | (mg << 8) | mb
 
 
-def _fill_polygon_mask(mask: "GlyphMask", polygon: list,
+def _fill_polygon_mask(mask: "GlyphMask", polygon,
                        antialias: bool = True) -> None:
-    """P33.R1 — even-odd scanline fill of *polygon* (pixel space, y
+    """P33.R1 / T01 — even-odd scanline fill of *polygon* (pixel space, y
     down, relative to the mask origin) into an 8-bit coverage mask.
+
+    *polygon* may be a legacy flat list of ``(x, y)`` vertices or a T01
+    list of contours (list of lists); all contours are merged before the
+    even-odd scanline so outer boundaries and holes cancel correctly.
 
     Mirrors :func:`_fill_polygon` but writes coverage bytes instead of
     blending into a colored bitmap.
     """
-    if len(polygon) < 3:
+    # T01 — accept either a flat polygon or a list of contours.
+    if polygon and isinstance(polygon[0], list):
+        merged = [p for c in polygon for p in c]
+    else:
+        merged = list(polygon)
+    if len(merged) < 3:
         return
     w, h = mask.w, mask.h
-    xs = [p[0] for p in polygon]
-    ys = [p[1] for p in polygon]
+    xs = [p[0] for p in merged]
+    ys = [p[1] for p in merged]
     x_min = max(0, int(math.floor(min(xs))))
     x_max = min(w, int(math.ceil(max(xs))) + 1)
     y_min = max(0, int(math.floor(min(ys))))
     y_max = min(h, int(math.ceil(max(ys))) + 1)
     if x_max <= x_min or y_max <= y_min:
         return
-    n = len(polygon)
+    n = len(merged)
     if not antialias:
         for py in range(y_min, y_max):
             sample_y = py + 0.5
             crossings: list = []
             for i in range(n):
-                x1, y1 = polygon[i]
-                x2, y2 = polygon[(i + 1) % n]
+                x1, y1 = merged[i]
+                x2, y2 = merged[(i + 1) % n]
                 if (y1 <= sample_y < y2) or (y2 <= sample_y < y1):
                     t = (sample_y - y1) / (y2 - y1)
                     crossings.append(x1 + t * (x2 - x1))
@@ -572,8 +764,8 @@ def _fill_polygon_mask(mask: "GlyphMask", polygon: list,
         for sub, sub_y in ((0, py + 0.25), (1, py + 0.75)):
             crossings: list = []
             for i in range(n):
-                x1, y1 = polygon[i]
-                x2, y2 = polygon[(i + 1) % n]
+                x1, y1 = merged[i]
+                x2, y2 = merged[(i + 1) % n]
                 if (y1 <= sub_y < y2) or (y2 <= sub_y < y1):
                     t = (sub_y - y1) / (y2 - y1)
                     crossings.append(x1 + t * (x2 - x1))
@@ -632,6 +824,78 @@ def _dilate_poly(poly: list, radius: float) -> list:
             continue
         out.append((x + (dx / d) * radius, y + (dy / d) * radius))
     return out
+
+
+# ---------------------------------------------------------------------------
+# P06 / R7-T01 — bridge a real-TTF coverage mask to a square RGBA8 buffer
+# (GPU glyph atlas consumes square cell buffers; this adapts the CPU
+# coverage mask into that shape without re-rasterising the outline).
+# ---------------------------------------------------------------------------
+
+def rasterize_ttf_glyph_rgba(ch: str, face, font_px: float,
+                             weight: float = 1.0,
+                             pad_to: int = 0,
+                             antialias: bool = True) -> "bytes | None":
+    """Rasterise *ch* from a real TTF face into an RGBA8 buffer.
+
+    Produces the *same* coverage a real-TTF glyph mask gives on the CPU
+    path, packed into an ``R=G=B=255 / A=coverage`` 4-byte-per-pixel
+    ``size*size`` buffer so it can be uploaded to a GPU glyph atlas cell
+    directly.  ``size`` is ``round(font_px)`` by default; when *pad_to*
+    is positive the buffer is clipped/padded to ``pad_to x pad_to``
+    (atlas cells are square).
+
+    Returns ``None`` when the face is missing, the glyph has no outline
+    (e.g. a space / unmapped code point), or the rasteriser produced no
+    ink — callers fall back to the built-in bitmap font.
+    """
+    if face is None:
+        return None
+    from toy_browser.typography import font as _font_mod
+
+    face = _font_mod.resolve_metrics_for_char(ch, face)
+    if face is None or not getattr(face, "units_per_em", 0):
+        return None
+    scale = font_px / face.units_per_em
+    outline = face.glyph_outline(ch)
+    if outline is None or outline.is_empty:
+        return None
+    # hmtx / hhea anchoring (T02): the mask's top-left sits at the
+    # glyph's baseline-left origin, so the coverage lands in the same
+    # box a normal text blit would use — no legacy ``- ink_h`` drift.
+    code = ord(ch)
+    gid = face.cmap.get(code, 0) if hasattr(face, "cmap") else 0
+    lsb_units = 0
+    lsb_list = getattr(face, "left_side_bearings", None)
+    if lsb_list and gid < len(lsb_list):
+        lsb_units = lsb_list[gid]
+    lsb_px = lsb_units * scale
+    ascent_px = face.ascent * scale
+    mask = rasterize_glyph_mask(outline, scale, weight=weight,
+                                antialias=antialias,
+                                left_side_bearing_px=lsb_px,
+                                ascent_px=ascent_px)
+    if mask is None:
+        return None
+    gh, gw = mask.h, mask.w
+    size = max(1, int(round(font_px)))
+    if pad_to and pad_to > 0:
+        size = max(1, min(size, int(pad_to)))
+        gw, gh = min(gw, size), min(gh, size)
+    out = bytearray(size * size * 4)
+    for ry in range(gh):
+        row = mask.rows[ry]
+        base = (ry * size) * 4
+        for rx in range(gw):
+            cov = row[rx]
+            if not cov:
+                continue
+            j = base + rx * 4
+            out[j] = 255
+            out[j + 1] = 255
+            out[j + 2] = 255
+            out[j + 3] = cov
+    return bytes(out)
 
 
 # ---------------------------------------------------------------------------

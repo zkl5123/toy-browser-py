@@ -41,19 +41,35 @@ class GlyphHeader:
 class GlyphOutline:
     """P17.2 — extracted glyph outline (quadratic Bezier + lines).
 
-    ``points`` is a list of ``(x, y, on_curve)`` tuples in font-unit
-    coordinates.  For composite glyphs the outlines of all components
-    are merged into a single point list (transformed to the parent
-    coordinate system).  ``is_empty`` is True for glyphs with no
-    contours (e.g. space).  ``bbox`` is the glyph's bounding box
-    ``(xMin, yMin, xMax, yMax)`` in font units, used by P20 to
-    validate parsed coordinates (outlines whose points fall outside the
-    bbox are rejected and the caller falls back to bitmap rendering).
+    ``points`` is a flat list of ``(x, y, on_curve)`` tuples in font-unit
+    coordinates (legacy view, kept for compatibility).  ``contours`` is
+    the same data grouped by TTF contour — a list of lists, where each
+    inner list is one closed contour (TTF winding: the even-odd rule
+    fills a glyph's holes correctly when each contour is filled
+    separately, and overlapping regions cancel).  For composite glyphs
+    the outlines of all components are merged into their respective
+    contour groups (transformed to the parent coordinate system).
+    ``is_empty`` is True for glyphs with no contours (e.g. space).
+    ``bbox`` is the glyph's bounding box ``(xMin, yMin, xMax, yMax)``
+    in font units, used by P20 to validate parsed coordinates (outlines
+    whose points fall outside the bbox are rejected and the caller
+    falls back to bitmap rendering).
     """
     points: list = field(default_factory=list)
+    contours: list = field(default_factory=list)  # T01 — list of (x,y,on_curve) lists
     is_empty: bool = False
     is_composite: bool = False
     bbox: tuple = (0, 0, 0, 0)
+
+    def flat(self) -> list:
+        """T01 — return the legacy flat point list (all contours
+        concatenated, in the same order ``contours`` would produce)."""
+        if not self.contours:
+            return list(self.points)
+        out: list = []
+        for c in self.contours:
+            out.extend(c)
+        return out
 
 
 @dataclass
@@ -145,10 +161,12 @@ class FontMetrics:
         # may be a composite with many degenerate points; treat it as
         # "empty" when all points cluster within a 1-unit box.
         if out is not None and out.points:
-            xs = [p[0] for p in out.points]
-            ys = [p[1] for p in out.points]
-            if (max(xs) - min(xs)) < 2 and (max(ys) - min(ys)) < 2:
-                out.is_empty = True
+            pts = out.flat()
+            if pts:
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                if (max(xs) - min(xs)) < 2 and (max(ys) - min(ys)) < 2:
+                    out.is_empty = True
         if out is not None and len(self._outline_cache) < self._outline_cache_max:
             self._outline_cache[gid] = out
         return out
@@ -657,7 +675,15 @@ def _read_glyf(fm: FontMetrics, gid: int) -> bytes:
 
 
 def _parse_simple_glyph(raw: bytes) -> list:
-    """P17.2 — parse a simple glyf record into a list of ``(x, y, on_curve)``.
+    """P17.2 — parse a simple glyf record into a list of contours.
+
+    T01 — returns ``list[list[(x, y, on_curve)]]`` (one inner list per
+    TTF contour), NOT a flat point list.  The caller
+    (:func:`_extract_glyph`) stores the grouped form on
+    :class:`GlyphOutline.contours`; the legacy flat view
+    (:class:`GlyphOutline.points` / :meth:`GlyphOutline.flat`) is
+    reassembled from the groups so P20 test contracts that assert on
+    the flat list keep working.
 
     Coordinates are in font units (y-up).  The TTF coordinate encoding:
     - xShort / yShort: signed 8-bit delta (bit 7 = sign).
@@ -776,6 +802,7 @@ def _parse_simple_glyph(raw: bytes) -> list:
         # else: SAME_X (0x10 with long vector) — x unchanged.
         x_vals.append(x)
     # --- y pass ---
+    all_pts: list = []
     for k in range(n):
         if k >= len(flags):
             break
@@ -796,8 +823,17 @@ def _parse_simple_glyph(raw: bytes) -> list:
             y += delta
         # else: SAME_Y (0x20 with long vector) — y unchanged.
         px = x_vals[k] if k < len(x_vals) else x
-        pts.append((px, y, bool(flags[k] & 0x01)))
-    return pts
+        all_pts.append((px, y, bool(flags[k] & 0x01)))
+    # T01 — regroup the flat point list by contour boundaries
+    # (endPtsOfContours holds the global index of each contour's last
+    # point).  Each contour is emitted as its own sub-list so the
+    # rasterizer can apply the even-odd rule contour-by-contour.
+    contours: list = []
+    start = 0
+    for end in end_pts:
+        contours.append(all_pts[start:end + 1])
+        start = end + 1
+    return contours
 
 
 # P33.R1 — cycle guard for composite glyph parsing: the set of glyph ids
@@ -811,12 +847,10 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
     """P17.2 — parse a composite glyf record, recursively extracting
     component outlines (transformed to the parent coordinate system).
 
-    Returns a flat list of ``(x, y, on_curve)`` in font units.
-
-    P33.R1 — self-reference / cycle guard: some fonts ship composite
-    glyphs whose component chain loops back onto an ancestor.  Track the
-    glyph ids already on the stack; when a cycle is detected the
-    remaining components are skipped instead of recursing forever.
+    T01 — returns a list of contours (``list[list[(x, y, on_curve)]]``),
+    one inner list per TTF contour, matching :func:`_parse_simple_glyph`.
+    Each component's contours are transformed and appended to the
+    result as separate contour groups.
     """
     if depth > 10:
         return []
@@ -824,7 +858,7 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
         return []
     num_components = struct.unpack(">H", raw[:2])[0]
     off = 4
-    all_pts: list = []
+    contours: list = []
     # P33.R1 — self-reference / cycle guard: some fonts ship composite
     # glyphs whose component chain loops back onto an ancestor.  Track the
     # glyph ids already on the stack; when a cycle is detected the
@@ -832,7 +866,7 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
     # A corrupt record (num_components absurdly large, or no room for
     # even one 4-byte component header) yields no points.
     if num_components > 128:
-        return all_pts
+        return contours
     for _ in range(num_components):
         if off + 4 > len(raw):
             break
@@ -920,11 +954,17 @@ def _parse_composite_glyph(raw: bytes, fm: FontMetrics, depth: int = 0) -> list:
             finally:
                 _COMPOSITE_CYCLE_GUARD.discard(comp_gid)
         # Transform to parent coordinate system.
-        for px, py, oc in comp_pts:
-            tx = px * scale_x + py * scale_xy + x
-            ty = px * scale_xy + py * scale_y + y
-            all_pts.append((int(tx), int(ty), oc))
-    return all_pts
+        # T01 — comp_pts is now a list of contours (each a list of
+        # (x, y, on_curve) tuples).  Transform every contour to the
+        # parent coordinate system and append them individually.
+        for cpts in comp_pts:
+            transformed = []
+            for px, py, oc in cpts:
+                tx = px * scale_x + py * scale_xy + x
+                ty = px * scale_xy + py * scale_y + y
+                transformed.append((int(tx), int(ty), oc))
+            contours.append(transformed)
+    return contours
 
 
 def _extract_glyph(fm: FontMetrics, gid: int, _depth: int = 0) -> Optional[GlyphOutline]:
@@ -934,40 +974,48 @@ def _extract_glyph(fm: FontMetrics, gid: int, _depth: int = 0) -> Optional[Glyph
     units) to the :class:`GlyphOutline` so callers can validate parsed
     coordinates (outlines with points outside the bbox are broken and
     should be rejected).
+
+    T01 — the parser now returns contours (``list[list[(x, y, on_curve)]]``);
+    both the legacy flat ``points`` view and the new ``contours`` view are
+    populated on the :class:`GlyphOutline`.
     """
     if gid < 0 or gid >= fm.num_glyphs:
         return None
     if _depth > 10:
-        return GlyphOutline(points=[], is_empty=True)
+        return GlyphOutline(points=[], contours=[], is_empty=True)
     raw = _read_glyf(fm, gid)
     if not raw:
-        return GlyphOutline(points=[], is_empty=True)
+        return GlyphOutline(points=[], contours=[], is_empty=True)
     num_contours = struct.unpack(">h", raw[:2])[0]
     if num_contours == 0:
-        return GlyphOutline(points=[], is_empty=True)
+        return GlyphOutline(points=[], contours=[], is_empty=True)
     # P20 — read the glyf bbox for validation.
     bbox = (0, 0, 0, 0)
     if len(raw) >= 10:
         bbox = struct.unpack(">hhhh", raw[2:10])
     if num_contours > 0:
-        pts = _parse_simple_glyph(raw)
-        return GlyphOutline(points=pts, is_empty=not pts,
+        contours = _parse_simple_glyph(raw)
+        flat = [p for c in contours for p in c]
+        return GlyphOutline(points=flat, contours=contours,
+                           is_empty=not flat,
                            is_composite=False, bbox=bbox)
     # P33.R1 — composite glyphs have num_contours < 0.  A huge negative
     # value (e.g. -18931 = 0xB743) means the record was misread as a
     # composite (the loca offsets or the glyf table are truncated on
     # disk); treat it as empty rather than recursing into garbage.
     if num_contours < -256:
-        return GlyphOutline(points=[], is_empty=True, is_composite=True,
-                            bbox=bbox)
+        return GlyphOutline(points=[], contours=[], is_empty=True,
+                            is_composite=True, bbox=bbox)
     # Composite glyph.
     # P33.R1 — push this glyph's id onto the cycle guard, parse, pop.
     _COMPOSITE_CYCLE_GUARD.add(gid)
     try:
-        pts = _parse_composite_glyph(raw, fm, _depth)
+        contours = _parse_composite_glyph(raw, fm, _depth)
     finally:
         _COMPOSITE_CYCLE_GUARD.discard(gid)
-    return GlyphOutline(points=pts, is_empty=not pts,
+    flat = [p for c in contours for p in c]
+    return GlyphOutline(points=flat, contours=contours,
+                        is_empty=not flat,
                         is_composite=True, bbox=bbox)
 
 
@@ -986,7 +1034,7 @@ def outline_valid(outline) -> bool:
         # No bbox recorded — accept (empty-glyph case handled above).
         return True
     tol = 1
-    for x, y, _oc in outline.points:
+    for x, y, _oc in outline.flat():
         if x < x_min - tol or x > x_max + tol:
             return False
         if y < y_min - tol or y > y_max + tol:

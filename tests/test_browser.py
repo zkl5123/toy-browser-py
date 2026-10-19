@@ -2293,8 +2293,12 @@ def test_p20_point_flags_bits():
     # Y pass (short, positive): 10, +80 → (10, 90)
     rec += bytes([10, 80])
     pts = ttf_font._parse_simple_glyph(rec)
-    assert len(pts) == 2, f"expected 2 points, got {len(pts)}"
-    (x0, y0, oc0), (x1, y1, oc1) = pts
+    # T01 — the parser now returns a list of contours (one inner list
+    # per TTF contour).  Flatten it back to the legacy point list for
+    # the assertion.
+    flat = [p for c in pts for p in c]
+    assert len(flat) == 2, f"expected 2 points, got {len(flat)}"
+    (x0, y0, oc0), (x1, y1, oc1) = flat
     assert oc0 and oc1, "0x01 flags must be on-curve"
     assert (x0, y0) == (10, 10), f"point0 = {(x0, y0)}"
     assert (x1, y1) == (90, 90), f"point1 = {(x1, y1)}"
@@ -2407,11 +2411,15 @@ def test_p20_glyf_offcurve_yreversed():
     # but p2 yShort magnitude 40, negative → y=-20-40=-60
     rec += struct.pack(">H", 10) + bytes([30, 40])
     pts = ttf_font._parse_simple_glyph(rec)
-    assert len(pts) == 3, f"expected 3 points, got {len(pts)}"
-    assert pts[0][:2] == (10, 10), f"p0={pts[0]}"
-    assert pts[1][:2] == (15, -20), f"p1={pts[1]}"
-    assert pts[2][:2] == (35, -60), f"p2={pts[2]}"
-    assert pts[0][2] and pts[2][2] and not pts[1][2], "on-curve flags wrong"
+    # T01 — the parser now returns a list of contours (one inner list
+    # per TTF contour).  Flatten it back to the legacy point list for
+    # the assertion.
+    flat = [p for c in pts for p in c]
+    assert len(flat) == 3, f"expected 3 points, got {len(flat)}"
+    assert flat[0][:2] == (10, 10), f"p0={flat[0]}"
+    assert flat[1][:2] == (15, -20), f"p1={flat[1]}"
+    assert flat[2][:2] == (35, -60), f"p2={flat[2]}"
+    assert flat[0][2] and flat[2][2] and not flat[1][2], "on-curve flags wrong"
 
 
 
