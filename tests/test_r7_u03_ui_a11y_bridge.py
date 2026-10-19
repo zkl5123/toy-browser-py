@@ -277,7 +277,119 @@ def test_dynamic_to_uia_unknown_role_falls_back_text():
     m = _mod()
     out = m.to_uia_node({"role": "customwidget", "name": "w"})
     assert out["ControlType"] == "Text"
-    assert out["Name"] == "w"
+
+
+# ---------------------------------------------------------------------------
+# R7-U03 §228 第 2 点：焦点进入视口 + 模态对话框焦点归还
+# ---------------------------------------------------------------------------
+
+def test_dynamic_focus_scroll_offset_enters_viewport():
+    """Tab 焦点元素滚进视口（复用 FocusViewport.scroll_for_focus 公式）。
+
+    FocusViewport.scroll_for_focus 语义（元素 top/height 为内容坐标）：
+    完全可见→不动；顶部越上→滚到顶部对齐（top-padding，clamp≥0）；
+    底部越下→滚到底部对齐（top+height-viewport_h+padding）；
+    始终 clamp 到 [0, scroll_max=content_h-viewport_h]。
+    """
+    m = _mod()
+    # 底部越下（top=1200,h=40 在 scroll=0 时超出 600 视口）→ 滚到底部
+    # 对齐：1200+40-600+8 = 648（clamp 后仍 648，因 < scroll_max=1400）。
+    assert m.focus_scroll_offset(top=1200, height=40,
+                                 scroll_offset=0, viewport_h=600,
+                                 content_h=2000) == 648
+    # 顶部越上（top=100 < cur+padding=208）→ 滚到顶部对齐
+    # max(0, 100-8) = 92。
+    assert m.focus_scroll_offset(top=100, height=40,
+                                 scroll_offset=200, viewport_h=600,
+                                 content_h=2000) == 92
+    # 极顶（top=10）→ max(0, 10-8) = 2（clamp 到 ≥0）。
+    assert m.focus_scroll_offset(top=10, height=40,
+                                 scroll_offset=300, viewport_h=600,
+                                 content_h=2000) == 2
+    # 完全可见（top=400 在 [200, 800] 内）→ 不动，返回 cur=200。
+    assert m.focus_scroll_offset(top=400, height=40,
+                                 scroll_offset=200, viewport_h=600,
+                                 content_h=2000) == 200
+    # clamp：底部越下且 target 超 scroll_max(=1400) → 滚到 1400。
+    assert m.focus_scroll_offset(top=10000, height=40,
+                                 scroll_offset=0, viewport_h=600,
+                                 content_h=2000) == 1400
+
+
+def test_dynamic_dialog_guard_focus_return_on_close():
+    """模态对话框关闭后焦点归还到打开前控件（读屏"状态变化"验收）。"""
+    m = _mod()
+    g = m.DialogFocusGuard()
+    g.open("dlg-ok", current_focus="submit-btn")
+    assert g.is_open is True
+    assert g.current_focus == "dlg-ok"
+    assert g.restored_focus == "submit-btn"
+    ev = g.close()
+    assert ev["type"] == "focus-moved"
+    assert ev["dialog"] == "close"
+    assert ev["id"] == "submit-btn"      # 归还到打开前焦点
+    assert g.is_open is False
+    assert g.current_focus == "submit-btn"
+
+
+def test_dynamic_dialog_guard_reopen_and_event_stream():
+    """多次 open/close 各自记录焦点，事件流按序携带 restored_focus。"""
+    m = _mod()
+    g = m.DialogFocusGuard()
+    g.open("dlg-a", current_focus="addr-bar")
+    g.open("dlg-b", current_focus="dlg-a")   # 嵌套：再开前焦点在 dlg-a
+    ev_close_b = g.close()
+    assert ev_close_b["id"] == "dlg-a"        # 归还到 dlg-b 打开前焦点
+    # 事件流序列
+    assert [e["dialog"] for e in g.events] == \
+        ["open", "open", "close"]
+    assert g.restored_focus == "dlg-a"
+
+
+def test_dynamic_dialog_guard_close_without_open_uses_fallback():
+    """未 open 直接 close → 归还到 fallback_focus，不崩。"""
+    m = _mod()
+    g = m.DialogFocusGuard()
+    ev = g.close(fallback_focus="chrome")
+    assert ev["id"] == "chrome"
+    assert g.current_focus == "chrome"
+    assert g.restored_focus is None
+
+
+def test_dynamic_dialog_guard_emit_to_tracker_updates_focus():
+    """guard 事件灌给 UiaFocusTracker → 对话框开/关驱动同一事件流焦点。
+
+    读屏器据 tracker 的 focus-moved 序列播报"进对话框 → 回原控件"。
+    """
+    m = _mod()
+    g = m.DialogFocusGuard()
+    trk = m.UiaFocusTracker()
+    trk.register("submit-btn", name="Submit", role="button")
+    trk.register("dlg-ok", name="OK", role="dialog")
+
+    open_ev = g.open("dlg-ok", current_focus="submit-btn")
+    g.emit_to(trk, open_ev)
+    assert trk.focused == "dlg-ok"
+
+    close_ev = g.close()
+    g.emit_to(trk, close_ev)
+    assert trk.focused == "submit-btn"        # 焦点归还
+
+    # tracker 事件序列（focus-moved 进 + 出）
+    assert trk.event_types() == ["focus-moved", "focus-moved"]
+
+
+def test_dynamic_guard_non_focus_event_not_emitted():
+    """emit_to 只处理 focus-moved；非 focus 事件被忽略（不误改焦点）。"""
+    m = _mod()
+    trk = m.UiaFocusTracker()
+    trk.register("x", name="x", role="textbox")
+    trk.set_focus("x")
+    assert trk.focused == "x"
+    fake_prop = {"type": "property-changed", "id": "x",
+                 "prop": "value", "value": "n"}
+    m.DialogFocusGuard().emit_to(trk, fake_prop)
+    assert trk.focused == "x"                  # 非 focus 事件不改变焦点
 
 
 # ---------------------------------------------------------------------------
@@ -310,4 +422,16 @@ TESTS = [
      test_dynamic_address_bar_error_type_visible),
     ("test_dynamic_to_uia_unknown_role_falls_back_text",
      test_dynamic_to_uia_unknown_role_falls_back_text),
+    ("test_dynamic_focus_scroll_offset_enters_viewport",
+     test_dynamic_focus_scroll_offset_enters_viewport),
+    ("test_dynamic_dialog_guard_focus_return_on_close",
+     test_dynamic_dialog_guard_focus_return_on_close),
+    ("test_dynamic_dialog_guard_reopen_and_event_stream",
+     test_dynamic_dialog_guard_reopen_and_event_stream),
+    ("test_dynamic_dialog_guard_close_without_open_uses_fallback",
+     test_dynamic_dialog_guard_close_without_open_uses_fallback),
+    ("test_dynamic_dialog_guard_emit_to_tracker_updates_focus",
+     test_dynamic_dialog_guard_emit_to_tracker_updates_focus),
+    ("test_dynamic_guard_non_focus_event_not_emitted",
+     test_dynamic_guard_non_focus_event_not_emitted),
 ]

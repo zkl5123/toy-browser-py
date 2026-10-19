@@ -135,6 +135,105 @@ def default_action(role: Optional[str], key: str = "Enter") -> str:
 
 
 # ---------------------------------------------------------------------------
+# 焦点进入视口（R7-U03 §228 第 2 点复用的纯公式薄封装）
+# ---------------------------------------------------------------------------
+
+def focus_scroll_offset(top: int, height: int,
+                        scroll_offset: int = 0,
+                        viewport_h: int = 600,
+                        content_h: int = 0,
+                        padding: int = 8) -> int:
+    """Tab 移动焦点时把目标元素滚进视口的 offset（R7-U03 §228 第 2 点）。
+
+    薄封装 :func:`toy_browser.app.accessibility.FocusViewport
+    .scroll_for_focus`（已存在的纯公式：元素越上滚到顶部对齐、越下
+    滚到底部对齐、已可见不动、clamp 到 ``[0, scroll_max]``）。本函数
+    不重造公式，只把"调用方手上有 top/height/当前 offset"这一常见
+    形状直接喂进 :class:`FocusViewport`，方便 UIA 事件流里在
+    ``focus-moved`` 之后紧跟一次视口滚动。
+
+    读屏器 / 屏幕键盘 Tab 到某 focusable 时，应保证该元素可见；
+    本返回值即"应设到视口的新 scroll_offset"。
+    """
+    from toy_browser.app.accessibility import FocusViewport
+    vp = FocusViewport(scroll_offset=scroll_offset,
+                       viewport_h=viewport_h,
+                       content_h=content_h)
+    return vp.scroll_for_focus(top, height, padding=padding)
+
+
+# ---------------------------------------------------------------------------
+# 模态对话框焦点归还（R7-U03 §228 第 2 点 + 验收"读屏状态变化"）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DialogFocusGuard:
+    """模态对话框打开/关闭时的焦点归还守卫（纯逻辑）。
+
+    读屏器 / 键盘用户开模态框时焦点切进对话框，关闭后**焦点必须归还
+    到打开前所在的控件**（WCAG 焦点管理 / UIA 焦点事件契约）。本
+    guard 记录"打开前焦点 id"，在关闭时发 ``focus-moved`` 事件把
+    焦点归还回去——读屏器据"状态变化"事件播报焦点已回到原控件。
+
+    * :meth:`open` — 记录 *current_focus*（打开前焦点）到
+      ``_restored_focus``，对话框自身设为当前焦点，发
+      ``focus-moved``（dialog=open）。
+    * :meth:`close` — 焦点归还到 ``_restored_focus``（或
+      *fallback_focus*），发 ``focus-moved``（dialog=close，读屏
+      "状态变化"）。未开过则归还到 *fallback_focus*（不崩）。
+    * :meth:`emit_to` — 把 guard 事件灌给外部
+      :class:`UiaFocusTracker`，让对话框焦点归还也进同一事件流。
+
+    与 :class:`UiaFocusTracker` 解耦：guard 自身维护独立事件流。
+    """
+
+    current_focus: Optional[str] = None
+    _restored_focus: Optional[str] = None
+    _open: bool = False
+    events: list = field(default_factory=list)
+
+    def open(self, dialog_focus_id: str,
+             current_focus: Optional[str] = None) -> dict:
+        """打开对话框：记录打开前焦点并把键盘焦点移入对话框。"""
+        self._restored_focus = current_focus
+        self._open = True
+        self.current_focus = dialog_focus_id
+        ev = {"type": _EV_FOCUS, "id": dialog_focus_id,
+              "name": "", "role": "dialog", "value": "",
+              "is_enabled": True, "dialog": "open",
+              "restored_focus": current_focus}
+        self.events.append(ev)
+        return ev
+
+    def close(self, fallback_focus: Optional[str] = None) -> dict:
+        """关闭对话框：焦点归还到打开前控件（或 *fallback_focus*）。"""
+        self._open = False
+        target = self._restored_focus \
+            if self._restored_focus is not None else fallback_focus
+        self.current_focus = target
+        ev = {"type": _EV_FOCUS, "id": target,
+              "name": "", "role": "dialog", "value": "",
+              "is_enabled": True, "dialog": "close",
+              "restored_focus": self._restored_focus}
+        self.events.append(ev)
+        return ev
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    @property
+    def restored_focus(self) -> Optional[str]:
+        return self._restored_focus
+
+    def emit_to(self, tracker, event: dict) -> None:
+        """把 guard 的一条事件灌给外部 :class:`UiaFocusTracker`（
+        对话框焦点归还也进同一事件流供读屏消费）。"""
+        if event["type"] == _EV_FOCUS:
+            tracker.set_focus(event.get("id"))
+
+
+# ---------------------------------------------------------------------------
 # UIA 事件流（读屏器消费 name/role/value/state/focus 事件）
 # ---------------------------------------------------------------------------
 
