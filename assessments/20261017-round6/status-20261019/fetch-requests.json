@@ -1,0 +1,25 @@
+[
+  {
+    "url": "URL(scheme='https', host='www.baidu.com', port=0, path='/', query='', fragment='', user='', password='')",
+    "status": 200,
+    "final_url": "https://www.baidu.com/",
+    "bytes": 227,
+    "headers": {
+      "accept-ranges": "bytes",
+      "cache-control": "no-cache",
+      "connection": "keep-alive",
+      "content-length": "227",
+      "content-security-policy": "frame-ancestors 'self' https://chat.baidu.com http://mirror-chat.baidu.com https://fj-chat.baidu.com https://hba-chat.baidu.com https://hbe-chat.baidu.com https://njjs-chat.baidu.com https://nj-chat.baidu.com https://hna-chat.baidu.com https://hnb-chat.baidu.com http://debug.baidu-int.com https://sai.baidu.com https://mcpstore.baidu.com https://mcpserver.baidu.com https://www.mcpworld.com https://platform-openai.now.baidu.com;",
+      "content-type": "text/html",
+      "date": "Mon, 19 Oct 2026 01:22:29 GMT",
+      "pragma": "no-cache",
+      "server": "BWS/1.1",
+      "set-cookie": "BAIDUID_BFESS=E9182E043CA114B0207794F190E8141E:FG=1; Path=/; Domain=baidu.com; Max-Age=31536000; Secure; SameSite=None",
+      "traceid": "1792372949037461428212658475803475197690",
+      "x-ua-compatible": "IE=Edge,chrome=1",
+      "x-xss-protection": "1;mode=block"
+    },
+    "sha256": "3d7414a921a24780e3fc3774dcbbf6dace8eec37162daed0fa0a0f3fb0b9a3a7",
+    "elapsed_ms": 174.62
+  }
+]

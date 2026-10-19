@@ -1,0 +1,34 @@
+[
+  {
+    "case": "var a=1,b=2;",
+    "parsed": true
+  },
+  {
+    "case": "let a=1,b=2;",
+    "parsed": true
+  },
+  {
+    "case": "const a=1,b=2;",
+    "parsed": true
+  },
+  {
+    "case": "var a=1;var b=2;",
+    "parsed": true
+  },
+  {
+    "case": "(1,2);",
+    "parsed": true
+  },
+  {
+    "case": "valid-invalid-valid actual Host",
+    "text": "AFTERdocument.getElementById(\"x\").textContent=\"A\";var x=;document.getElementById(\"x\").textContent=\"AFTER\";",
+    "errors": 1,
+    "logs": [
+      "[inline script] SyntaxError: unexpected token ';' at pos 6"
+    ]
+  },
+  {
+    "case": "actual JS location global",
+    "pending": "[NavRequest(target='http://www.baidu.com/', source='script', replace=True, seq=0, origin_url='', error=None)]"
+  }
+]

@@ -1,0 +1,23 @@
+[mode=only(test_document_process,test_document_process_spawn,test_gpu_backend,test_gpu_glyph_atlas,test_gpu_image_cache,test_gpu_rasterize,test_js_multi_decl,test_navigation,test_script_error)] 9 in-process modules, 125 in-process tests
+
+============================================================
+RESULT: 119/125 passed in 2.9s (9 modules, mode=only(test_document_process,test_document_process_spawn,test_gpu_backend,test_gpu_glyph_atlas,test_gpu_image_cache,test_gpu_rasterize,test_js_multi_decl,test_navigation,test_script_error))
+
+============================================================
+PER-MODULE TIMING (slowest first):
+     2.0s  test_document_process_spawn        12/12   ####
+     0.4s  test_gpu_backend                   14/14   
+     0.2s  test_document_process              14/14   
+     0.1s  test_gpu_rasterize                  7/9    
+     0.1s  test_gpu_glyph_atlas               13/13   
+     0.0s  test_js_multi_decl                 15/15   
+     0.0s  test_gpu_image_cache                9/13   
+     0.0s  test_navigation                    19/19   
+     0.0s  test_script_error                  16/16   
+FAILED (6):
+  - test_gpu_image_cache::test_gpu_backend_image_cache_property: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_image_cache::test_gpu_backend_render_prepares_img_textures: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_image_cache::test_gpu_backend_render_reuses_img_texture_across_frames: AttributeError("'FrameHandle' object has no attribute 'image_cache_stats'")
+  - test_gpu_image_cache::test_create_backend_image_cache_capacity_passthrough: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_rasterize::test_create_backend_gpu_injected_device: AssertionError()
+  - test_gpu_rasterize::test_gpu_backend_describe_diagnostic: AssertionError()

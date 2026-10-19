@@ -1,0 +1,1 @@
+{"mode": "cli", "url": "https://www.baidu.com/", "viewport": [800, 600], "time": "2026-10-19 09:22:31", "rendered": true, "size": [800, 600], "outcome": "completed", "elapsed_ms": 9930.37, "request_count": 34}

@@ -1,0 +1,18 @@
+[mode=only(test_gpu_backend,test_gpu_glyph_atlas,test_gpu_image_cache,test_gpu_rasterize)] 4 in-process modules, 49 in-process tests
+
+============================================================
+RESULT: 43/49 passed in 1.0s (4 modules, mode=only(test_gpu_backend,test_gpu_glyph_atlas,test_gpu_image_cache,test_gpu_rasterize))
+
+============================================================
+PER-MODULE TIMING (slowest first):
+     0.7s  test_gpu_backend                   14/14   #
+     0.2s  test_gpu_rasterize                  7/9    
+     0.1s  test_gpu_glyph_atlas               13/13   
+     0.0s  test_gpu_image_cache                9/13   
+FAILED (6):
+  - test_gpu_image_cache::test_gpu_backend_image_cache_property: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_image_cache::test_gpu_backend_render_prepares_img_textures: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_image_cache::test_gpu_backend_render_reuses_img_texture_across_frames: AttributeError("'FrameHandle' object has no attribute 'image_cache_stats'")
+  - test_gpu_image_cache::test_create_backend_image_cache_capacity_passthrough: AttributeError("'CPURenderBackend' object has no attribute 'image_cache'")
+  - test_gpu_rasterize::test_create_backend_gpu_injected_device: AssertionError()
+  - test_gpu_rasterize::test_gpu_backend_describe_diagnostic: AssertionError()
