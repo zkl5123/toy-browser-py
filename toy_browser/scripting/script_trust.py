@@ -46,6 +46,7 @@ __all__ = [
     "VALID_ISOLATION_MODES",
     "ScriptIsolation", "detect_script_isolation",
     "ScriptIsolationClaim", "claim_script_sandbox",
+    "default_script_trust_gate", "reset_default_script_trust_gate",
 ]
 
 
@@ -433,3 +434,31 @@ def claim_script_sandbox(isolation: ScriptIsolation) -> ScriptIsolationClaim:
     return ScriptIsolationClaim(name="script sandbox isolation",
                                 capability=CAP_SCRIPT_SANDBOX,
                                 isolation=isolation)
+
+
+# ---------------------------------------------------------------------------
+# 默认闸门（产品入口共享的同一实例）
+# ---------------------------------------------------------------------------
+
+_DEFAULT_GATE: Optional[ScriptTrustGate] = None
+
+
+def default_script_trust_gate() -> ScriptTrustGate:
+    """产品默认入口共用的信任闸门（惰性单例，默认 :data:`POLICY_LOCAL_ONLY`）。
+
+    CLI（``browser.render_document_from_url``）与 GUI
+    （``PageInstance.load_url``）都读这一个实例，避免"两条主链两套
+    策略"（R7-A01 收敛主链的同类问题）。
+    """
+    global _DEFAULT_GATE
+    if _DEFAULT_GATE is None:
+        _DEFAULT_GATE = ScriptTrustGate()
+    return _DEFAULT_GATE
+
+
+def reset_default_script_trust_gate(
+        policy: str = POLICY_LOCAL_ONLY) -> ScriptTrustGate:
+    """重置默认闸门（测试 / 会话恢复入口），返回新实例。"""
+    global _DEFAULT_GATE
+    _DEFAULT_GATE = ScriptTrustGate(policy=policy)
+    return _DEFAULT_GATE

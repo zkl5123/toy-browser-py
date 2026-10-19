@@ -4701,6 +4701,13 @@ class Host:
         # structurally (execute itself must not raise — P0 contract).
         self.script_errors: list[dict] = []
         self._budget_cancelled: bool = False
+        # R7-S01 第 1 点 — 本次文档的"脚本信任判定"。由默认导航入口
+        # （CLI ``browser.render_document_from_url`` / GUI
+        # ``PageInstance.load_url``）在**执行前**写入；``None`` 表示
+        # 该入口未经闸门（离线合成文档路径，如 ``_run_scripts``）。
+        # 可观测：诊断 / 测试据此回答"这个页面的脚本到底被没被闸门
+        # 拦下"，而不是只看到"脚本没跑"。
+        self.script_trust_decision: object = None
         # R7-J02 — document 生命周期状态（HTML 事件循环 §2.7）。
         # ``_document_ready_state``：``"loading"`` → 解析结束 ``"interactive"``
         # → 脚本 + 微任务排空后 ``"complete"``。``_document_events``：

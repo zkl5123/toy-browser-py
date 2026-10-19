@@ -974,8 +974,17 @@ class PageInstance:
                             (r.body or b"").decode("utf-8", "replace"))
                     else:
                         _script_cache[url_key] = None
-                _host.execute_scripts_in_order(_script_cache,
-                                               _csp_directives)
+                # R7-S01 第 1 点 — 远程脚本信任闸门（与 CLI 共用同一
+                # 默认闸门实例，避免两条主链两套策略）。默认 local_only：
+                # 任意网络页面的脚本默认不执行；回环 / file: / about:
+                # 等可信源不受影响。判定挂 _host 上可观测，被拒则跳过
+                # 执行（不是"跑了再丢结果"）。
+                from toy_browser.scripting import script_trust as _trust_mod
+                _trust = _trust_mod.default_script_trust_gate().decide(url)
+                _host.script_trust_decision = _trust
+                if _trust.allowed:
+                    _host.execute_scripts_in_order(_script_cache,
+                                                   _csp_directives)
                 # R4 stage 3 — the fetch/XHR callbacks fire as
                 # microtasks (fetch .then) or synchronously (XHR
                 # onload); execute_scripts_in_order already flushes

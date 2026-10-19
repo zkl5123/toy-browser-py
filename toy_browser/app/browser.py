@@ -184,7 +184,16 @@ def render_document_from_url(
     # report's fetch_real / xhr_real cases).
     host._fetch_transport = net.FetchTransport(
         eff_client, base_url=resp.final_url or url)
-    host.execute_scripts_in_order(script_cache, csp_directives)
+    # R7-S01 第 1 点 — 远程脚本信任闸门：默认策略 local_only，任意
+    # 网络页面的脚本**默认不执行**（回环 / file: / about: 等可信源
+    # 不受影响）。判定结果挂在 host 上（可观测），被拒时**跳过**
+    # execute_scripts_in_order——不是"跑了再丢结果"，而是真的不跑。
+    from toy_browser.scripting import script_trust as _trust_mod
+    _doc_url = resp.final_url or url
+    _trust = _trust_mod.default_script_trust_gate().decide(_doc_url)
+    host.script_trust_decision = _trust
+    if _trust.allowed:
+        host.execute_scripts_in_order(script_cache, csp_directives)
 
     # B05 — if the page's inline scripts emitted a location navigation
     # task (location.replace / assign / href=), follow it with a loop
