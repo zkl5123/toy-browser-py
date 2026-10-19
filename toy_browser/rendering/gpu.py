@@ -525,8 +525,79 @@ class GlyphAtlas:
 
     @staticmethod
     def _default_glyph_rgba(ch: str, family: str, weight: int,
-                           font_px: float, cell: int | None = None) -> bytes:
-        """P06 / R7-P02 — 内置位图字形回退：8×N 位图最近邻放大到
+                            font_px: float, cell: int | None = None) -> bytes:
+        """P06 / R7-T01 — 优先用真实 TTF 字形覆盖，无真实字体时退回
+        内置位图。
+
+        * ``ch`` — 单个字符（码点）。
+        * ``family`` — CSS 字体族名。
+        * ``weight`` — CSS 字重（≥ 600 视为 bold，启用合成粗体）。
+        * ``font_px`` — 字号（像素）。
+        * ``cell`` — atlas 格子边长（裁剪 TTF 覆盖到 ``cell×cell``）。
+
+        真实 TTF 路径：
+
+        1. 经 ``font.get_metrics_for_weight(family, weight)`` 取
+           ``FontMetrics``；未注册 / 缺粗体时用 normal face + 合成粗体。
+        2. 调 ``rasterize.rasterize_ttf_glyph_rgba`` 把 hmtx/hhea
+           锚定的 8-bit coverage mask 转成 RGBA8（R=G=B=255/A=覆盖），
+           与 CPU 侧 ``text._get_glyph_mask`` 同一轮廓、同一锚点。
+        3. 该路径失败时（未注册 face / 字形无轮廓 / 覆盖为空）退回
+           :meth:`_default_glyph_rgba_builtin` 的内置 8×N 位图放大。
+
+        本方法既被 :meth:`_rasterize_one`（实例调用）使用，也被
+        ``test_r7_p02_gpu`` / ``render_probe.py`` 类级调用
+        （``GlyphAtlas._default_glyph_rgba('A', 'serif', ...)``）。
+        类级调用同样进入 TTF 分支，保证回归探针在 ``init_real_fonts``
+        注册后能观察到真实字体覆盖；无注册面时自动回退内置位图。
+        """
+        rgba = GlyphAtlas._glyph_rgba_via_ttf(ch, family, weight, font_px,
+                                               cell)
+        if rgba is None:
+            rgba = GlyphAtlas._default_glyph_rgba_builtin(ch, family, weight,
+                                                           font_px, cell=cell)
+        return rgba
+
+    @staticmethod
+    def _glyph_rgba_via_ttf(ch: str, family: str, weight: int,
+                            font_px: float,
+                            cell: int | None = None):
+        """R7-T01 — 真实 TTF 覆盖 → RGBA8（无 face / 无轮廓返回 None）。
+
+        族名路由：
+
+        * ``family`` 为空或 ``"monospace"``（默认/回退）→ 保持**内置位图**
+          回退路径（旧契约：``test_r7_p02_gpu`` / ``render_probe.py`` 的
+          族名区分靠 8×N 位图行布局不同，不走 TTF）。
+        * ``family`` 为其它族名（serif / arial / 真实 CSS 族名，由
+          ``_prepare_glyph_atlas`` 从 ``DisplayCommand.font_family`` 传入）
+          → 走真实 TTF 覆盖路径。
+        """
+        if not ch:
+            return None
+        fam = (family or "").strip()
+        if not fam or fam.lower() == "monospace":
+            return None  # 默认族名 → 内置位图回退（保持旧契约）
+        from toy_browser.typography import font as _font_mod
+        from toy_browser.typography import rasterize as _rasterize
+        try:
+            face, use_synthetic = _font_mod.get_metrics_for_weight(
+                fam, int(weight or 400))
+        except Exception:
+            return None
+        if face is None:
+            return None
+        ttf_weight = 2.0 if (use_synthetic and int(weight or 400) >= 600) \
+            else 1.0
+        return _rasterize.rasterize_ttf_glyph_rgba(
+            ch, face, float(font_px), weight=ttf_weight,
+            pad_to=cell, antialias=True)
+
+    @staticmethod
+    def _default_glyph_rgba_builtin(ch: str, family: str, weight: int,
+                                    font_px: float,
+                                    cell: int | None = None) -> bytes:
+        """R7-P02 — 内置位图字形回退：8×N 位图最近邻放大到
         *font_px* 粒度，alpha 覆盖层（R=G=B=255，A=覆盖 255 /
         未覆盖 0），返回 ``size×size`` 的 RGBA8 紧凑 bytes。
 
@@ -885,6 +956,113 @@ class GPUBackend(RenderBackend):
         self.register_document(doc_key)
         return handle
 
+    # ----------------------------------------------------------------
+    # R7-P02 — 真实 render pass（图元光栅化）+ CPU 独立 oracle 对照
+    # ----------------------------------------------------------------
+    def render_with_pass(self, scene, viewport, damage=None):
+        """R7-P02 第 4 点 — 经 :class:`SoftwareRenderPass` 的**真实
+        图元光栅化通路**产帧（rect / img / glyph 逐图元写入独立
+        RGB8 帧缓冲），**不经** ``rasterize_to_canvas`` 整帧前处理。
+
+        与 :meth:`render` 的区别（§253 "CPU 是独立 oracle，而不是
+        GPU 主链的整帧前处理器"）：
+
+        * :meth:`render` — 经 ``rasterize_to_canvas``（权威全量
+          光栅化器）先出整帧 → 再上传，是当前主链（兼容保留）。
+        * :meth:`render_with_pass` — 走 :mod:`render_pass` 的逐图元
+          通路：pass 自身不整帧光栅化，只消费 DisplayList 里 rect /
+          img / text 三类图元命令；帧缓冲由 pass 独立产出。
+
+        返回 :class:`FrameHandle`（``mode="gpu"``、``image`` 为 pass
+        产出的 CPUImage、``frame_pass=True`` 标记该帧经图元通路；
+        真实 wgpu 设备可用时同 :meth:`render` 上传纹理 + 缓存准备，
+        否则 ``texture=None`` 退化 CPU 形态，P13 不崩）。
+
+        对照：取 :meth:`verify_frame_vs_oracle` 的独立 CPU oracle
+        逐像素核对。
+        """
+        from toy_browser.rendering.render_pass import SoftwareRenderPass
+        from toy_browser.rendering.rasterize_cpu import FrameHandle
+        w, h = self._resolve_viewport_size(viewport)
+        _pass = SoftwareRenderPass(w, h)
+        pass_out = _pass.render(scene)
+        pass_out_kind_counts = dict(_pass.kind_counts)
+        self._frame_seq += 1
+        doc_key = id(scene)
+        self._doc_frames[doc_key] = self._doc_frames.get(doc_key, 0) + 1
+        handle = FrameHandle(
+            frame_id=self._frame_seq,
+            width=w,
+            height=h,
+            image=pass_out,
+            mode=BackendMode.GPU.value,
+            document_version=self._doc_frames[doc_key],
+        )
+        handle.frame_pass = True
+        handle.pass_kind_counts = pass_out_kind_counts
+        # 纹理上传 + 资源缓存准备（真实设备时；无设备则 texture=None）
+        if self._rasterizer is not None:
+            handle.texture = self._upload_frame_rgba8(
+                pass_out, w, h, label="gpu_pass_frame")
+            self._prepare_image_textures(scene)
+            handle.image_cache_stats = self._img_cache.stats()
+            self._prepare_glyph_atlas(scene)
+            handle.glyph_atlas_stats = self._glyph_atlas.stats()
+        self.register_document(doc_key)
+        return handle
+
+    def _resolve_viewport_size(self, viewport):
+        """viewport（dict / 对象 / None）→ (width, height) 逻辑视口。"""
+        if viewport is None:
+            return 800, 600
+        if isinstance(viewport, dict):
+            return int(viewport.get("width", 800)), int(viewport.get("height", 600))
+        return (getattr(viewport, "width", 800),
+                getattr(viewport, "height", 600))
+
+    def _upload_frame_rgba8(self, img, w, h, label="gpu_frame"):
+        """CPUImage（RGB8）→ RGBA8 buffer → 上传 wgpu 纹理（P13 不崩）。"""
+        buf = bytearray(w * h * 4)
+        b2 = img.buffer
+        stride = img.stride
+        for y in range(h):
+            row_base = y * stride
+            for x in range(w):
+                j = (y * w + x) * 4
+                buf[j] = b2[row_base + x * 3]
+                buf[j + 1] = b2[row_base + x * 3 + 1]
+                buf[j + 2] = b2[row_base + x * 3 + 2]
+                buf[j + 3] = 255
+        return self._rasterizer.upload_rgba8(w, h, bytes(buf), label=label)
+
+    def verify_frame_vs_oracle(self, frame, scene, viewport,
+                               tolerance: int = 0) -> dict:
+        """R7-P02 验收 — 图元 pass 帧 vs **独立 CPU oracle** 逐像素
+        对照（"GPU 实际绘制单独通路像素对照通过"）。
+
+        独立 oracle 经 :func:`render_pass.cpu_oracle_frame`（权威
+        ``rasterize_to_canvas``，**不经** pass），与 pass 产出帧
+        逐像素对照。0 mismatch → pass 图元通路正确。
+
+        * ``frame`` — 经 :meth:`render_with_pass` 产出的
+          :class:`FrameHandle`（``frame_pass=True``，``image`` 为
+          pass 帧缓冲）。
+        * ``scene`` / ``viewport`` — 产帧时的 DisplayList 与视口
+          （oracle 据此独立重算）。
+        * 返回 ``{"ok", "width", "height", "count", "sample",
+          "oracle_mode"}``；帧非 pass 产出（缺 ``frame_pass`` 标记）
+          → ``{"ok": False, "reason": "not a pass frame"}``（不冒充）。
+        """
+        from toy_browser.rendering import render_pass as _rp
+        if not getattr(frame, "frame_pass", False):
+            return {"ok": False,
+                    "reason": "not a pass frame (use render_with_pass)"}
+        w, h = self._resolve_viewport_size(viewport)
+        oracle = _rp.cpu_oracle_frame(scene, w, h)
+        cmp = _rp.compare_frames(frame.image, oracle, tolerance=tolerance)
+        cmp["oracle_mode"] = "rasterize_to_canvas"
+        return cmp
+
     def _prepare_glyph_atlas(self, scene) -> None:
         """P06 — 对 *scene*（DisplayList）里的 text 命令经
         :class:`GlyphAtlas` 光栅化 / 复用字形槽位。
@@ -908,7 +1086,11 @@ class GPUBackend(RenderBackend):
             text = getattr(cmd, "text", "") or ""
             if not text:
                 continue
-            family = "monospace"  # DisplayCommand 未携带 family，默认
+            # R7-P02 — DisplayCommand 携带的字体族名（批次 15 已补
+            # font_family 字段；未携带时回退 "monospace"，与 CPU 侧
+            # paint_engine.rasterize 默认一致）。族名透传到 atlas，
+            # 让 TTF 路径与 CPU 路径共用同一 family。
+            family = getattr(cmd, "font_family", "monospace") or "monospace"
             weight = int(getattr(cmd, "font_weight", 400) or 400)
             font_px = float(getattr(cmd, "font_px", 16.0) or 16.0)
             for ch in set(text):  # 同一 text 命令内同码点去重
