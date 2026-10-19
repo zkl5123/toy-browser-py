@@ -58,12 +58,13 @@ _CMD_IME_UPDATE = "ime-update"
 _CMD_IME_COMMIT = "ime-commit"
 _CMD_PASTE = "paste"
 _CMD_COPY = "copy"
+_CMD_SELECT_ALL = "select-all"
 
 VALID_OVERLAY_COMMANDS = (
     _CMD_INSERT_TEXT, _CMD_DELETE_BACKWARD, _CMD_DELETE_FORWARD,
     _CMD_MOVE_LEFT, _CMD_MOVE_RIGHT, _CMD_MOVE_HOME, _CMD_MOVE_END,
     _CMD_IME_START, _CMD_IME_UPDATE, _CMD_IME_COMMIT,
-    _CMD_PASTE, _CMD_COPY,
+    _CMD_PASTE, _CMD_COPY, _CMD_SELECT_ALL,
 )
 
 
@@ -225,6 +226,10 @@ class EditorOverlayController:
             st.paste(data); return True
         if command == _CMD_COPY:
             st.copy_selection(); return True
+        if command == _CMD_SELECT_ALL:
+            # G03 step 5 — 全选（ctrl+a 键盘入口）：选区扩到整段文本。
+            # 纯逻辑（驱动 EditorState.select），不依赖系统剪贴板。
+            st.select(0, len(st.value)); return True
         return False
 
     # -- 提交 / 写回（G03 step 4 password 分离 + step 6）-----------------
@@ -245,6 +250,39 @@ class EditorOverlayController:
         if dom is not None:
             dom["value"] = val
         return val
+
+    # ------------------------------------------------------------------
+    # R7-U02 — IME 组合输入便捷驱动（统一组合三态入口）
+    # ------------------------------------------------------------------
+
+    def dispatch_ime_start(self) -> bool:
+        """R7-U02 — 组合开始（候选框出现）：在 caret 处标记组合区。
+
+        等价 ``dispatch("ime-start", ime_mark=state.caret)``；无覆盖层
+        / read-only 返回 False。这是 Tk ``KeyIn`` / 组合开始事件应调
+        的统一入口（审计 §57："composition 存在不等同输入法已接入"
+        的落地——给键盘入口一个明确的组合起点）。"""
+        return self.dispatch(_CMD_IME_START, ime_mark=self._state.caret
+                             if self._state else 0)
+
+    def dispatch_ime_update(self, text: str) -> bool:
+        """R7-U02 — 组合区中间态更新：替换组合区文本（不派发 input）。
+
+        等价 ``dispatch("ime-update", text, ime_mark=caret)``。组合进行中
+        的连续可打印字符（拼音候选）都应走这里，而非 insert-text。"""
+        mark = self._state.caret if self._state else 0
+        return self.dispatch(_CMD_IME_UPDATE, text, mark)
+
+    def dispatch_ime_commit(self, final_text: str = "") -> bool:
+        """R7-U02 — 组合提交：最终文本替换组合区 + 一次性派发 input。
+
+        等价 ``dispatch("ime-commit", final_text)``；*final_text* 为空时
+        用组合区内当前文本（取消候选 = 提交现有拼音原样）。"""
+        if not final_text and self._state is not None \
+                and self._state.composition_range:
+            lo, hi = self._state.composition_range
+            final_text = self._state.value[lo:hi]
+        return self.dispatch(_CMD_IME_COMMIT, final_text)
 
     # -- 呈现 / 诊断 ------------------------------------------------------
 
