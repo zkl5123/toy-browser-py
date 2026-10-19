@@ -62,15 +62,15 @@ class PageInstance:
         # P33.R2 — full-document height (the layout root's content
         # height, ≥ the viewport height when the page overflows).
         self.content_height: int = 0
-        # C01 — document / frame version counters (skeleton): every
-        # load_url / load_html bumps the identity; hover / focus
-        # restates and scroll re-clips bump the layout revision;
-        # rasterised frames carry their frame_id so the presenter
-        # can drop superseded work (the batch-1 guardrail that G07 /
-        # G08's task queues build on).
-        from toy_browser.app.document_state import DocumentVersion
-        self.doc_version = DocumentVersion()
-        self.doc_version.new_document()
+        # C01 / R7-A01 — the DocumentState container is the single
+        # owner of this page's document lifecycle: version counters
+        # (``session.doc_version``), DOM tree, script Host, layout
+        # root, cached display list and the source HTML/CSS.  The
+        # legacy PageInstance attribute names below stay available
+        # as property proxies (TabBrowser / tests keep working), but
+        # all writes land in one place.
+        from toy_browser.app.document_state_full import DocumentState
+        self.session = DocumentState()
         # P33.P1 — event model + focus management + interaction state.
         # ``hover_id`` / ``focus_id`` are the DOM element ids (or index
         # paths) of the currently hovered / focused element.  They feed
@@ -89,16 +89,87 @@ class PageInstance:
         # shared JS Host: when set (HTTP / script-running loads), re-render
         # paths must reuse them instead of re-parsing the source HTML
         # (which would discard the script mutations).
-        self._dom_tree = None
-        self._script_host = None
-        self._last_html = ""
-        self._last_css = ""
+        # R7-A01 — owned by ``self.session``; the underscore attribute
+        # names below resolve through property proxies onto it.
         # P0 (assessment report) — when True, load_html reuses the
         # stored _dom_tree / _script_host instead of re-parsing the
         # source HTML (set by the HTTP path after script execution).
-        self._reuse_doc = False
-        # P33.P1 — mouse move history for hover transitions.
+        # R7-A01 — mouse move history for hover transitions.
         self._last_mouse_xy: tuple[int, int] = (-1, -1)
+        # C01 / R7-A01 — start with one live document identity (matches
+        # the legacy "construct a fresh DocumentVersion and bump once").
+        self.session.doc_version.new_document()
+
+    # ------------------------------------------------------------------
+    # R7-A01 — legacy attribute proxies onto the DocumentState session
+    # (TabBrowser / tests keep the underscore names; all state lives
+    # in one container, never in two places).
+    # ------------------------------------------------------------------
+    @property
+    def doc_version(self):
+        """C01 — the page's document version counters, owned by
+        :attr:`session` (a :class:`DocumentState`)."""
+        return self.session.doc_version
+
+    @doc_version.setter
+    def doc_version(self, value) -> None:
+        self.session.doc_version = value
+
+    @property
+    def _dom_tree(self):
+        return self.session.dom_tree
+
+    @_dom_tree.setter
+    def _dom_tree(self, value) -> None:
+        self.session.dom_tree = value
+
+    @property
+    def _script_host(self):
+        return self.session.script_host
+
+    @_script_host.setter
+    def _script_host(self, value) -> None:
+        self.session.script_host = value
+
+    @property
+    def _last_html(self):
+        return self.session.last_html
+
+    @_last_html.setter
+    def _last_html(self, value) -> None:
+        self.session.last_html = value
+
+    @property
+    def _last_css(self):
+        return self.session.last_css
+
+    @_last_css.setter
+    def _last_css(self, value) -> None:
+        self.session.last_css = value
+
+    @property
+    def _reuse_doc(self):
+        return self.session.reuse_doc
+
+    @_reuse_doc.setter
+    def _reuse_doc(self, value) -> None:
+        self.session.reuse_doc = value
+
+    @property
+    def _layout_root(self):
+        return self.session.layout_root
+
+    @_layout_root.setter
+    def _layout_root(self, value) -> None:
+        self.session.layout_root = value
+
+    @property
+    def _last_dl(self):
+        return self.session.display_list
+
+    @_last_dl.setter
+    def _last_dl(self, value) -> None:
+        self.session.display_list = value
 
     def _clear_document_state(self) -> None:
         """R7-A01 第 5 点 — about / error 页（及任何非文档导航）原子
@@ -108,20 +179,18 @@ class PageInstance:
         旧实现的 about 路径只换 bitmap，DOM/Host 仍指向上个文档，
         hit-test 会命中已卸载的元素。现统一在此清空，并推进
         文档版本（让旧 frame / task 因 generation 不匹配被丢弃）。
+
+        R7-A01 — 文档内容（DOM / Host / 布局 / 显示列表 / 源 HTML+CSS /
+        复用标志 / 版本）经 :meth:`DocumentState.reset_context` 就地
+        原子清空；交互 / 表单状态仍为页面自身字段，单独归零。
         """
-        self._dom_tree = None
-        self._script_host = None
-        self._last_html = ""
-        self._last_css = ""
-        self._reuse_doc = False
+        self.session.reset_context()
         self.hover_id = None
         self.focus_id = None
         self.focus_chain = []
         self.active_form_field = None
         self._form_states = {}
         self._interaction_state = {}
-        self._layout_root = None
-        self.doc_version.new_document()
 
     def scroll_to(self, yoffset: int) -> None:
         """P33.R2 — scroll the page to *yoffset* pixels from the top.
@@ -223,7 +292,8 @@ class PageInstance:
         from toy_browser.scripting import js as _js_mod
         # C01 — a new document load: bump the identity so any in-flight
         # frame / task belonging to the previous document is dropped.
-        self.doc_version.new_document()
+        # R7-A01 — the bump is routed through the DocumentState session.
+        self.session.doc_version.new_document()
         self.width = w
         self.height = h
         if not full_page:
@@ -510,7 +580,8 @@ class PageInstance:
         if not html:
             return
         # C01 — layout re-solve (restate), not a new document.
-        self.doc_version.bump_layout()
+        # R7-A01 — routed through the DocumentState session.
+        self.session.mark_restate()
         # P0 (assessment report) — reuse the live tree when available
         # (the HTTP / local-script load paths store it); fall back to
         # a fresh parse only when no tree has been stored yet.
@@ -551,7 +622,8 @@ class PageInstance:
         # C01 — tag the fresh frame with its id so a presenter can
         # drop superseded frames (the full-document bitmap is the
         # frame source; the clipped viewport is derived from it).
-        self.doc_version.bump_frame()
+        # R7-A01 — routed through the DocumentState session.
+        self.session.mark_render()
         self._reclip()
 
     def _set_form_value(self, idx: int, value: str) -> None:
@@ -694,6 +766,9 @@ class PageInstance:
         # P0 (assessment report) — a new document: any previously
         # stored script-mutated DOM/Host is stale; force re-parse so
         # load_html does not reuse it.
+        # R7-A01 — version bump now lives on the DocumentState session
+        # (the single owner of the page's document lifecycle).
+        self.session.doc_version.new_document()
         self._reuse_doc = False
         # inline HTML (starts with <)
         if url.startswith("<"):

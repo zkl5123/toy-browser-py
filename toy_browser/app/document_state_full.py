@@ -89,6 +89,15 @@ class DocumentState:
     disposed: bool = False
     # 资源注册表条目：{"url", "kind", "ok", "body"(bytes 占位)}
     _resource_seq = 0
+    # R7-A01 — GUI 侧文档内容宿主字段（PageInstance.session 收敛
+    # ``_dom_tree`` / ``_script_host`` / ``_last_html`` / ``_last_css`` /
+    # ``_reuse_doc`` / ``_layout_root`` / ``_last_dl`` 到单一容器；
+    # 仅为承载既有字段的纯数据字段，不改变 C01 生命周期语义）。
+    layout_root: object = None
+    display_list: object = None
+    last_html: str = ""
+    last_css: str = ""
+    reuse_doc: bool = False
 
     # ------------------------------------------------------------------
     # 新文档加载（C01 step 2：解析 + 脚本初始化 = 新文档）
@@ -162,6 +171,23 @@ class DocumentState:
         # 单调性；这里显式为新文档 bump，使旧文档的帧 / 任务全 stale。
         fresh.doc_version.new_document()
         return fresh
+
+    def reset_context(self) -> None:
+        """R7-A01 — about / error 合成页（非文档导航）原子清空本
+        上下文的文档内容：DOM / Host / 布局 / 显示列表 / 源 HTML+CSS /
+        复用标志全部归零，并推进文档版本（旧 frame / task 因
+        generation 不匹配被丢弃）。与 :meth:`new_context` 不同：
+        不创建新对象，**就地**重置，调用方持有的引用立即看到
+        清空后的状态（PageInstance.session 经代理暴露这些字段）。
+        """
+        self.dom_tree = None
+        self.script_host = None
+        self.layout_root = None
+        self.display_list = None
+        self.last_html = ""
+        self.last_css = ""
+        self.reuse_doc = False
+        self.doc_version.new_document()
 
     # ------------------------------------------------------------------
     # 版本门控（C01 step 3：每类结果携带版本）
