@@ -536,7 +536,27 @@ class PageInstance:
         tree = getattr(self, "_dom_tree", None)
         if tree is not None:
             _walk(tree)
-        return id_map.get(id(hit.dom))
+        # R7-U01 (GUI audit §4 P01) — text-node hit attribution.
+        # ``hit_test`` already falls back one level (``dom is None ->
+        # parent``), but a *text* child's parent box may still carry a
+        # text-node ``dom`` (e.g. an anonymous text box inside a
+        # ``<span>`` or a nested ``<span>text</span>``), and ``id_map``
+        # only records element nodes.  Without this climb a click on
+        # the text is silently dropped (id_map lookup -> None).  Climb
+        # ``hit.dom`` to the nearest *element* ancestor so the hover /
+        # click consumer resolves to the real interactive element (the
+        # audit's "button preceded by text / whitespace / nested span"
+        # acceptance).  Document nodes stop the climb.
+        dom = hit.dom
+        guard = 0
+        while (dom is not None
+                 and not dom.is_element()
+                 and guard < 1000):
+            dom = getattr(dom, "parent", None)
+            guard += 1
+        if dom is None:
+            return None
+        return id_map.get(id(dom))
 
     def set_hover(self, x: int, y: int, restate: bool = True) -> None:
         """P33.P1 — update the hover state from a mouse position.
@@ -1262,14 +1282,8 @@ class TabBrowser:
         # 活显示验收入口：UI 销毁钩子统一清理子进程（防泄漏）。
         self._g07_ui_closing = False
 
-        def _g07_on_ui_closing(_event=None):
-            if self._g07_ui_closing:
-                return
-            self._g07_ui_closing = True
-            self._g07_doc_server_shutdown()
-
         try:
-            self.root.protocol("WM_DELETE_WINDOW", _g07_on_ui_closing)
+            self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
         except Exception:
             pass
 
@@ -1301,7 +1315,9 @@ class TabBrowser:
         file_menu.add_command(label="New Tab", accelerator="Ctrl+T", command=self._new_tab)
         file_menu.add_command(label="Close Tab", accelerator="Ctrl+W", command=self._close_tab)
         file_menu.add_separator()
-        file_menu.add_command(label="Quit", command=self.root.quit)
+        # R7-U01 — File>Quit 经 _on_window_close 统一关闭（先关文档
+        # server + 清理 PhotoImage + destroy + quit），不再裸调 quit。
+        file_menu.add_command(label="Quit", command=self._on_window_close)
         menubar.add_cascade(label="File", menu=file_menu)
         view_menu = tk.Menu(menubar, tearoff=0)
         view_menu.add_command(label="Back", accelerator="Alt+←", command=self._back)
@@ -1606,6 +1622,46 @@ class TabBrowser:
         except Exception:
             pass
 
+    def _on_window_close(self, _event=None) -> None:
+        """R7-U01 — WM_DELETE_WINDOW 统一销毁入口。
+
+        GUI 审计 §5 静态缺陷：原内联回调只设 ``_g07_ui_closing=True`` +
+        关文档 server，**缺少** ``root.destroy()`` / ``root.quit()``；
+        且重复关闭（``_g07_ui_closing`` 已 True）时直接 return，窗口可能
+        残留。
+
+        修复契约：
+        1. 幂等：``_g07_ui_closing`` 已 True 时仍确保 root 被销毁（防泄漏）；
+        2. 顺序：先关文档 server → 清理 PhotoImage → ``root.destroy()``；
+        3. 异常安全：``root.destroy()`` 放 ``finally``，即使 server
+           shutdown / 清理异常也不留窗口；
+        4. ``root.quit()`` 在 destroy 后调用，让 ``mainloop`` 退出（
+           destroy 已断开 mainloop 的事件源，quit 是双保险）。
+        """
+        if not self._g07_ui_closing:
+            self._g07_ui_closing = True
+            try:
+                self._g07_doc_server_shutdown()
+            except Exception:
+                pass
+            # 清理命名 PhotoImage（丢 Python 引用 + GC，让 Tcl 注销同名
+            # image，避免后续重建时的 TclError）。
+            try:
+                self._destroy_named_images()
+            except Exception:
+                pass
+        # 无论首次还是重复关闭，都要销毁 root（幂等：Tk 的 destroy 可
+        # 在已销毁对象上调用而不崩——tkinter 内部会静默处理）。
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        # destroy 后 mainloop 事件源已断；quit 双保险让 mainloop 返回。
+        try:
+            self.root.quit()
+        except Exception:
+            pass
+
     def _g07_describe(self) -> str:
         """G07 批次 46 — 文档进程池诊断串（含 spawned 字段，区分
         真实多核 vs 回退态）。"""
@@ -1709,7 +1765,10 @@ class TabBrowser:
 
     def _remove_tab(self, idx: int) -> None:
         if len(self.tabs) <= 1:
-            self.root.quit()
+            # R7-U01 — 最后一个标签关闭 = 关闭窗口，经统一关闭入口
+            # （server shutdown + PhotoImage 清理 + destroy + quit），
+            # 不再裸调 quit 残留窗口。
+            self._on_window_close()
             return
         # G09 — 批次 37：关标签经会话协议层（取消在途任务 + 释放资源
         # + 重建 idx 映射 + 前台让给剩余标签 + 关闭审计）。
