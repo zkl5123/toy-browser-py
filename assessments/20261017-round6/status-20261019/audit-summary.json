@@ -1,0 +1,83 @@
+{
+  "runtimes": {
+    "bundled": {
+      "version": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+      "executable": "C:\\Users\\Administrator\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+      "wgpu_available": false
+    },
+    "start_gui": {
+      "version": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+      "executable": "C:\\Users\\Administrator\\Desktop\\llm\\python-full\\python.exe",
+      "wgpu_available": false
+    }
+  },
+  "complete": {
+    "passed": 1908,
+    "total": 1914,
+    "seconds": 224.4,
+    "failures": [
+      "- test_gpu_image_cache::test_gpu_backend_image_cache_property: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_prepares_img_textures: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_reuses_img_texture_across_frames: AttributeError(\"'FrameHandle' object has no attribute 'image_cache_stats'\")",
+      "- test_gpu_image_cache::test_create_backend_image_cache_capacity_passthrough: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_rasterize::test_create_backend_gpu_injected_device: AssertionError()",
+      "- test_gpu_rasterize::test_gpu_backend_describe_diagnostic: AssertionError()"
+    ]
+  },
+  "focused": {
+    "passed": 119,
+    "total": 125,
+    "seconds": 2.9,
+    "failures": [
+      "- test_gpu_image_cache::test_gpu_backend_image_cache_property: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_prepares_img_textures: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_reuses_img_texture_across_frames: AttributeError(\"'FrameHandle' object has no attribute 'image_cache_stats'\")",
+      "- test_gpu_image_cache::test_create_backend_image_cache_capacity_passthrough: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_rasterize::test_create_backend_gpu_injected_device: AssertionError()",
+      "- test_gpu_rasterize::test_gpu_backend_describe_diagnostic: AssertionError()"
+    ]
+  },
+  "gpu_project_runtime": {
+    "passed": 43,
+    "total": 49,
+    "seconds": 1.0,
+    "failures": [
+      "- test_gpu_image_cache::test_gpu_backend_image_cache_property: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_prepares_img_textures: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_image_cache::test_gpu_backend_render_reuses_img_texture_across_frames: AttributeError(\"'FrameHandle' object has no attribute 'image_cache_stats'\")",
+      "- test_gpu_image_cache::test_create_backend_image_cache_capacity_passthrough: AttributeError(\"'CPURenderBackend' object has no attribute 'image_cache'\")",
+      "- test_gpu_rasterize::test_create_backend_gpu_injected_device: AssertionError()",
+      "- test_gpu_rasterize::test_gpu_backend_describe_diagnostic: AssertionError()"
+    ]
+  },
+  "images": {
+    "gui.png": {
+      "size": [
+        800,
+        600
+      ],
+      "nonwhite_pixels": 0
+    },
+    "cli.png": {
+      "size": [
+        800,
+        600
+      ],
+      "nonwhite_pixels": 37093
+    },
+    "gui-ua.png": {
+      "size": [
+        800,
+        600
+      ],
+      "nonwhite_pixels": 37087
+    },
+    "current-glyphs.png": {
+      "size": [
+        1000,
+        500
+      ],
+      "nonwhite_pixels": 23336
+    }
+  }
+}

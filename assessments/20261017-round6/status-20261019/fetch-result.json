@@ -1,0 +1,16 @@
+{
+  "mode": "fetch",
+  "url": "https://www.baidu.com/",
+  "viewport": [
+    800,
+    600
+  ],
+  "time": "2026-10-19 09:22:30",
+  "status": 200,
+  "final_url": "https://www.baidu.com/",
+  "characters": 227,
+  "html_prefix": "<html>\r\n<head>\r\n\t<script>\r\n\t\tlocation.replace(location.href.replace(\"https://\",\"http://\"));\r\n\t</script>\r\n</head>\r\n<body>\r\n\t<noscript><meta http-equiv=\"refresh\" content=\"0;url=http://www.baidu.com/\"></noscript>\r\n</body>\r\n</html>",
+  "outcome": "completed",
+  "elapsed_ms": 175.18,
+  "request_count": 1
+}

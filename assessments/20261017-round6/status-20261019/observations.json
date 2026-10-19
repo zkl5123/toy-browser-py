@@ -1,0 +1,134 @@
+{
+  "font": "bundled fonts/arial.ttf, explicitly installed into specimen process registry",
+  "font_sha256": "b3658eadae55e682b5f69eb64c439c1ecc8f196c0bb8d4756d145d13bc86476a",
+  "sizes": [
+    12,
+    16,
+    24,
+    36,
+    48
+  ],
+  "glyphs": {
+    "O": {
+      "outline_bbox": [
+        99,
+        -25,
+        1501,
+        1492
+      ],
+      "outline_points": 28,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        18,
+        20
+      ],
+      "mask_has_bearing": false
+    },
+    "B": {
+      "outline_bbox": [
+        150,
+        0,
+        1257,
+        1466
+      ],
+      "outline_points": 43,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        15,
+        19
+      ],
+      "mask_has_bearing": false
+    },
+    "8": {
+      "outline_bbox": [
+        83,
+        -25,
+        1049,
+        1472
+      ],
+      "outline_points": 49,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        14,
+        20
+      ],
+      "mask_has_bearing": false
+    },
+    "g": {
+      "outline_bbox": [
+        66,
+        -431,
+        1002,
+        1086
+      ],
+      "outline_points": 43,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        13,
+        20
+      ],
+      "mask_has_bearing": false
+    },
+    "j": {
+      "outline_bbox": [
+        -94,
+        -431,
+        314,
+        1466
+      ],
+      "outline_points": 19,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        7,
+        25
+      ],
+      "mask_has_bearing": false
+    },
+    "p": {
+      "outline_bbox": [
+        135,
+        -407,
+        1057,
+        1086
+      ],
+      "outline_points": 31,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        13,
+        19
+      ],
+      "mask_has_bearing": false
+    },
+    "q": {
+      "outline_bbox": [
+        72,
+        -407,
+        992,
+        1086
+      ],
+      "outline_points": 29,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        13,
+        19
+      ],
+      "mask_has_bearing": false
+    },
+    "@": {
+      "outline_bbox": [
+        111,
+        -431,
+        2005,
+        1493
+      ],
+      "outline_points": 88,
+      "has_contour_boundaries": false,
+      "mask_dimensions": [
+        24,
+        25
+      ],
+      "mask_has_bearing": false
+    }
+  },
+  "scope": "Current rasterization only, not browser comparison, no code fixes."
+}

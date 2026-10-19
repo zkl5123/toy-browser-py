@@ -1,0 +1,38 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\Administrator\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+  "wgpu_available": false,
+  "head": "2d1bdd31c982fe6637be30da393f47f4170e2750",
+  "gui_navigation_calls": [
+    {
+      "method": "_commit_navigation",
+      "line": 1626
+    },
+    {
+      "method": "load_url",
+      "line": 1665
+    },
+    {
+      "method": "_commit_navigation",
+      "line": 1674
+    },
+    {
+      "method": "_commit_navigation",
+      "line": 1795
+    },
+    {
+      "method": "_commit_navigation",
+      "line": 2211
+    },
+    {
+      "method": "load_url",
+      "line": 2216
+    },
+    {
+      "method": "load_url",
+      "line": 1019
+    }
+  ],
+  "font_png_identical_to_round5": true,
+  "font_png_sha256": "4278298e1a1caf7d150dccc39f99f09367cf63f69b6f61e2025f24ec8d5e216e"
+}
