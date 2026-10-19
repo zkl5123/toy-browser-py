@@ -850,6 +850,58 @@ class GPUBackend(RenderBackend):
             self._rasterizer, capacity=glyph_atlas_capacity)
         self._frame_seq = 0
         self._doc_frames: dict = {}
+        # R7-P02 §254 — GUI 后端边界契约层（纯逻辑，P13 不崩）：
+        # * ``_gate`` — surface present 前置门控（no-surface 契约收敛）。
+        # * ``_readback`` — 读回策略（常规帧不读回，截图才读回）。
+        # * ``_recovery`` — resize / device-lost 恢复状态机（失效标记
+        #   + 降级 CPU 决策）。
+        from toy_browser.rendering import gui_backend_boundary as _gbb
+        self._gate = _gbb.SurfacePresentGate()
+        self._readback = _gbb.ReadbackPolicy()
+        self._recovery = _gbb.ResizeLostRecovery()
+
+    @property
+    def gui_boundary(self):
+        """R7-P02 §254 — GUI 后端边界契约层快照（gate / readback /
+        recovery 三对象的诊断 dict，供 G10 诊断区 + 验收可解释）。"""
+        return {
+            "present_gate": type(self._gate).__name__,
+            "readback_policy": self._readback.describe(),
+            "resize_lost": self._recovery.snapshot(),
+        }
+
+    def handle_device_lost(self) -> int:
+        """R7-P02 §254 — 设备失效事件 → 全部纹理 / frame 失效。
+
+        经 :class:`ResizeLostRecovery.on_device_lost` 进入 lost 态 +
+        失效标记；下次 :meth:`render` 须重走（不能复用失效纹理）。
+        返回事件序号（诊断 / 验收"记录 GPU 时间 / 事件"）。降级
+        决策经 :meth:`_recovery.should_fallback_to_cpu`（设备 lost +
+        无 surface → 退化 CPU，P13 不崩）。"""
+        return self._recovery.on_device_lost()
+
+    def handle_device_restored(self) -> int:
+        """R7-P02 §254 — 设备恢复（重建 surface / device）→ 清 lost，
+        旧 frame 仍失效（需重 render）。返回事件序号。"""
+        return self._recovery.on_device_restored()
+
+    def request_resize(self, width: int, height: int) -> int:
+        """R7-P02 §254 — 视口 resize → 已产帧失效（旧尺寸不匹配新
+        视口）。经 :class:`ResizeLostRecovery.on_resize` 置失效标记，
+        下次 :meth:`render` 须按新尺寸重走。返回事件序号。"""
+        return self._recovery.on_resize(int(width), int(height))
+
+    def needs_re_render(self) -> bool:
+        """R7-P02 §254 — 是否需重走 render（设备 lost / 已失效帧）。
+
+        主链据此判定：True → 重光栅化 + 重上传；False → 可复用既有
+        frame（常规交互主链不重复光栅化）。"""
+        return self._recovery.needs_re_render
+
+    def mark_render_completed(self) -> int:
+        """R7-P02 §254 — 一次有效 render 完成（非 lost 态）→ 清失效
+        标记。由 :meth:`render` / :meth:`render_with_pass` 末尾调用。"""
+        return self._recovery.on_render_completed()
 
     @property
     def device(self):
@@ -1176,8 +1228,12 @@ class GPUBackend(RenderBackend):
                 "width": frame.width, "height": frame.height}
 
     def present(self, frame, surface=None):
-        """P01 / P03 — 把 *frame* 直接呈现到 *surface*（不隐式 CPU
-        读回，P01 "常规交互无每帧读回"）。
+        """P01 / P03 / R7-P02 §254 — 把 *frame* 直接呈现到 *surface*
+        （不隐式 CPU 读回，P01 "常规交互无每帧读回"）。
+
+        present 前置决策经 :class:`SurfacePresentGate` 门控
+        （§254 "surface 更新可见"——把隐式 ``no-surface`` 契约收敛
+        为显式 gate），行为契约不变：
 
         * ``surface`` — GPU 呈现目标。支持两种形态（均可缺省为 None）：
 
@@ -1188,28 +1244,34 @@ class GPUBackend(RenderBackend):
              便于测试注入 / GUI 接线（Tk 主线程持有 context +
              device + 目标 surface 三件，一次传入）。
 
-        行为契约（P03 与 P13 回退分层验收）：
+        行为契约（P03 与 P13 回退分层验收，经 :attr:`_gate` 门控）：
 
         - ``frame is None`` → 返回 ``False``（无帧可呈现）。
-        - ``surface is None`` 且后端持有真实 wgpu 设备 → 返回
-          ``"no-surface"``（**不**抛错；P13 无头 / 离屏环境优雅降级，
-          帧已光栅化 + 上传纹理但无处呈现——真实 surface present
-          留待 GUI 接线批次）。
-        - 注入了有效 ``surface`` → 经 :meth:`_present_to_surface`
-          真实 submit 到 wgpu queue，返回 ``True``。
-        - 后端无真实设备（CPU 回退形态）→ 返回 ``True``（CPU 参考
-          语义：帧在 ``frame.image``，GUI 直接消费，等价"呈现成功"）。
+        - 后端无真实设备（gate 判 ``DECISION_CPU``）→ 返回
+          ``True``（CPU 参考语义：帧在 ``frame.image``，GUI 直接
+          消费，等价"呈现成功"）。
+        - ``surface is None`` 且真实 wgpu 设备（gate 判
+          ``DECISION_NO_SURFACE``）→ 返回 ``"no-surface"``（**不**
+          抛错；P13 无头 / 离屏环境优雅降级，帧已光栅化 + 上传纹理
+          但无处呈现——真实 surface present 留待 GUI 接线批次）。
+        - 注入了有效 ``surface``（gate 判 ``DECISION_PRESENT``）→ 经
+          :meth:`_present_to_surface` 真实 submit 到 wgpu queue，
+          返回 ``True``。
         """
         if frame is None:
             return False
-        # CPU 回退形态（P13）：无 wgpu 设备，帧在 frame.image，
-        # GUI 直接消费（无真实 surface 需 present）。
-        if not self.is_real_gpu:
+        from toy_browser.rendering.gui_backend_boundary import \
+            SurfacePresentGate
+        decision = self._gate.decide(self.is_real_gpu, surface)
+        if decision == SurfacePresentGate.DECISION_CPU:
+            # CPU 回退形态（P13）：无 wgpu 设备，帧在 frame.image，
+            # GUI 直接消费（无真实 surface 需 present）。
             return True
-        if surface is None:
-            # P03 — 真实设备但无 surface：不抛错，返回可区降标记，
-            # 让调用方（GUI 接线批次）显式注入 surface 后重试。
+        if decision == SurfacePresentGate.DECISION_NO_SURFACE:
+            # P03 / §254 — 真实设备但无 surface：不抛错，返回可区降
+            # 标记，让调用方（GUI 接线批次）显式注入 surface 后重试。
             return "no-surface"
+        # DECISION_PRESENT — 真实 submit 到 wgpu queue。
         return self._present_to_surface(frame, surface)
 
     def _present_to_surface(self, frame, surface) -> bool:
@@ -1285,13 +1347,29 @@ class GPUBackend(RenderBackend):
             # 调用方可降级经 frame.image CPU 消费）。
             return False
 
-    def snapshot(self, frame):
-        """P01 — GPU 帧回读 CPU 快照（截图 / PNG 导出才异步回读，
-        P01 第三阶段"交互直接 present，截图才异步回读"）。设备
-        可用时经 :meth:`GPURasterizer.read_back` 读回纹理为
-        CPUImage；设备不可用时回退到 ``frame.image``（CPU 形态，
-        P13 不崩）。"""
+    def snapshot(self, frame, *, is_capture: bool = False):
+        """P01 / R7-P02 §254 — GPU 帧回读 CPU 快照（截图 / PNG 导出
+        才读回，P01 第三阶段"交互直接 present，截图才异步回读"）。
+
+        §254 读回策略经 :class:`ReadbackPolicy` 显式门控（"普通帧不
+        读回，截图才读回"）：仅当 :meth:`ReadbackPolicy.allow_readback`
+        判定为 True（*is_capture* 或常规帧）才实际读回；常规交互
+        帧（present 主链）走 CPU 形态回退，不读回。
+
+        * ``is_capture`` — 本帧是否截图 / PNG 导出用途（True → 读回；
+          False → 常规交互帧，设备不可用或无纹理时回退 ``frame.image``）。
+
+        设备可用 + *is_capture* → 经 :meth:`GPURasterizer.read_back`
+        读回纹理为 CPUImage；设备不可用 / 非截图帧 → 回退
+        ``frame.image``（CPU 形态，P13 不崩）。
+        """
         img = getattr(frame, "image", None)
+        # §254 — 读回策略门控：常规交互帧（非 capture）不读回，
+        # 直接回退 CPU 形态（frame.image）。
+        from toy_browser.rendering import gui_backend_boundary as _gbb
+        if not self._readback.allow_readback(
+                _gbb.USE_PRESENT, is_capture=is_capture):
+            return img
         if not self.is_real_gpu or getattr(frame, "texture", None) is None:
             return img
         back = self._rasterizer.read_back(frame.texture, frame.width,
