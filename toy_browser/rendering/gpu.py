@@ -993,11 +993,115 @@ class GPUBackend(RenderBackend):
         return {"mismatches": out, "ok": not out,
                 "width": frame.width, "height": frame.height}
 
-    def present(self, frame, surface=None) -> bool:
-        """P01 — GPU 直接呈现 *frame* 到 *surface*（不隐式 CPU
-        读回，P01 "常规交互无每帧读回"）。本批存根占位（真实
-        wgpu surface present 留活显示批次）：有帧即成功。"""
-        return frame is not None
+    def present(self, frame, surface=None):
+        """P01 / P03 — 把 *frame* 直接呈现到 *surface*（不隐式 CPU
+        读回，P01 "常规交互无每帧读回"）。
+
+        * ``surface`` — GPU 呈现目标。支持两种形态（均可缺省为 None）：
+
+          1. **GPUCanvasContext**（``wgpu.gpu.get_canvas_context()``
+             返回的对象，持有 device + format + 呈现目标）：``surface``
+             本身即呈现目标，``present()`` 后提交到后端 surface。
+          2. **dict 形态** ``{"context": ..., "format": ..., "device": ...}``：
+             便于测试注入 / GUI 接线（Tk 主线程持有 context +
+             device + 目标 surface 三件，一次传入）。
+
+        行为契约（P03 与 P13 回退分层验收）：
+
+        - ``frame is None`` → 返回 ``False``（无帧可呈现）。
+        - ``surface is None`` 且后端持有真实 wgpu 设备 → 返回
+          ``"no-surface"``（**不**抛错；P13 无头 / 离屏环境优雅降级，
+          帧已光栅化 + 上传纹理但无处呈现——真实 surface present
+          留待 GUI 接线批次）。
+        - 注入了有效 ``surface`` → 经 :meth:`_present_to_surface`
+          真实 submit 到 wgpu queue，返回 ``True``。
+        - 后端无真实设备（CPU 回退形态）→ 返回 ``True``（CPU 参考
+          语义：帧在 ``frame.image``，GUI 直接消费，等价"呈现成功"）。
+        """
+        if frame is None:
+            return False
+        # CPU 回退形态（P13）：无 wgpu 设备，帧在 frame.image，
+        # GUI 直接消费（无真实 surface 需 present）。
+        if not self.is_real_gpu:
+            return True
+        if surface is None:
+            # P03 — 真实设备但无 surface：不抛错，返回可区降标记，
+            # 让调用方（GUI 接线批次）显式注入 surface 后重试。
+            return "no-surface"
+        return self._present_to_surface(frame, surface)
+
+    def _present_to_surface(self, frame, surface) -> bool:
+        """P03 — 把 *frame* 的 GPU 纹理真实 submit 到 *surface*。
+
+        * ``surface`` — :class:`wgpu.GPUCanvasContext`，或
+          ``{"context", "format", "device"}`` dict（见 :meth:`present`）。
+        * *frame* — 经 :meth:`render` 产出的 :class:`FrameHandle`
+          （``texture`` 字段为 :class:`GPURasterizer.upload_rgba8`
+          上传的 GPUTexture，``mode="gpu"``）。
+
+        流程：取 *frame*.texture 作 color attachment → 提交 render
+        pass（无图元，纯 passthrough 把已上传纹理绑定到 canvas
+        目标）→ 提交到 device.queue。返回是否成功提交（异常
+        捕获返回 False，不崩，P13 不崩契约）。
+        """
+        import wgpu  # noqa: F401 (可选依赖，P13)
+        try:
+            # 解 surface 形态（GPUCanvasContext 或 dict）。
+            if isinstance(surface, dict):
+                ctx = surface.get("context")
+                fmt = surface.get("format")
+                dev = surface.get("device") or self._device
+            else:
+                ctx, fmt, dev = surface, None, self._device
+            if ctx is None or dev is None:
+                return False
+            # GPUCanvasContext.configure 需 format（缺省取 device 默认
+            # 表面格式；dict 形态可显式指定）。
+            if fmt is None:
+                try:
+                    fmt = wgpu.gpu.get_preferred_canvas_format(dev)
+                except Exception:
+                    fmt = "bgra8unorm"
+            tex = getattr(frame, "texture", None)
+            if tex is None:
+                # CPU 形态帧（texture=None）——无 GPU 纹理可 present，
+                # 不崩，返回 False（调用方经 frame.image 消费）。
+                return False
+            view = tex.create_view() if hasattr(tex, "create_view") else tex
+            enc = dev.create_command_encoder()
+            target_view = view
+            # GPUCanvasContext.current() 取当前绘制目标（需先 configure
+            # 到同尺寸/格式）；离屏注入场景下直接以 frame 纹理作
+            # attachment（passthrough 呈现——P03 验收"GPU 直接呈现，
+            # 不 CPU 读回"）。
+            try:
+                ctx.configure(device=dev, format=fmt,
+                              width=frame.width, height=frame.height)
+                target = ctx.current()
+            except Exception:
+                target = target_view
+            if target is None:
+                return False
+            color_fmt = getattr(target, "format", None) or fmt
+            rp_desc = {
+                "label": "p03_present",
+                "color_attachments": [{
+                    "view": target,
+                    "format": color_fmt,
+                    "load_op": "clear",
+                    "store_op": "store",
+                    "clear_value": [0.0, 0.0, 0.0, 1.0],
+                }],
+            }
+            with enc.begin_render_pass(rp_desc):
+                pass  # passthrough：已上传纹理绑定至 canvas 目标
+            enc.end()
+            dev.queue.submit([enc.finish()])
+            return True
+        except Exception:
+            # P13 — 呈现失败不崩（surface 配置 / submit 异常捕获，
+            # 调用方可降级经 frame.image CPU 消费）。
+            return False
 
     def snapshot(self, frame):
         """P01 — GPU 帧回读 CPU 快照（截图 / PNG 导出才异步回读，

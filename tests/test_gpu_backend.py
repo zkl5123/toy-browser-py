@@ -229,12 +229,28 @@ def test_gpu_backend_wgpu_probe():
 
 @_reg
 def test_gpu_backend_present_contract():
-    """P01 — GPUBackend 的 present / snapshot 契约形态（与 CPU 参考
-    同签名；批次 48 起真实 wgpu 实现，设备不可用时退化存根不崩）。"""
+    """P01/P03 — GPUBackend 的 present / snapshot 契约形态（P03 将
+    present 从存根占位升级为**分层呈现契约**：无帧 → False；CPU
+    回退 → True；真实设备但无 surface → "no-surface"；注入合法
+    surface → 真实 wgpu submit，False/True 反映成败）。"""
     b = GPUBackend()
     assert b.mode == BackendMode.GPU
     fake = FrameHandle(1, 10, 10, mode="gpu")
-    assert b.present(fake) is True
+    fake.texture = None  # P03 — GPU 形态帧由 render() 注入纹理句柄
+    # P03 — 无帧可呈现 → False（契约最底层，环境无关）。
+    assert b.present(None) is False
+    # P03 — CPU 回退形态（P13）：无 wgpu 设备时帧在 frame.image，
+    # GUI 直接消费，等价"呈现成功"（True）。
+    if not b.is_real_gpu:
+        assert b.present(fake) is True
+    # P03 — 真实设备但无 surface：不抛错，返回可区降标记，让调用方
+    # 显式注入 surface 后重试（P03 与 P13 分层验收）。
+    else:
+        assert b.present(fake) == "no-surface"
+    # P03 — 注入 fake surface（非真实 GPUCanvasContext）：_present_to_surface
+    # 捕获 surface 形态不匹配 / configure 失败，按 P13 不崩契约返回
+    # False（不崩；真实 GPU 表面呈现验收需 GUI 接线批次）。
+    assert b.present(fake, surface=object()) is False
     snap = b.snapshot(fake)
     assert snap is fake.image or type(snap).__name__ == "CPUImage"
 
