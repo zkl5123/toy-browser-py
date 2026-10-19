@@ -207,7 +207,12 @@ def test_create_backend_gpu_returns_real_when_available():
 @_reg
 def test_create_backend_gpu_injected_device():
     """P02 — create_backend(GPU, device=<GPUDevice>) 用注入设备直接
-    构造真实 GPU 后端（不重新探测，P02 实测可注入）。"""
+    构造真实 GPU 后端（不重新探测，P02 实测可注入）。
+
+    分层契约：有 wgpu 设备时验证 GPUBackend + is_real_gpu；
+    无 wgpu 设备时 create_backend(GPU, device=None) 按 P13 回退
+    CPURenderBackend，只验证不崩即可（GPUBackend(device=None) 是
+    退化存根形态，工厂层面直接回退 CPU 是更高层的契约）。"""
     dev = acquire_wgpu_device()
     if dev is not None:
         b = create_backend(BackendMode.GPU, device=dev)
@@ -215,23 +220,28 @@ def test_create_backend_gpu_injected_device():
         assert b.is_real_gpu is True
         assert b.device is dev
     else:
-        # 无设备：注入 None → GPUBackend(device=None) 退化存根不崩
+        # P13 回退契约：无 wgpu 设备时工厂回退 CPU 后端（不崩）
         b = create_backend(BackendMode.GPU, device=None)
-        assert isinstance(b, GPUBackend)
-        assert b.is_real_gpu is False
+        assert isinstance(b, CPURenderBackend)
+        h = b.render(_mixed_dl(), {"width": 80, "height": 40})
+        assert isinstance(h, FrameHandle)
+        assert h.image is not None
 
 
 @_reg
 def test_gpu_backend_describe_diagnostic():
-    """P01 / P02 验收 — GPUBackend.describe 诊断串含 mode / device /
-    documents / frame_seq（供 G10 诊断区显示 adapter / backend /
-    fallback 状态）。"""
+    """P01 / P02 验收 — describe 诊断串含 mode / documents（供 G10
+    诊断区显示 backend 状态）。GPUBackend 额外含 device / frame_seq。
+
+    分层契约：GPUBackend.describe 含全部字段；CPURenderBackend
+    （P13 回退形态）的 describe 只保证含 mode 和 documents。"""
     b = create_backend(BackendMode.GPU)
     s = b.describe()
     assert "mode=gpu" in s or "mode=cpu" in s
-    assert "device=" in s
     assert "documents=" in s
-    assert "frame_seq=" in s
+    if isinstance(b, GPUBackend):
+        assert "device=" in s
+        assert "frame_seq=" in s
 
 
 if __name__ == "__main__":

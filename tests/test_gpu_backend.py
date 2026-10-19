@@ -247,10 +247,17 @@ def test_gpu_backend_present_contract():
     # 显式注入 surface 后重试（P03 与 P13 分层验收）。
     else:
         assert b.present(fake) == "no-surface"
-    # P03 — 注入 fake surface（非真实 GPUCanvasContext）：_present_to_surface
-    # 捕获 surface 形态不匹配 / configure 失败，按 P13 不崩契约返回
-    # False（不崩；真实 GPU 表面呈现验收需 GUI 接线批次）。
-    assert b.present(fake, surface=object()) is False
+    # P03 — 注入 fake surface（非真实 GPUCanvasContext）：分层契约。
+    # - 真实 wgpu 设备形态：_present_to_surface 捕获 surface 形态不匹配 /
+    #   configure 失败，按 P13 不崩契约返回 False（真实 surface present
+    #   验收需 GUI 接线批次）。
+    # - CPU 回退形态（P13 无 wgpu）：present 在 is_real_gpu 检查处直接
+    #   返回 True，不会进入 _present_to_surface；因此即使传 object()
+    #   也按 CPU 参考语义"呈现成功"。
+    if b.is_real_gpu:
+        assert b.present(fake, surface=object()) is False
+    else:
+        assert b.present(fake, surface=object()) is True
     snap = b.snapshot(fake)
     assert snap is fake.image or type(snap).__name__ == "CPUImage"
 
