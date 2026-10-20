@@ -4793,6 +4793,21 @@ class Host:
         self._timers: list = []
         self._microtasks: list = []  # P1 (assessment report) — Promise.then handlers
         self._raf_callbacks: list = []  # P1.2
+        # R7-S04 第 4 点 — 页面任务队列独立限额（纯逻辑判定层）：
+        # timer / microtask / rAF 入队前经 PageResourceLimits.admit
+        # 判定，超限拒入队（不崩，静默丢弃 + 计数可诊断）。默认走
+        # DEFAULT_LIMITS（TASK_QUEUE=10000），未启用（0）时恒放行。
+        try:
+            from toy_browser.network.page_limits import (
+                PageResourceLimits as _PageLimits,
+                PageDimension as _PageDim,
+            )
+            self._task_limits = _PageLimits()
+            self._task_dim = _PageDim.TASK_QUEUE
+        except Exception:
+            self._task_limits = None
+            self._task_dim = None
+        self._task_rejected = 0
         self._style_cache: dict = {}
         self._promise_counter = 0
         # P33.P1 — Web API globals (localStorage / WebSocket / navigator /
@@ -5501,6 +5516,12 @@ class Host:
         fix already wires the queue; this stub just routes through
         it so the name is callable)."""
         if callable(cb):
+            # R7-S04 第 4 点 — 任务队列限额（同 timer）：超限拒入队。
+            if self._task_limits is not None and self._task_dim is not None:
+                if not self._task_limits.admit(self._task_dim, 1):
+                    self._task_rejected += 1
+                    return
+                self._task_limits.charge(self._task_dim, 1)
             self._microtasks.append((cb, True, None, "micro"))
 
     # P9.3 — Number built-in
@@ -5868,10 +5889,24 @@ class Host:
             delay_num = float(delay)
         except (TypeError, ValueError):
             delay_num = 0.0
+        # R7-S04 第 4 点 — 任务队列独立限额（分配前防护）：入队前
+        # 经 PageResourceLimits.admit 判定，超限拒入队（不崩，计数
+        # 可诊断）。未启用（_task_limits 为 None / 上限 0）时恒放行。
+        if self._task_limits is not None and self._task_dim is not None:
+            if not self._task_limits.admit(self._task_dim, 1):
+                self._task_rejected += 1
+                return
+            self._task_limits.charge(self._task_dim, 1)
         self._timers.append((target, delay_num))
 
     # P1.2 — requestAnimationFrame (toy: enqueue callback, flushed after scripts)
     def _request_animation_frame(self, cb):
+        # R7-S04 第 4 点 — 任务队列限额（同 timer）：超限拒入队。
+        if self._task_limits is not None and self._task_dim is not None:
+            if not self._task_limits.admit(self._task_dim, 1):
+                self._task_rejected += 1
+                return len(self._raf_callbacks)
+            self._task_limits.charge(self._task_dim, 1)
         self._raf_callbacks.append(cb)
         return len(self._raf_callbacks)
 
@@ -5879,6 +5914,9 @@ class Host:
         """Execute queued rAF callbacks in FIFO order (toy: one pass)."""
         cbs = list(self._raf_callbacks)
         self._raf_callbacks.clear()
+        # R7-S04 第 4 点 — 出队释放记账（任务已结算，队列槽位腾出）。
+        if self._task_limits is not None and self._task_dim is not None and cbs:
+            self._task_limits.release(self._task_dim, len(cbs))
         for cb in cbs:
             try:
                 if callable(cb):
@@ -5902,6 +5940,10 @@ class Host:
             if not self._microtasks:
                 break
             batch, self._microtasks = self._microtasks, []
+            # R7-S04 第 4 点 — 出队释放记账（微任务已结算，队列槽位腾出）。
+            if self._task_limits is not None and self._task_dim is not None \
+                    and batch:
+                self._task_limits.release(self._task_dim, len(batch))
             for item in batch:
                 # Entry shape: (fn, ok, val, kind).  ``kind`` is
                 # ``"micro"`` for a 0-arg user microtask callback
@@ -8527,6 +8569,10 @@ class Host:
             # fires first", stable within a deadline).
             batch = sorted(self._timers, key=lambda t: t[1])
             self._timers = []
+            # R7-S04 第 4 点 — 出队释放记账（timer 已结算，队列槽位腾出）。
+            if self._task_limits is not None and self._task_dim is not None \
+                    and batch:
+                self._task_limits.release(self._task_dim, len(batch))
             for code, _ in batch:
                 try:
                     if callable(code):

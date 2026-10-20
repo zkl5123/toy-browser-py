@@ -138,6 +138,19 @@ class PageResourceLimits:
             return
         self._used[dim] = self.used(dim) + n
 
+    def release(self, dim: PageDimension, n: int = 1) -> None:
+        """资源结算后**回退**记账（出队 / 释放槽位，与 :meth:`charge` 对称）。
+
+        只按 *n*（须为正）向下回退，下界 0（不记成负数，防恶意负值
+        绕过）。与 :meth:`charge` 的"负按 0 处理"区别：``charge`` 防
+        恶意负值，``release`` 是调用方**主动**声明"这批资源已结算"
+        的合法回退，所以接受正值往下减。未启用 / 未记账维度回退为
+        无副作用（0 - 0）。"""
+        n = max(0, int(n))
+        if n == 0:
+            return
+        self._used[dim] = max(0, self.used(dim) - n)
+
     def would_exceed(self, dim: PageDimension, n: int = 1) -> bool:
         """纯判定：再加 *n* 是否会超上限（不记账、无副作用）。
 

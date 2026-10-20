@@ -239,6 +239,121 @@ def test_closed_tab_still_rejected_regardless_of_limit():
         "已关 tab 的命令须拒收（与限额无关）"
 
 
+# ---------------------------------------------------------------------------
+# 逐入口接线 — 任务队列 / 字体 / 图像（S04 第 4 点非 IPC 维度）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_task_queue_entry_points_refuse():
+    """js.Host 三任务入口（_set_timeout / _queue_microtask /
+    _request_animation_frame）接 TASK_QUEUE 限额：超限拒入队 +
+    计数可诊断 + flush 出队释放槽位。"""
+    import base64
+    from toy_browser.scripting import js
+    from toy_browser.document import dom as dom_mod
+    from toy_browser.network.page_limits import PageDimension
+
+    root = dom_mod.parse(b"<html><body></body></html>")
+    host = js.Host(root, lambda *a, **k: None)
+    # 把任务队列上限压到 2，验证"入队防护 + 出队释放"。
+    host._task_limits.limits[PageDimension.TASK_QUEUE] = 2
+    # 入队 1、2：放行；入队 3：超限拒。
+    host._set_timeout(lambda *a: None, 0)
+    host._set_timeout(lambda *a: None, 0)
+    assert len(host._timers) == 2
+    host._set_timeout(lambda *a: None, 0)
+    assert len(host._timers) == 2, "第 3 条 timer 须拒入队（TASK_QUEUE 限额）"
+    assert host._task_rejected == 1
+    # 出队释放：flush 后槽位腾出，可再入队。
+    host.flush_timers()
+    assert host._task_limits.used(PageDimension.TASK_QUEUE) == 0, \
+        "flush 出队须释放 TASK_QUEUE 记账"
+    host._set_timeout(lambda *a: None, 0)
+    assert len(host._timers) == 1, "flush 释放后须可再入队"
+
+
+@_reg
+def test_microtask_and_raf_entry_points_refuse():
+    """_queue_microtask / _request_animation_frame 同口径接 TASK_QUEUE。"""
+    from toy_browser.scripting import js
+    from toy_browser.document import dom as dom_mod
+    from toy_browser.network.page_limits import PageDimension
+
+    root = dom_mod.parse(b"<html><body></body></html>")
+    host = js.Host(root, lambda *a, **k: None)
+    host._task_limits.limits[PageDimension.TASK_QUEUE] = 1
+    host._queue_microtask(lambda *a: None)
+    assert len(host._microtasks) == 1
+    host._request_animation_frame(lambda *a: None)
+    assert len(host._raf_callbacks) == 0, "rAF 第 2 条须拒（限额=1 已满）"
+    assert host._task_rejected == 1
+    # flush_raf 只结算 rAF 队列：rAF 槽位释放，microtask 槽位仍在
+    # （两入口共享 TASK_QUEUE 维度，各按自身入队记账）。
+    host.flush_raf()
+    assert host._task_limits.used(PageDimension.TASK_QUEUE) == 1, \
+        "flush_raf 后 rAF 释放，microtask 1 条仍占槽位"
+    # flush_microtasks 结算 microtask，槽位清零。
+    host.flush_microtasks()
+    assert host._task_limits.used(PageDimension.TASK_QUEUE) == 0
+
+
+@_reg
+def test_font_entry_refuses_oversized_table_dir():
+    """ttf._load_one_ttf 接 FONT_COMPONENTS 限额（接线契约 + 决策层
+    语义）：源码须引用 FONT_COMPONENTS 维度；判定层对"表目录数 >
+    上限"返回 False（超限拒加载），边界（== 上限）放行。"""
+    import re
+    from toy_browser.network.page_limits import (
+        PageResourceLimits, PageDimension,
+    )
+    # 静态契约：ttf_font 的表目录判定点引用了 FONT_COMPONENTS 维度。
+    src = _src("toy_browser/typography/ttf_font.py")
+    m = re.search(r"_load_one_ttf.*?(?=\ndef |\nclass )", src, re.S)
+    assert "FONT_COMPONENTS" in src, "ttf 须接字体表/组件限额维度"
+    assert "_load_one_ttf" in src, "字体表判定须下沉到 _load_one_ttf"
+    # 动态语义：表目录数 20 > 上限 4 → admit 拒（加载失败路径）。
+    l = PageResourceLimits(limits={PageDimension.FONT_COMPONENTS: 4})
+    assert l.admit(PageDimension.FONT_COMPONENTS, 20) is False, \
+        "表目录 20 > 4 须拒（超限不崩，TTFError 可诊断）"
+    # 边界：表目录 4 == 上限 4 → 0+4>4 为 False → 放行。
+    assert l.admit(PageDimension.FONT_COMPONENTS, 4) is True, \
+        "表目录 4 <= 4 须放行（边界）"
+    # 已记账 4（用满）后再 admit 任何正数 → 拒。
+    l.charge(PageDimension.FONT_COMPONENTS, 4)
+    assert l.exhausted(PageDimension.FONT_COMPONENTS)
+    assert l.admit(PageDimension.FONT_COMPONENTS, 1) is False
+
+
+@_reg
+def test_image_entry_refuses_oversized_pixels():
+    """layout._decode_data_uri 接 IMAGE_PIXELS 限额：像素总量超限返回
+    None（可诊断、不崩）；限额内放行。"""
+    import base64
+    from toy_browser.layout import layout as _lay
+    from toy_browser.network.page_limits import (
+        PageResourceLimits, PageDimension,
+    )
+
+    # 4×4 原色 RGB：4*4*3 = 48 字节。像素总量 = 16。
+    rgb = bytes([i % 256 for i in range(16)]) * 3
+    b64 = base64.b64encode(rgb).decode()
+    uri = "data:image/octet-stream;base64," + b64
+
+    limits = PageResourceLimits(limits={PageDimension.IMAGE_PIXELS: 8})
+    # 16 > 8 → 超限，解码返回 None（不崩）。
+    assert _lay._decode_data_uri(uri, limits) is None, \
+        "像素 16 > 限额 8 须返回 None（超限拒解码）"
+    # 限额内（16 <= 16）→ 放行。
+    ok = PageResourceLimits(limits={PageDimension.IMAGE_PIXELS: 16})
+    res = _lay._decode_data_uri(uri, ok)
+    assert res is not None, "像素 16 <= 限额 16 须放行"
+    pixels, w, h = res
+    assert (w, h) == (4, 4) and len(pixels) == 16
+    # limits=None（向后兼容）→ 不校验，正常解码。
+    res_none = _lay._decode_data_uri(uri, None)
+    assert res_none is not None
+
+
 if __name__ == "__main__":
     for name, fn in TESTS:
         fn()

@@ -5,6 +5,7 @@ walks to emit display commands.
 """
 from __future__ import annotations
 
+import threading
 import weakref
 from dataclasses import dataclass, field
 from typing import Optional
@@ -54,6 +55,18 @@ _CHILD_INDEX_CACHE_MAX = 4096
 # document realistically uses far fewer).  Reset in clear_caches.
 _half_lead_cache: dict = {}
 _HALF_LEAD_CACHE_MAX = 64
+
+# R7-S04 第 4 点 — 图像像素入口的限额句柄（线程局部，默认 None）。
+# ``layout()`` 在每次渲染开始时设置本线程的 ``_page_limits``；
+# ``_decode_data_uri`` / ``_decode_png_min`` 读它做 IMAGE_PIXELS 的
+# 分配前防护；``clear_caches()`` 重置为 None（跨文档不串账）。
+# 用 threading.local 而非模块级单例：多渲染线程各持一份，避免串账。
+_thread_local = threading.local()
+
+
+def _current_image_limits():
+    """R7-S04 第 4 点 — 取本线程当前渲染的图像限额（可能为 None）。"""
+    return getattr(_thread_local, "page_limits", None)
 
 
 def _child_index_for(node, parent_dom) -> int:
@@ -158,6 +171,8 @@ def clear_caches() -> None:
     # is the main win of the warm-cache path.  Only a test that swaps
     # the font registry calls text_mod.clear_advance_cache() directly.
     css_mod.clear_caches()
+    # R7-S04 第 4 点 — 图像限额句柄跨文档不串账，随缓存一起清。
+    _thread_local.page_limits = None
 
 
 class BoxType:
@@ -455,7 +470,7 @@ def shorthand_edges(value, font_px: float) -> EdgeSizes:
     return EdgeSizes(r, r, r, r)
 
 
-def _decode_data_uri(src: str):
+def _decode_data_uri(src: str, limits=None):
     """P3.1 — decode a data: URI into (pixels, w, h) or None.
 
     Supports:
@@ -465,6 +480,11 @@ def _decode_data_uri(src: str):
 
     The pixel buffer is a flat list of 0x00RRGGBB u32 (row-major, same as
     paint.Bitmap.pixels).
+
+    R7-S04 第 4 点 — 可选 *limits*（:class:`PageResourceLimits`）：解码出
+    像素总数（w×h）后、构建像素表**之前**做 ``admit(IMAGE_PIXELS, w*h)``
+    分配前防护，超限返回 None（不崩、可诊断，符合审计 S04 第 1 点
+    "不能先读完再检查"）。*limits* 为 None 时保持旧行为（不校验）。
     """
     import base64
 
@@ -481,7 +501,7 @@ def _decode_data_uri(src: str):
 
     mime = header[5:].lower()  # strip "data:"
     if "png" in mime:
-        return _decode_png_min(raw)
+        return _decode_png_min(raw, limits)
     # Raw RGB / octet-stream: interpret as w×h×3.
     if "octet" in mime or "jpeg" in mime or "jpg" in mime:
         # For raw RGB we need a hint: if the byte count is divisible by 3
@@ -498,6 +518,11 @@ def _decode_data_uri(src: str):
                 # Fall back to a 1×n/3 strip.
                 w = n // 3
                 h = 1
+            # R7-S04 第 4 点 — 像素总量分配前防护（构建 pixels 前判）。
+            if limits is not None:
+                from toy_browser.network.page_limits import PageDimension as _PD
+                if not limits.admit(_PD.IMAGE_PIXELS, w * h):
+                    return None
             pixels = []
             for i in range(0, n, 3):
                 pixels.append((raw[i] << 16) | (raw[i + 1] << 8) | raw[i + 2])
@@ -505,11 +530,14 @@ def _decode_data_uri(src: str):
     return None
 
 
-def _decode_png_min(data: bytes):
+def _decode_png_min(data: bytes, limits=None):
     """P3.1 — minimal PNG decoder (8-bit RGB, no interlace, no palette).
 
     Returns (pixels, w, h) or None.  Uses zlib for IDAT.  Skips unknown
     chunks.  Handles filter types 0–4 (None/Sub/Up/Average/Paeth).
+
+    R7-S04 第 4 点 — 可选 *limits*：返回前对像素总量（width×height）做
+    ``admit(IMAGE_PIXELS, w*h)`` 分配前防护，超限返回 None（可诊断）。
     """
     import struct
     import zlib
@@ -580,6 +608,11 @@ def _decode_png_min(data: bytes):
     out = []
     for i in range(0, len(decoded), 3):
         out.append((decoded[i] << 16) | (decoded[i + 1] << 8) | decoded[i + 2])
+    # R7-S04 第 4 点 — 像素总量分配前防护（返回前判）。
+    if limits is not None:
+        from toy_browser.network.page_limits import PageDimension as _PD
+        if not limits.admit(_PD.IMAGE_PIXELS, width * height):
+            return None
     return (out, width, height)
 
 
@@ -926,7 +959,7 @@ def build_box(sn: StyledNode, parent_font_px: float,
     if tag == "img":
         src = node.attr("src") or ""
         if src.startswith("data:"):
-            decoded = _decode_data_uri(src)
+            decoded = _decode_data_uri(src, _current_image_limits())
             if decoded is not None:
                 img_pixels, img_pixel_w, img_pixel_h = decoded
                 # Use intrinsic size unless overridden.
@@ -2045,7 +2078,8 @@ def _styled_child(sn: StyledNode, dom_child: Node) -> Optional[StyledNode]:
 # --- layout pass -------------------------------------------------------------------
 
 
-def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0):
+def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0,
+           page_limits=None):
     """Build the layout tree and run the single-pass layout. Returns the root LayoutBox.
 
     The styled root is the synthetic "document" node; its children are the
@@ -2058,7 +2092,14 @@ def layout(styled_root: StyledNode, viewport_w: float, _viewport_h: float = 0.0)
 
     P33.R5 — after the full layout pass, every box's ``dirty`` flag is
     reset to False (the tree is now clean).
+
+    R7-S04 第 4 点 — 可选 *page_limits*（:class:`PageResourceLimits`）：
+    渲染开始前把 IMAGE_PIXELS 限额句柄挂到本线程，``<img>`` data-URI
+    解码时在像素总量上做分配前防护（超限 → 该图渲染为占位，不崩）；
+    不传则不校验（向后兼容）。
     """
+    # R7-S04 第 4 点 — 把 IMAGE_PIXELS 限额句柄挂到本线程（渲染期间有效）。
+    _thread_local.page_limits = page_limits
     # P33.R5 — clear id()-based caches so a new document render
     # doesn't produce wrong child indices from a reused memory address.
     clear_caches()

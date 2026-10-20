@@ -397,13 +397,33 @@ def _parse_cmap_subtable(sub: bytes) -> dict:
     return result
 
 
-def _load_one_ttf(data: bytes) -> FontMetrics:
+def _load_one_ttf(data: bytes, limits=None) -> FontMetrics:
     """P33.R1 — parse a *single* TrueType font image (the sfnt record)
     out of ``data``.  Shared by :func:`load_ttf` (whole file) and
-    :func:`load_ttc` (one face of a collection)."""
+    :func:`load_ttc` (one face of a collection).
+
+    R7-S04 第 4 点 — 可选 *limits*（:class:`PageResourceLimits`）：读
+    ``num_tables`` 后、构建表目录**之前**做 ``admit(FONT_COMPONENTS,
+    num_tables)`` 分配前防护，超限抛 :class:`TTFError`（调用方按加载
+    失败回退位图字体，不崩）。记账挂在**传入的** *limits* 上（跨
+    face / 跨文档累加），*limits* 为 None 时退化为仅用默认上限做
+    单字体判定（不跨调用串账，向后兼容）。
+    """
     if len(data) < 6:
         raise TTFError(f"font file too small ({len(data)} bytes)")
     sfnt_version, num_tables = struct.unpack(">IH", data[:6])
+    # R7-S04 第 4 点 — 字体表/组件独立限额（分配前防护）。
+    try:
+        from toy_browser.network.page_limits import (
+            PageResourceLimits as _PL, PageDimension as _PD,
+        )
+        _lim = limits if limits is not None else _PL()
+        if not _lim.admit(_PD.FONT_COMPONENTS, num_tables):
+            raise TTFError(f"font table count {num_tables} exceeds "
+                           f"{_lim.limit(_PD.FONT_COMPONENTS)} limit")
+        _lim.charge(_PD.FONT_COMPONENTS, num_tables)
+    except ImportError:
+        pass  # page_limits 不可用（测试裁剪）时跳过限额，不破坏既有路径
     # sfnt 0x00010000 = TTF, 'OTTO' = CFF/OTF, 'true' = old Mac TTF.
     if sfnt_version not in (0x00010000, 0x54544F46, 0x74727565, 0x4F54544F):
         # Accept 'OTTO' (CFF-based OTF) too — we only read head/hhea/hmtx/cmap,
@@ -528,18 +548,21 @@ def _load_one_ttf(data: bytes) -> FontMetrics:
     )
 
 
-def load_ttf(path: str) -> FontMetrics:
+def load_ttf(path: str, limits=None) -> FontMetrics:
     """P17 — parse a TTF/OTF file into a :class:`FontMetrics`.
 
     Raises :class:`TTFError` on unreadable / malformed files so callers
     can fall back to the built-in bitmap font.
+
+    R7-S04 第 4 点 — 可选 *limits* 透传给 :func:`_load_one_ttf`（字体
+    表/组件限额记账挂到传入的页面限额实例，跨调用累加）。
     """
     try:
         with open(path, "rb") as f:
             data = f.read()
     except OSError as e:
         raise TTFError(f"cannot read font file {path!r}: {e}")
-    return _load_one_ttf(data)
+    return _load_one_ttf(data, limits)
 
 
 # ---------------------------------------------------------------------------
@@ -571,12 +594,15 @@ def ttc_face_count(path: str) -> int:
     return struct.unpack(">L", head[8:12])[0]
 
 
-def load_ttc(path: str, face: int = 0) -> FontMetrics:
+def load_ttc(path: str, face: int = 0, limits=None) -> FontMetrics:
     """P33.R1 — load the *face*-th font of a TrueType Collection.
 
     Falls back to the first face when an index out of range is given, so
     callers can probe a collection with face=0 safely.  Raises
     :class:`TTFError` for non-TTC inputs or unreadable files.
+
+    R7-S04 第 4 点 — 可选 *limits* 透传给 :func:`_load_one_ttf`（跨
+    face 累加记账）。
     """
     try:
         with open(path, "rb") as f:
@@ -592,7 +618,7 @@ def load_ttc(path: str, face: int = 0) -> FontMetrics:
     off = struct.unpack(">L", data[12 + face * 4:16 + face * 4])[0]
     if off >= len(data):
         raise TTFError(f"TTC face {face} offset out of range")
-    return _load_one_ttf(data[off:])
+    return _load_one_ttf(data[off:], limits)
 
 
 def load_face_best_cjk(path: str) -> FontMetrics:
