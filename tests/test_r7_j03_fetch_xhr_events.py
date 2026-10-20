@@ -650,3 +650,111 @@ def test_budget_cancellation_recorded_structurally():
         f"a budget-cancelled script must not block the next: {logs}"
     assert any("budget" in e["error"].lower() for e in host.script_errors), \
         f"the cancellation must be a structured script error: {host.script_errors}"
+
+
+# ---------------------------------------------------------------------------
+# J03 第 2 点 — 响应头过滤统一消费 request_context.filter_response_headers
+# （S02 第 5 点"禁止响应头统一实现"）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_response_headers_use_unified_filter():
+    """J03 第 2 点 — JS 侧响应头暴露不再各写一套硬编码小集合，统一
+    走 request_context.filter_response_headers（同源按
+    FORBIDDEN_RESPONSE_HEADERS 集合过滤；跨源 opaque 无可见头）。
+    服务端一次响应里同时挂多个 forbidden 头（set-cookie /
+    access-control-allow-origin / connection / keep-alive …），
+    脚本通过 r.headers.get / has 只能读到非 forbidden 头。"""
+    srv, port, seen = _start_echo_server({
+        ("GET", "/full.txt"): (
+            200, "text/plain", b"body",
+            {
+                "X-Custom": "visible",
+                "Set-Cookie": "sid=1",
+                "Access-Control-Allow-Origin": "*",
+                "Connection": "keep-alive",
+                "Keep-Alive": "timeout=5",
+            }),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        base = f"http://127.0.0.1:{port}/"
+        host, logs = _make_host(base, (
+            "<html><body><script>"
+            "fetch('" + base + "full.txt')"
+            ".then(function(r){"
+            "  console.log('CT:' + r.headers.get('content-type'));"
+            "  console.log('VIS:' + r.headers.get('x-custom'));"
+            "  console.log('COOKIE:' + (r.headers.get('set-cookie') === null));"
+            "  console.log('ACAO:' + (r.headers.get('access-control-allow-origin') === null));"
+            "  console.log('CONN:' + (r.headers.get('connection') === null));"
+            "  console.log('KEEPALIVE:' + (r.headers.get('keep-alive') === null));"
+            "})"
+            ".catch(function(e){ console.log('ERR:' + e.name); });"
+            "</script></body></html>"))
+        host._fetch_transport = FetchTransport(c, base_url=base)
+        host.execute_all()
+        host.flush_timers()
+        host.flush_microtasks()
+        joined = "\n".join(logs)
+        # 普通头保留
+        assert "CT:text/plain" in joined, joined
+        assert "VIS:visible" in joined, joined
+        # forbidden 响应头（set-cookie / access-control-* / connection /
+        # keep-alive）全部被剥，脚本读 null
+        assert "COOKIE:true" in joined, \
+            f"set-cookie must be filtered: {joined}"
+        assert "ACAO:true" in joined, \
+            f"access-control-allow-origin must be filtered: {joined}"
+        assert "CONN:true" in joined, \
+            f"connection must be filtered: {joined}"
+        assert "KEEPALIVE:true" in joined, \
+            f"keep-alive must be filtered: {joined}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_xhr_response_headers_use_unified_filter():
+    """J03 第 2 点 — XHR.getResponseHeader / getAllResponseHeaders
+    消费同一个 helper：同源按 forbidden 集合过滤，跨源 opaque 全无。"""
+    srv, port, seen = _start_echo_server({
+        ("GET", "/x.txt"): (
+            200, "text/plain", b"x",
+            {
+                "X-Custom": "ok",
+                "Set-Cookie": "a=1",
+                "Access-Control-Allow-Credentials": "true",
+            }),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        base = f"http://127.0.0.1:{port}/"
+        host, logs = _make_host(base, (
+            "<html><body><script>"
+            "var x = new XMLHttpRequest();"
+            "x.open('GET', '" + base + "x.txt', false);"
+            "x.send();"
+            "console.log('V:' + x.getResponseHeader('x-custom'));"
+            "console.log('C:' + (x.getResponseHeader('set-cookie') === null));"
+            "console.log('ACAC:' + (x.getResponseHeader('access-control-allow-credentials') === null));"
+            "var all = x.getAllResponseHeaders();"
+            "console.log('ALL_HAS_COOKIE:' + all.indexOf('set-cookie'));"
+            "</script></body></html>"))
+        host._fetch_transport = FetchTransport(c, base_url=base)
+        host.execute_all()
+        host.flush_timers()
+        host.flush_microtasks()
+        joined = "\n".join(logs)
+        assert "V:ok" in joined, f"x-custom must be visible: {joined}"
+        assert "C:true" in joined, \
+            f"set-cookie must be filtered in XHR: {joined}"
+        assert "ACAC:true" in joined, \
+            f"access-control-allow-credentials must be filtered: {joined}"
+        # getAllResponseHeaders 也只列非 forbidden 头
+        assert "ALL_HAS_COOKIE:-1" in joined, \
+            f"getAllResponseHeaders must exclude forbidden: {joined}"
+        c.close_pool()
+    finally:
+        srv.shutdown()

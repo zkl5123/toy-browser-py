@@ -16,6 +16,9 @@ from typing import Any, Optional
 
 from toy_browser.document.dom import Node as DomNode
 from toy_browser.rendering.paint import Color
+# R7-S02 / J03 — 禁止响应头过滤（JS 侧 Response / XHR 暴露路径共用
+# 同一集合）。request_context 是纯逻辑层，无环，可模块级导入。
+from toy_browser.network import request_context as _rc_mod
 
 # ---------------------------------------------------------------------------
 # Lexer
@@ -6177,9 +6180,14 @@ class Host:
         # R7-J03 — one-shot body state shared by the three readers.
         _body_state = {"used": False}
 
-        # Spec (fetch §2.2.3): forbidden response-header names are not
-        # exposed to script through the "response" headers guard.
-        _FORBIDDEN = {"set-cookie", "set-cookie2"}
+        # J03 第 2 点 — 响应头暴露统一走 request_context.
+        # filter_response_headers（S02 第 5 点"禁止响应头统一
+        # 实现"），不再各写一套硬编码小集合。fetch 按
+        # destination="fetch" 构造 context：跨源 opaque（no-cors
+        # 响应在 S02 evaluate 里已标记）无可见头；同源按
+        # FORBIDDEN_RESPONSE_HEADERS 集合过滤。
+        _hdrs = self._js_filter_response_headers(
+            headers, _rc_mod.DEST_FETCH)
 
         def _rejected(err_name, message):
             p = self._make_promise()
@@ -6227,12 +6235,6 @@ class Host:
                 return _rejected("TypeError",
                                  "body stream already read")
             return self._make_promise(lambda rj, rs: rj(_body_bytes))
-
-        _hdrs = {}
-        for k, v in (headers or {}).items():
-            if str(k).lower() in _FORBIDDEN:
-                continue
-            _hdrs[str(k).lower()] = v
 
         def _header_get(name):
             return _hdrs.get(str(name).lower())
@@ -6458,18 +6460,16 @@ class Host:
                     self._request_headers[str(name)] = str(value)
 
             def getResponseHeader(self, name):
-                # R7-J03 — forbidden response-header names are hidden.
+                # J03 第 2 点 — 可见头在 send() 里已由
+                # _js_filter_response_headers（filter_response_headers）
+                # 统一过滤；这里只按归一化键读。
                 n = str(name).lower()
-                if n in ("set-cookie", "set-cookie2"):
-                    return None
                 v = self._response_headers.get(n)
                 return v if v is not None else None
 
             def getAllResponseHeaders(self):
                 lines = []
                 for k, v in sorted(self._response_headers.items()):
-                    if k in ("set-cookie", "set-cookie2"):
-                        continue
                     lines.append(f"{k}: {v}")
                 return "\r\n".join(lines)
 
@@ -6528,9 +6528,15 @@ class Host:
                         raise _net.FetchError(self._url)
                     self.status = resp.status
                     self.statusText = getattr(resp, "status_text", "") or ""
-                    self._response_headers = {
-                        str(k).lower(): v
-                        for k, v in (getattr(resp, "headers", None) or {}).items()}
+                    # J03 第 2 点 — 响应头统一走 request_context.
+                    # filter_response_headers（S02 第 5 点"禁止响应
+                    # 头统一实现"）：按 destination="xhr" 构造 context，
+                    # 同源按 FORBIDDEN_RESPONSE_HEADERS 集合过滤
+                    # （set-cookie / access-control-* / connection …
+                    # 全部隐藏）；跨源 opaque 无可见头。
+                    self._response_headers = host._js_filter_response_headers(
+                        getattr(resp, "headers", None) or {},
+                        _rc_mod.DEST_XHR)
                     self.readyState = 4
                     self.responseText = (
                         resp.body or b"").decode("utf-8", "replace") \
@@ -7914,6 +7920,30 @@ class Host:
                 continue
             return True  # a remaining unmatched token — fall through
         return True
+
+    def _js_filter_response_headers(self, headers: dict | None,
+                                     destination: str = "") -> dict:
+        """J03 第 2 点 — JS 侧响应头暴露统一走 :func:`_rc_mod.
+        filter_response_headers`（S02 第 5 点"禁止响应头统一
+        实现"），不再各写一套硬编码 ``_FORBIDDEN`` 小集合。
+
+        * fetch/XHR 默认按 ``destination="fetch"`` / ``"xhr"`` 构造
+          同源 context（``mode=cors``）：跨源 opaque（no-cors 响应
+          在 S02 的 evaluate 里已标记）一律无可见头；同源按
+          ``FORBIDDEN_RESPONSE_HEADERS`` 集合过滤（set-cookie /
+          access-control-* / connection … 全部隐藏）。
+        * 调用点拿到的是``脚本可见``的头 dict（键归一化为小写），
+          直接塞进 ``Response.headers`` / ``XHR._response_headers``。
+        * 默认不读时钟 / 不发请求，纯逻辑。
+        """
+        base_url = getattr(self, "doc_url", "") or ""
+        doc_origin = _rc_mod._origin_of(base_url) if base_url else ""
+        ctx = _rc_mod.context_for_destination(
+            doc_origin, base_url, destination or _rc_mod.DEST_FETCH,
+            base_url=base_url)
+        visible, _stripped = _rc_mod.filter_response_headers(
+            ctx, dict(headers or {}))
+        return {str(k).lower(): v for k, v in visible.items()}
 
     def _csp_connect_blocked(self, url: str) -> bool:
         """R7-S02 — True when the document's CSP ``connect-src``
