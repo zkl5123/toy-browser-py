@@ -6156,7 +6156,9 @@ class Host:
                         url: str, content_type: str = "",
                         headers: "dict | None" = None,
                         redirected: bool = False,
-                        destination: str = "") -> dict:
+                        destination: str = "",
+                        cors_check: "object" = None,
+                        ) -> dict:
         """R4 stage 3 + R7-J03 — a toy Response object (the Fetch spec
         surface the report's functional_response_methods case checks:
         ``typeof r.text`` / ``typeof r.json`` must both be
@@ -6178,6 +6180,11 @@ class Host:
         R7-S02 第 5 点 — ``type`` 不再写死 ``"basic"``，按 *destination*
         与目标 URL 走 :func:`_js_response_type`（同源 basic / 跨源
         no-cors opaque / 跨源 cors），与 S02 决策层同一来源。
+        当 *cors_check*（``PreflightCheckResult``）提供时，``type``
+        直接取校验后的 ``resolved_type``（ACAO 不匹配降级 opaque /
+        校验通过保持 cors），``headers`` 用校验结果的
+        ``visible_headers``（∪ Expose-Headers 允许头）——与响应到达时
+        真实校验的结果一致，不另起一套。
         """
         import json as _json
 
@@ -6191,8 +6198,16 @@ class Host:
         # destination="fetch" 构造 context：跨源 opaque（no-cors
         # 响应在 S02 evaluate 里已标记）无可见头；同源按
         # FORBIDDEN_RESPONSE_HEADERS 集合过滤。
-        _hdrs = self._js_filter_response_headers(
-            headers, _rc_mod.DEST_FETCH)
+        # R7-S02 第 5 点（本批）— 当 cors_check 提供（响应到达后经
+        # validate_preflight_response 真实校验），用校验结果里的
+        # visible_headers（∪ Expose-Headers 允许头）直接作为可见头，
+        # 不再走 _js_filter_response_headers 的默认过滤（避免与校验
+        # 层各写一套）。
+        if cors_check is not None and hasattr(cors_check, "visible_headers"):
+            _hdrs = dict(getattr(cors_check, "visible_headers") or {})
+        else:
+            _hdrs = self._js_filter_response_headers(
+                headers, _rc_mod.DEST_FETCH)
 
         def _rejected(err_name, message):
             p = self._make_promise()
@@ -6252,10 +6267,17 @@ class Host:
             "ok": ok,
             "status": status,
             "url": url,
-            # R7-S02 第 5 点 — 按 destination + 目标 URL 判定（同源
-            # basic / 跨源 no-cors opaque / 跨源 cors / 不支持 error），
-            # 不再写死 "basic"（不偷换跨源 opaque 为 basic 放行）。
-            "type": self._js_response_type(url, destination),
+            # R7-S02 第 5 点（本批）— 当 cors_check（响应到达后真实
+            # 校验）提供时，type 直接取校验结果的 resolved_type
+            # （ACAO 不匹配降级 opaque / 校验通过保持 cors /
+            # 校验失败降级 opaque）；否则走 _js_response_type 的
+            # 发送前判定（同源 basic / 跨源 cors / 不支持 error）。
+            "type": (
+                (getattr(cors_check, "resolved_type", "")
+                 or self._js_response_type(url, destination))
+                if cors_check is not None
+                and getattr(cors_check, "resolved_type", "")
+                else self._js_response_type(url, destination)),
             "redirected": bool(redirected),
             "statusText": "",
             "content_type": content_type,
@@ -6375,12 +6397,18 @@ class Host:
                 raise _net.FetchError(url)
             body_text = (resp.body or b"").decode("utf-8", "replace") \
                 if isinstance(resp.body, (bytes, bytearray)) else str(resp.body)
+            # R7-S02 第 5 点（本批）— 响应到达后的真实 CORS 校验结果
+            # （跨源 OPTIONS 预检 + ACAO/ACAC 比对，挂在
+            # resp.cors_check）。提供时 _fetch_response 用校验后的
+            # resolved_type（不通过降级 opaque）与 visible_headers，
+            # 不再按发送前的纯逻辑判定（避免"校验不通过却报 cors"）。
             response = self._fetch_response(
                 resp.status, getattr(resp, "ok", False), body_text,
                 getattr(resp, "final_url", "") or url,
                 getattr(resp, "content_type", ""),
                 headers=getattr(resp, "headers", None) or {},
-                redirected=bool(getattr(resp, "redirected", False)))
+                redirected=bool(getattr(resp, "redirected", False)),
+                cors_check=getattr(resp, "cors_check", None))
             p["__resolve__"](response)
         except Exception as e:
             # Opaque network error (spec: TypeError with no detail
@@ -6542,9 +6570,22 @@ class Host:
                     # 同源按 FORBIDDEN_RESPONSE_HEADERS 集合过滤
                     # （set-cookie / access-control-* / connection …
                     # 全部隐藏）；跨源 opaque 无可见头。
-                    self._response_headers = host._js_filter_response_headers(
-                        getattr(resp, "headers", None) or {},
-                        _rc_mod.DEST_XHR)
+                    # R7-S02 第 5 点（本批）— 响应到达后的真实 CORS
+                    # 校验结果（跨源 OPTIONS 预检 + ACAO/ACAC 比对，
+                    # 挂在 resp.cors_check）。提供时优先用校验结果的
+                    # visible_headers（∪ Expose-Headers 允许头），
+                    # 不通过时 visible_headers 为空（降级 opaque，
+                    # XHR 读不到任何响应头）。
+                    _cors_chk = getattr(resp, "cors_check", None)
+                    if _cors_chk is not None and hasattr(
+                            _cors_chk, "visible_headers"):
+                        self._response_headers = dict(
+                            getattr(_cors_chk, "visible_headers") or {})
+                    else:
+                        self._response_headers = (
+                            host._js_filter_response_headers(
+                                getattr(resp, "headers", None) or {},
+                                _rc_mod.DEST_XHR))
                     self.readyState = 4
                     self.responseText = (
                         resp.body or b"").decode("utf-8", "replace") \

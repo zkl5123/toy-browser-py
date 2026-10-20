@@ -353,6 +353,15 @@ class HttpResponse:
     # 证据）。两者都默认 ``None``，正常路径不填。
     denied: object = None          # request_context.RequestDecision
     denied_headers: dict | None = None
+    # R7-S02 第 5 点 — 跨源 CORS 校验结果（响应到达后经
+    # request_context.validate_preflight_response 比对 ACAO/ACAC 的
+    # PreflightCheckResult）。默认 None（同源 / 无 CORS 判定的正常路径
+    # 不填）；非 None 时 ``cors_resolved_type`` 为实际生效的响应类型
+    # （basic / cors / opaque / error），``cors_allowed`` 为脚本是否
+    # 可读该响应 body/头。
+    cors_check: object = None           # request_context.PreflightCheckResult
+    cors_resolved_type: str = ""        # "" / basic / cors / opaque / error
+    cors_allowed: bool = True           # 脚本可读该响应（默认 True，同源放行）
 
     @property
     def content_type(self) -> str:
@@ -972,6 +981,12 @@ class HttpClient:
         self.deadline = deadline
         self.page_budget = page_budget
         self._cancel_scope = rb.CancellationScope()
+        # R7-S02 第 5 点 — 跨源 CORS OPTIONS 预检结果缓存。
+        # 键 = (目标源, 请求方法小写, 自定义头指纹)，值 = (通过与否, 可见头)。
+        # 按浏览器规范预检结果可缓存（Access-Control-Max-Age），本层
+        # 简化为 per-client 生命周期，不读时钟；缓存只记"通过/不通过"，
+        # 不存响应头（不冒充服务端行为）。
+        self._preflight_cache: dict = {}
 
     # ------------------------------------------------------------------
     # P33.R2 — connection reuse
@@ -1060,6 +1075,158 @@ class HttpClient:
             except OSError:
                 pass
         self._conn_pool.clear()
+
+    # ------------------------------------------------------------------
+    # R7-S02 第 5 点 — 跨源 CORS OPTIONS 预检（真实网络往返）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _preflight_cache_key(target_url: "URL", method: str,
+                             custom_headers: dict | None) -> tuple:
+        """预检缓存键：(目标源, 方法小写, 自定义头指纹)。
+
+        浏览器按"同源请求的方法 + 自定义头"缓存预检结果；本层简化
+        为 per-client 生命周期缓存（不读时钟、不存响应头，只记
+        "通过 / 不通过" + 可见头，避免冒充服务端行为）。指纹对自定义
+        头名排序后取 JSON 化稳定串，头值参与（不同值不同键）。
+        """
+        origin = _rc._origin_of(
+            target_url.to_string() if isinstance(target_url, URL)
+            else str(target_url))
+        m = (method or "GET").lower()
+        hdrs = dict(custom_headers or {})
+        # 只计"自定义头"（去掉 OPTIONS 预检自身携带的 Access-Control-*
+        # 与 Host/UA），指纹用排序后的 (k, v) 对。
+        _reserved = {"access-control-request-method",
+                    "access-control-request-headers",
+                    "origin", "host", "user-agent", "accept"}
+        pairs = sorted((str(k).lower(), str(v)) for k, v in hdrs.items()
+                       if str(k).lower() not in _reserved)
+        try:
+            import hashlib
+            fingerprint = hashlib.md5(
+                repr(pairs).encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            fingerprint = repr(len(pairs))
+        return (origin, m, fingerprint)
+
+    def _issue_preflight(self, target_url: "URL", method: str,
+                         headers: dict | None,
+                         doc_origin: str,
+                         credentials_mode: str,
+                         ) -> "_rc.PreflightCheckResult":
+        """R7-S02 第 5 点 — 对跨源目标发一次**真实** OPTIONS 预检。
+
+        复用现有连接池与门禁：
+
+        * 预检缓存命中 → 直接返回缓存的判定（不发包）；
+        * 缓存未命中 → 经 :meth:`_acquire_conn` / 重试循环 /
+          :meth:`_admit_request` 发 OPTIONS 请求，带
+          ``Access-Control-Request-Method`` + ``Access-Control-Request-
+          Headers`` + ``Origin``；
+        * 响应到达后经 :func:`_rc.validate_preflight_response` 比对
+          ACAO/ACAC/Expose-Headers；不通过则降级为 opaque（脚本不可读，
+          但请求本身合法）；
+        * 结果（含可见头）写回缓存。
+
+        预检请求本身走 GET 语义的 ``conn.request("OPTIONS", …)``（无
+        body、不缓存、不入 cookie 库）。连接失败 / 超时 → 按"预检不
+        通过"处理（降级 opaque），不抛出——预检失败在规范里就是
+        "响应不可读"，不是硬错误。
+        """
+        if not isinstance(target_url, URL):
+            target_url = parse_url(target_url)
+        key = self._preflight_cache_key(target_url, method, headers)
+        cached = self._preflight_cache.get(key)
+        if cached is not None:
+            return cached
+
+        # 构造预检请求头（CORS 预检规范：Request-Method/Request-Headers
+        # + 发起 origin）。
+        preflight_hdrs = {
+            "Host": target_url.authority,
+            "User-Agent": "toy-browser-py/1.2 (P21-P23)",
+            "Access-Control-Request-Method": (method or "GET").upper(),
+            "Origin": doc_origin or "",
+        }
+        # 自定义头 → Access-Control-Request-Headers（逗号拼接，小写）。
+        if headers:
+            _reserved = {"access-control-request-method",
+                         "access-control-request-headers",
+                         "origin", "host", "user-agent", "accept"}
+            custom = [str(k).lower() for k in (headers or {})
+                      if str(k).lower() not in _reserved]
+            if custom:
+                preflight_hdrs["Access-Control-Request-Headers"] = \
+                    ",".join(custom)
+
+        # 构造预检用的 RequestContext（复用 document_origin + 目标 URL，
+        # destination 取 fetch/xhr、mode/credentials 同真实请求）。
+        dest = _rc.DEST_FETCH if (method or "GET").upper() in ("GET", "HEAD") \
+            else _rc.DEST_XHR
+        ctx = _rc.context_for_destination(
+            doc_origin, target_url.to_string(), dest,
+            base_url=doc_origin)
+        ctx.method = (method or "GET").upper()
+        ctx.credentials = credentials_mode or _rc.CRED_SAME_ORIGIN
+        ctx.headers = dict(headers or {})
+
+        host = target_url.host or "localhost"
+        port = target_url.effective_port
+        path = target_url.path or "/"
+        if target_url.query:
+            path = f"{path}?{target_url.query}"
+
+        preflight_resp_hdrs: dict = {}
+        _pre_ok = False
+        last_exc: Exception | None = None
+        for attempt in (0, 1):
+            conn = None
+            try:
+                self._admit_request()
+                conn = self._acquire_conn(target_url)
+                conn.request("OPTIONS", path, headers=preflight_hdrs)
+                resp = conn.getresponse()
+                preflight_resp_hdrs = self._headers_from_response(resp)
+                _pre_ok = (200 <= resp.status < 300) or \
+                          resp.status in (401, 403)
+                # OPTIONS 无 body 可读，但连接可能可复用（keep-alive）。
+                conn_hdr = (resp.getheader("Connection") or "").lower()
+                self._release_conn(
+                    target_url, conn, dead=("close" in conn_hdr))
+                break
+            except (socket.timeout, socket.error,
+                    http.client.HTTPException, OSError,
+                    http.client.RemoteDisconnected) as e:
+                last_exc = e
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                key_ = self._pool_key(target_url)
+                self._conn_pool.pop(key_, None)
+                continue
+            except rb.RequestCancelled:
+                # 取消是粘性终态：预检也尊重取消，结果记为"不通过"。
+                preflight_resp_hdrs = {}
+                _pre_ok = False
+                break
+
+        if not _pre_ok:
+            # 预检本身失败（连接错误 / 取消）→ 结果按"不可读"处理。
+            result = _rc.PreflightCheckResult(
+                False,
+                f"preflight OPTIONS failed: {last_exc or 'cancelled'}",
+                visible_headers={}, resolved_type="opaque")
+            self._preflight_cache[key] = result
+            return result
+
+        # 预检响应到达 → 经纯逻辑校验层比对 ACAO/ACAC/Expose-Headers。
+        result = _rc.validate_preflight_response(ctx, preflight_resp_hdrs)
+        # 预检结果只缓存"通过/不通过 + 可见头"，不缓存状态码。
+        self._preflight_cache[key] = result
+        return result
 
     def _cookie_ctx_for(self, url: "URL", method: str = "GET",
                         cookie_context=None) -> "_cookie_ctx.CookieRequestContext":
@@ -1424,6 +1591,37 @@ class HttpClient:
             stale = self.cache.get_stale(url, credentials_mode=_cred,
                                          request_headers=_req_hdrs)
 
+        # R7-S02 第 5 点 — 跨源 CORS 预检在**真实请求发出前**做（符合
+        # 真实 CORS 流程：先发 OPTIONS，通过后才发真实 GET/HEAD）。
+        # requires_preflight（跨源非简单请求 / credentials=include /
+        # 带自定义头）→ 发真实 OPTIONS 预检；预检**不通过** → 不发
+        # 真实请求（真实浏览器行为：预检失败时请求不发出，JS 侧看到
+        # TypeError 网络错误），直接返回带 CORS 结果的占位响应
+        # （status=0 + cors_resolved_type=opaque + cors_allowed=False），
+        # 不冒充"请求被禁"（denied 仍为 None，请求本身合法，只是
+        # 预检未过、响应不可读）。
+        # 同源 / 跨源简单请求（无自定义头）无需预检，
+        # _cors_preflight_result 保持 None，响应到达后直接对响应
+        # 本身做 ACAO/ACAC 校验。
+        _cors_preflight_result = None
+        if _rc_ctx is not None:
+            _decision_pre = self._admit_request_context(_rc_ctx, now=now)
+            if _rc_ctx.is_cross_origin and _decision_pre.requires_preflight:
+                _doc_origin = _rc_ctx.document_origin or ""
+                _cred_rc = (_rc_ctx.credentials or _rc.CRED_SAME_ORIGIN)
+                _cors_preflight_result = self._issue_preflight(
+                    url, "GET", headers, _doc_origin, _cred_rc)
+                if not _cors_preflight_result.allowed:
+                    return HttpResponse(
+                        status=0,
+                        status_text="CORS preflight failed",
+                        headers={}, body=b"",
+                        final_url=url.to_string(),
+                        cors_check=_cors_preflight_result,
+                        cors_resolved_type=_cors_preflight_result.
+                            resolved_type,
+                        cors_allowed=False)
+
         resp = _follow_redirects(
             self, url, headers,
             max_redirects=max_redirects, follow=follow_redirects,
@@ -1433,6 +1631,37 @@ class HttpClient:
             request_context=_rc_ctx,
             now=now,
         )
+
+        # R7-S02 第 5 点 — 消费预检结果 / 响应本身做 CORS 校验。
+        # 1. 预检（_issue_preflight）已在真实请求发出前做过 → 直接用其
+        #    结果（通过=cors / 不通过=opaque，已含 visible_headers）。
+        # 2. 无预检（同源 / 简单 GET/HEAD 无自定义头）→ 响应到达后经
+        #    validate_preflight_response 比对 ACAO/ACAC，结果挂到
+        #    resp.cors_check / cors_resolved_type / cors_allowed，
+        #    供 JS 侧消费（_js_cors_response_check）。
+        if _cors_preflight_result is not None:
+            resp.cors_check = _cors_preflight_result
+            resp.cors_resolved_type = _cors_preflight_result.resolved_type
+            resp.cors_allowed = _cors_preflight_result.allowed
+        elif _rc_ctx is not None:
+            _decision = self._admit_request_context(_rc_ctx, now=now)
+            _is_cross = _rc_ctx.is_cross_origin
+            _needs_cors_check = (
+                _is_cross and (
+                    _decision.requires_acao
+                    or _decision.opaque_response))
+            if _needs_cors_check and resp.denied is None:
+                _doc_origin = _rc_ctx.document_origin or ""
+                _cred = _rc_ctx.credentials or _rc.CRED_SAME_ORIGIN
+                _vctx = _rc_ctx
+                if _cred:
+                    _vctx = _rc_ctx.clone()
+                    _vctx.credentials = _cred
+                _check = _rc.validate_preflight_response(
+                    _vctx, resp.headers or {})
+                resp.cors_check = _check
+                resp.cors_resolved_type = _check.resolved_type
+                resp.cors_allowed = _check.allowed
 
         # P23.2 — store successful, cacheable responses.
         if (self.cache is not None and self.cache.enabled
@@ -1467,7 +1696,9 @@ class HttpClient:
              follow_redirects: bool = True,
              max_redirects: int = MAX_REDIRECTS,
              cookie_context: dict | None = None,
-             method: str = "POST") -> HttpResponse:
+             method: str = "POST",
+             request_context: "_rc.RequestContext | None" = None,
+             now: float | None = None) -> HttpResponse:
         """P23 — POST *url* with a body.
 
         *data* may be a mapping (encoded as
@@ -1527,6 +1758,41 @@ class HttpClient:
             path = f"{path}?{url.query}"
 
         last_exc: Exception | None = None
+        # R7-S02 第 5 点 — 跨源 CORS 预检在**真实请求发出前**做（符合
+        # 真实 CORS 流程：先发 OPTIONS，通过后才发真实 POST）。
+        # requires_preflight（跨源非简单请求 / credentials=include /
+        # 带自定义头）→ 发真实 OPTIONS 预检；预检**不通过** → 不发
+        # 真实请求（真实浏览器行为：预检失败时请求不发出，JS 侧看到
+        # TypeError 网络错误），直接返回带 CORS 结果的占位响应
+        # （status=0 + cors_resolved_type=opaque + cors_allowed=False），
+        # 不冒充"请求被禁"（denied 仍为 None，请求本身合法，只是
+        # 预检未过、响应不可读）。
+        _cors_preflight_result = None
+        if request_context is not None:
+            _decision = self._admit_request_context(
+                request_context, now=now)
+            _is_cross = request_context.is_cross_origin
+            _needs_cors_check = (
+                _is_cross and (
+                    _decision.requires_acao
+                    or _decision.opaque_response))
+            if _needs_cors_check and _decision.requires_preflight:
+                _doc_origin = request_context.document_origin or ""
+                _cred = (request_context.credentials
+                         or _rc.CRED_SAME_ORIGIN)
+                _cors_preflight_result = self._issue_preflight(
+                    url, m, hdrs, _doc_origin, _cred)
+                if not _cors_preflight_result.allowed:
+                    # 预检失败 → 真实请求**不发出**，落地占位响应。
+                    return HttpResponse(
+                        status=0,
+                        status_text="CORS preflight failed",
+                        headers={}, body=b"",
+                        final_url=url.to_string(),
+                        cors_check=_cors_preflight_result,
+                        cors_resolved_type=_cors_preflight_result.
+                            resolved_type,
+                        cors_allowed=False)
         for attempt in (0, 1):
             conn = None
             try:
@@ -1558,13 +1824,46 @@ class HttpClient:
                 conn_hdr = (resp.getheader("Connection") or "").lower()
                 self._charge_page_budget(_raw_bytes, len(body))
                 self._release_conn(url, conn, dead=("close" in conn_hdr))
-                return HttpResponse(
+                _resp = HttpResponse(
                     status=resp.status,
                     status_text=resp.reason or "",
                     headers=headers_out,
                     body=body,
                     final_url=url.to_string(),
                 )
+                # R7-S02 第 5 点 — 消费**真实请求发出前**做的跨源
+                # CORS 预检结果（_issue_preflight）。预检通过 → cors
+                # （脚本可读）；不通过 → 降级 opaque（脚本不可读，但
+                # 请求本身合法）。跨源简单请求（无自定义头）无需预检，
+                # _cors_preflight_result 为 None，此时直接对响应做
+                # ACAO/ACAC 校验（validate_preflight_response）。
+                if _cors_preflight_result is not None:
+                    _resp.cors_check = _cors_preflight_result
+                    _resp.cors_resolved_type = \
+                        _cors_preflight_result.resolved_type
+                    _resp.cors_allowed = _cors_preflight_result.allowed
+                elif request_context is not None:
+                    _decision = self._admit_request_context(
+                        request_context, now=now)
+                    _is_cross = request_context.is_cross_origin
+                    _needs_cors_check = (
+                        _is_cross and (
+                            _decision.requires_acao
+                            or _decision.opaque_response))
+                    if _needs_cors_check:
+                        _doc_origin = request_context.document_origin or ""
+                        _cred = (request_context.credentials
+                                 or _rc.CRED_SAME_ORIGIN)
+                        _vctx = request_context
+                        if _cred:
+                            _vctx = request_context.clone()
+                            _vctx.credentials = _cred
+                        _check = _rc.validate_preflight_response(
+                            _vctx, headers_out)
+                        _resp.cors_check = _check
+                        _resp.cors_resolved_type = _check.resolved_type
+                        _resp.cors_allowed = _check.allowed
+                return _resp
             except ResponseTooLarge:
                 # R7-S04 — the POST body exceeded the cap mid-read:
                 # close the connection, keep it out of the pool.
@@ -2166,9 +2465,17 @@ class FetchTransport:
         doc_origin = _rc._origin_of(self._document_url)
         if not doc_origin:
             return None
-        return _rc.context_for_destination(
+        ctx = _rc.context_for_destination(
             doc_origin, url_str, dest,
             base_url=self._document_url)
+        # R7-S02 第 5 点 — 带上真实请求的 method 与自定义头：跨源
+        # 非简单请求（PUT/DELETE）/ 带自定义头 / credentials=include
+        # 都会标记 requires_preflight=True，供 post()/get() 响应到达后
+        # 决定是否先发明真实 OPTIONS 预检。
+        ctx.method = (method or "GET").upper()
+        if headers:
+            ctx.headers = dict(headers)
+        return ctx
 
     def fetch(self, url: str, method: str = "GET",
               body: "str | bytes | None" = None,
@@ -2208,8 +2515,10 @@ class FetchTransport:
             # rejects the promise / fires onerror on !ok).
             # R7-S02 第 3/5 点 — 跨源 fetch 走 evaluate_request 发送前
             # 判定（scheme / 混合内容 / 跨源 CORS 标记）：opaque 响应
-            # 在决策层已标记，被禁请求不发包。POST 路径的预检留活
-            # 显示批次（本批 GET/HEAD 先接上）。
+            # 在决策层已标记，被禁请求不发包。POST 路径也接上 CORS
+            # 校验（本批完成：GET/HEAD 走 _follow_redirects 后校验，
+            # POST 走 post() 响应到达后校验；非简单跨源请求先发真实
+            # OPTIONS 预检）。
             _url_str = url.to_string() if isinstance(url, URL) else str(url)
             _rc_ctx = self._cors_request_context(_url_str, m, headers)
             if m in ("GET", "HEAD"):
@@ -2220,7 +2529,8 @@ class FetchTransport:
             return self._client.post(
                 url, data=body if body is not None else "",
                 headers=dict(headers or {}),
-                follow_redirects=True, method=m, cookie_context=ctx)
+                follow_redirects=True, method=m,
+                cookie_context=ctx, request_context=_rc_ctx)
         except (OSError, socket.timeout, socket.error,
                 http.client.HTTPException):
             return None

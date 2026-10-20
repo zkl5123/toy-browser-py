@@ -839,12 +839,19 @@ def test_fetch_cross_origin_js_response_type_cors():
     """J03 第 2 点 / S02 第 5 点 — 跨源 fetch 的 JS 侧
     ``_js_response_type`` 判定为 ``cors``（不再写死 basic）。
     用两个本地端口的 FetchTransport：文档源是 server A，fetch
-    目标是 server B（跨源）→ 纯逻辑层判定 cors。"""
+    目标是 server B（跨源）。server B 响应须携带
+    ``Access-Control-Allow-Origin``（匹配 A 的 origin），经
+    ``validate_preflight_response`` 校验通过 → ``cors``；
+    不携带则降级 ``opaque``（不冒充通过）。"""
     srv_a, port_a, _ = _start_echo_server({
         ("GET", "/doc"): (200, "text/plain", b"doc", {}),
     })
+    # 让 server B 回 ACAO: *（非凭据模式跨源 fetch 的最简通过
+    # 情形），使校验通过 → cors。
     srv_b, port_b, _ = _start_echo_server({
-        ("GET", "/api"): (200, "text/plain", b"cross", {}),
+        ("GET", "/api"): (200, "text/plain", b"cross", {
+            "Access-Control-Allow-Origin": "*"
+        }),
     })
     try:
         c = HttpClient(timeout=5.0)
@@ -863,9 +870,10 @@ def test_fetch_cross_origin_js_response_type_cors():
         host.flush_timers()
         host.flush_microtasks()
         joined = "\n".join(logs)
-        # 跨源 fetch（127.0.0.1:A → 127.0.0.1:B）→ cors
+        # 跨源 fetch（127.0.0.1:A → 127.0.0.1:B）且 B 回了
+        # Access-Control-Allow-Origin: * → 校验通过 → cors。
         assert "TYPE:cors" in joined, \
-            f"cross-origin fetch must be cors: {joined}"
+            f"cross-origin fetch with ACAO:* must be cors: {joined}"
         c.close_pool()
     finally:
         srv_a.shutdown()

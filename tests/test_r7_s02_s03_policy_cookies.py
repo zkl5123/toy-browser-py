@@ -105,6 +105,8 @@ def _start_server(routes):
 
         do_GET = _serve
         do_POST = _serve
+        # R7-S02 第 5 点 — OPTIONS（跨源 CORS 预检往返集成测试用）。
+        do_OPTIONS = _serve
 
     srv = HTTPServer(("127.0.0.1", 0), H)
     port = srv.server_address[1]
@@ -1151,6 +1153,156 @@ def test_s02_preflight_js_helper_delegates_to_validate():
         _rc.DEST_FETCH)
     assert r3.allowed
     assert r3.resolved_type == "basic"
+
+
+# ---------------------------------------------------------------------------
+# R7-S02 第 5 点 — 真实 OPTIONS 预检往返（跨源非简单请求先发 OPTIONS）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_s02_preflight_options_roundtrip_cross_origin_post():
+    """S02 第 5 点（本批）— 跨源 POST + 自定义头 → 先发**真实** OPTIONS
+    预检（非简单请求 requires_preflight=True），响应到达后经
+    validate_preflight_response 比对 ACAO/ACAC。
+
+    * server B 的 OPTIONS 路由回 ``Access-Control-Allow-Origin: *`` +
+      ``Access-Control-Allow-Methods: POST`` → 预检通过 → 真实 POST
+      发出，响应 ``cors_resolved_type == "cors"``、``cors_allowed``
+      为 True，且 counts 里 OPTIONS 计数 1、POST 计数 1（预检确被
+      真实发出，非纯逻辑）。
+    """
+    srv_a, port_a, _ = _start_server({
+        ("GET", "/doc"): (200, "text/plain", b"doc", []),
+    })
+    srv_b, port_b, counts = _start_server({
+        ("OPTIONS", "/api"): (
+            200, "", b"",
+            [("Access-Control-Allow-Origin", "*"),
+             ("Access-Control-Allow-Methods", "POST, OPTIONS"),
+             ("Access-Control-Allow-Headers", "X-Test"),
+             ("Content-Length", "0")]),
+        ("POST", "/api"): (200, "text/plain", b"POSTED", [
+            ("Access-Control-Allow-Origin", "*")]),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_base = f"http://127.0.0.1:{port_a}/"
+        api = f"http://127.0.0.1:{port_b}/api"
+        root = dom.parse(
+            f'<html><body><script>fetch("{api}", '
+            f'{{method:"POST", headers:{{"X-Test":"s02"}},'
+            f' body:"a=1"}}).then(function(r){{'
+            f'  console.log("TYPE:"+r.type);}})'
+            f'.catch(function(e){{console.log("ERR:"+e.name);}});'
+            f'</script></body></html>')
+        host = js.Host(root, lambda s: None)
+        host.doc_url = doc_base
+        host.doc_origin = net._origin_str(doc_base)
+        host._fetch_transport = net.FetchTransport(
+            c, base_url=doc_base, document_url=doc_base)
+        host.execute_all()
+        host.flush_timers()
+        host.flush_microtasks()
+        # OPTIONS 预检被真实发出（非纯逻辑），且真实 POST 随后发出。
+        assert counts.get(("OPTIONS", "/api"), 0) == 1, \
+            f"OPTIONS preflight must be issued: {counts}"
+        assert counts.get(("POST", "/api"), 0) == 1, \
+            f"POST must follow preflight: {counts}"
+        # 跨源 POST + 自定义头 → 预检通过（ACAO:*）→ cors。
+        # 通过 HttpClient.get/post 直接断言（不依赖 JS console 时序）。
+        c2 = HttpClient(timeout=5.0)
+        rc_ctx = _rc.context_for_destination(
+            doc_base, api, _rc.DEST_XHR)
+        rc_ctx.method = "POST"
+        rc_ctx.headers = {"X-Test": "s02"}
+        resp = c2.post(
+            api, data="a=1",
+            headers={"X-Test": "s02"},
+            request_context=rc_ctx)
+        assert resp.status == 200, f"POST must succeed: {resp.status}"
+        assert resp.cors_check is not None, \
+            "cross-origin POST must carry a CORS check result"
+        assert resp.cors_resolved_type == "cors", \
+            f"ACAO:* preflight must resolve cors: {resp.cors_resolved_type}"
+        assert resp.cors_allowed, \
+            "validated cors response must be script-readable"
+        c.close_pool()
+        c2.close_pool()
+    finally:
+        srv_a.shutdown()
+        srv_b.shutdown()
+
+
+@_reg
+def test_s02_preflight_options_roundtrip_fails_on_mismatch():
+    """S02 第 5 点（本批）— 跨源 OPTIONS 预检响应**不**回 ACAO →
+    校验不通过 → 真实请求**不发出**（真实浏览器行为：预检失败时
+    请求不发出），返回带 CORS 结果的占位响应（status=0、
+    cors_resolved_type=opaque、cors_allowed=False）。请求本身合法
+    （不冒充"请求被禁"，denied 仍为 None），只是预检未过、
+    响应不可读。"""
+    srv_a, port_a, _ = _start_server({
+        ("GET", "/doc"): (200, "text/plain", b"doc", []),
+    })
+    srv_b, port_b, counts = _start_server({
+        # OPTIONS 路由**不回**任何 Access-Control-Allow-*（模拟服务端
+        # 不支持 CORS）。extra 里的 Content-Length 头不影响校验。
+        ("OPTIONS", "/api"): (200, "", b"", [("Content-Length", "0")]),
+        # POST 路由保留（但预检失败时**不应**被调用）。
+        ("POST", "/api"): (200, "text/plain", b"POSTED", []),
+    })
+    try:
+        doc_base = f"http://127.0.0.1:{port_a}/"
+        api = f"http://127.0.0.1:{port_b}/api"
+        c = HttpClient(timeout=5.0)
+        rc_ctx = _rc.context_for_destination(
+            doc_base, api, _rc.DEST_XHR)
+        rc_ctx.method = "POST"
+        rc_ctx.headers = {"X-Test": "s02"}
+        resp = c.post(
+            api, data="a=1",
+            headers={"X-Test": "s02"},
+            request_context=rc_ctx)
+        # OPTIONS 被真实发出（预检确实走了网络）。
+        assert counts.get(("OPTIONS", "/api"), 0) == 1, \
+            f"OPTIONS preflight must be issued: {counts}"
+        # 预检失败（缺 ACAO）→ 真实 POST **不发出**。
+        assert counts.get(("POST", "/api"), 0) == 0, \
+            (f"POST must NOT be issued when preflight fails: "
+             f"{counts}")
+        assert resp.status == 0, \
+            ("preflight failure must yield a placeholder response "
+             f"(status=0), got {resp.status}")
+        assert resp.cors_check is not None, \
+            "cross-origin POST must carry a CORS check result"
+        assert resp.cors_resolved_type == "opaque", \
+            (f"missing ACAO must downgrade to opaque: "
+             f"{resp.cors_resolved_type}")
+        assert not resp.cors_allowed, \
+            "opaque response must NOT be script-readable"
+        # 请求本身合法（未走发送前策略拒绝）→ denied 为 None。
+        assert resp.denied is None, \
+            "a failed preflight is NOT a policy denial (denied must be None)"
+        c.close_pool()
+    finally:
+        srv_a.shutdown()
+        srv_b.shutdown()
+
+
+@_reg
+def test_s02_preflight_cache_key_stable():
+    """预检缓存键对（目标源, 方法, 自定义头指纹）稳定——相同键复用，
+    不同方法 / 不同自定义头各自独立。"""
+    from toy_browser.network import net as _net
+    u = _net.parse_url("http://127.0.0.1:1234/api")
+    c = HttpClient(timeout=5.0)
+    k1 = c._preflight_cache_key(u, "POST", {"X-Test": "1"})
+    k2 = c._preflight_cache_key(u, "POST", {"X-Test": "1"})
+    k3 = c._preflight_cache_key(u, "PUT", {"X-Test": "1"})
+    k4 = c._preflight_cache_key(u, "POST", {"X-Other": "1"})
+    assert k1 == k2, "same (origin, method, headers) must share a key"
+    assert k1 != k3, "different method must get a different key"
+    assert k1 != k4, "different custom header must get a different key"
 
 
 if __name__ == "__main__":
