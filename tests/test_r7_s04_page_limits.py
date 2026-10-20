@@ -447,6 +447,33 @@ def _max_depth(root):
     return _d(root)
 
 
+@_reg
+def test_source_bytes_entry_refuses_oversized_script():
+    """js.Host.execute 接 SOURCE_BYTES 限额：按 code UTF-8 字节数做
+    执行前防护，超限拒执行该段 + 计数可诊断；限额内放行。"""
+    from toy_browser.scripting import js
+    from toy_browser.document import dom as dom_mod
+    from toy_browser.network.page_limits import PageDimension
+
+    root = dom_mod.parse(b"<html><body></body></html>")
+    host = js.Host(root, lambda *a, **k: None)
+    # 压 SOURCE_BYTES 到 50 字节。
+    host._task_limits.limits[PageDimension.SOURCE_BYTES] = 50
+    # "var a = 1;" = 10 字节 → 放行。
+    host.execute("var a = 1;")
+    assert host._task_limits.used(PageDimension.SOURCE_BYTES) == 10, \
+        "10 字节源码须记账（<= 50）"
+    assert host._source_rejected == 0
+    # 60 字节 → 超限（10+60=70>50），拒执行 + 计数。
+    host.execute("x" * 60)
+    assert host._source_rejected == 1, "超限脚本须计 _source_rejected"
+    assert host._task_limits.used(PageDimension.SOURCE_BYTES) == 10, \
+        "被拒的 60 字节源码不得记账（admit 无副作用）"
+    # 共享 TASK_QUEUE 实例，维度独立：TASK_QUEUE 仍可用。
+    assert host._task_limits.admit(PageDimension.TASK_QUEUE, 1) is True, \
+        "SOURCE_BYTES 超限不影响 TASK_QUEUE 维度（正交）"
+
+
 if __name__ == "__main__":
     for name, fn in TESTS:
         fn()

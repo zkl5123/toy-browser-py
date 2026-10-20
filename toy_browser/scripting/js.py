@@ -4808,6 +4808,20 @@ class Host:
             self._task_limits = None
             self._task_dim = None
         self._task_rejected = 0
+        # R7-S04 第 4 点 — 页面源码字节（SOURCE_BYTES）独立限额：
+        # 每次 execute(code) 按 code 字节数做分配前防护（与 TASK_QUEUE
+        # 共享 _task_limits 实例，维度独立）；超限记 _source_rejected
+        # 并拒执行该脚本（不崩，可诊断）。默认走 DEFAULT_LIMITS
+        # （SOURCE_BYTES=4MiB），未启用（0）时恒放行。
+        if self._task_dim is not None:
+            try:
+                from toy_browser.network.page_limits import PageDimension as _PD
+                self._source_dim = _PD.SOURCE_BYTES
+            except ImportError:
+                self._source_dim = None
+        else:
+            self._source_dim = None
+        self._source_rejected = 0
         self._style_cache: dict = {}
         self._promise_counter = 0
         # P33.P1 — Web API globals (localStorage / WebSocket / navigator /
@@ -8409,6 +8423,21 @@ class Host:
         return out
 
     def execute(self, code: str) -> None:
+        # R7-S04 第 4 点 — 页面源码字节（SOURCE_BYTES）独立限额：执行
+        # 该段 JS 前按 code 字节数做分配前防护（S04 第 1 点"不能先
+        # 读完整段再检查"——这里在 parse 之前判定，超限拒执行该段）。
+        # 共享 _task_limits 实例、维度独立（_source_dim）；_task_limits
+        # 为 None / 维度不可用（测试裁剪）时恒放行（向后兼容）。
+        if (self._task_limits is not None and self._source_dim is not None
+                and code):
+            n_bytes = len(code.encode("utf-8", "replace"))
+            if not self._task_limits.admit(self._source_dim, n_bytes):
+                self._source_rejected += 1
+                self.log(f"SOURCE_BYTES limit reached: {n_bytes} bytes "
+                         f"(used={self._task_limits.used(self._source_dim)})"
+                         )
+                return
+            self._task_limits.charge(self._source_dim, n_bytes)
         try:
             program = parse_program(code)
             interpreter = Interpreter(self)
