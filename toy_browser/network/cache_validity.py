@@ -160,6 +160,12 @@ def cache_key(url: str, credentials_mode: str = "",
       请求拿到的响应**互不可见**（"缓存记录不得串凭据策略"）；
     * 有 ``Vary`` 时把各字段值拼进键（这样不同 Accept-Encoding 的请求
       命中不同条目，而不需要在磁盘上存"已存请求头"）。
+
+    已知限制（如实记录）：``net.CacheStore`` 目前的磁盘布局是每个
+    (URL, 凭据模式) 一个槽位，因此**不**使用 *vary* / *request_headers*
+    参数，而是靠 :func:`vary_matches` 比对已存的请求头——变体会互相
+    覆盖，但**绝不会错配**（不匹配即 miss 回源）。多变体并存需要变体
+    索引，本轮未做；*vary* 参数留给将来的多变体实现。
     """
     base = str(url or "")
     cred = (credentials_mode or "").strip().lower()

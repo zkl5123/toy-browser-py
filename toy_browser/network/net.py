@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 # 真实（非 TYPE_CHECKING）导入：cookie_context 只依赖 request_context
 # 与 cookie_store（后者在函数级 import net），与 net 无环。
 from toy_browser.network import cookie_context as _cookie_ctx
+# R7-S03 第 4 点 — 缓存校验（Vary / 授权响应 / 304 头合并 / 凭据隔离）。
+from toy_browser.network import cache_validity as _cv
 
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
 # import time; cookie_store only needs net for URL parsing).
@@ -1246,9 +1248,17 @@ class HttpClient:
             url = parse_url(url)
         self._emit(PHASE_START, 0.0, url.to_string())
 
+        # R7-S03 第 4 点 — 缓存键要带凭据模式与请求头（Vary 匹配 +
+        # 授权响应判定），所以先把真实上下文算出来。
+        _ctx = self._cookie_ctx_for(url, "GET", cookie_context)
+        _cred = _ctx.credentials_mode
+        # 请求头键归一化为小写：Vary 字段名是小写，比对与入键都靠它。
+        _req_hdrs = {str(k).lower(): v for k, v in (headers or {}).items()}
+
         # P23.2 — fresh cache hit: skip the wire entirely.
         if self.cache is not None and self.cache.enabled:
-            fresh = self.cache.get_fresh(url)
+            fresh = self.cache.get_fresh(url, credentials_mode=_cred,
+                                         request_headers=_req_hdrs)
             if fresh is not None:
                 self._emit(PHASE_DOCUMENT, 0.5, "cache hit")
                 self._emit(PHASE_DONE, 1.0, "cache hit")
@@ -1257,14 +1267,15 @@ class HttpClient:
         # P23.3 — stale entry with ETag: revalidate conditionally.
         stale = None
         if self.cache is not None and self.cache.enabled:
-            stale = self.cache.get_stale(url)
+            stale = self.cache.get_stale(url, credentials_mode=_cred,
+                                         request_headers=_req_hdrs)
 
         resp = _follow_redirects(
             self, url, headers,
             max_redirects=max_redirects, follow=follow_redirects,
             revalidate_etag=(stale.etag if stale else ""),
             stale_body=(stale.body if stale else b""),
-            cookie_context=cookie_context,
+            cookie_context=_ctx,
         )
 
         # P23.2 — store successful, cacheable responses.
@@ -1274,11 +1285,20 @@ class HttpClient:
                 # P23.3 — a 304 revalidation was surfaced as a 200:
                 # refresh the stale entry's freshness instead of
                 # overwriting its body.
-                stale = self.cache.get_stale(url)
+                # R7-S03 第 4 点 — 304 的头必须**合并到已存头之上**：
+                # 304 只带变化的头，Content-Type / CSP 等仍在旧条目里，
+                # 直接用 304 的头会把它们丢掉（审计验收项"304 后安全
+                # 响应头仍正确"）。
                 if stale is not None:
-                    self.cache.revalidate_304(url, stale)
+                    resp.headers = _cv.merge_304_headers(
+                        stale.headers, resp.headers)
+                    self.cache.revalidate_304(
+                        url, stale, headers_304=resp.headers,
+                        credentials_mode=_cred,
+                        request_headers=_req_hdrs)
             else:
-                self.cache.put(url, resp)
+                self.cache.put(url, resp, credentials_mode=_cred,
+                               request_headers=_req_hdrs)
 
         self._emit(PHASE_DOCUMENT, 0.5, f"HTTP {resp.status}")
         self._emit(PHASE_DONE, 1.0, f"HTTP {resp.status}")
@@ -1437,6 +1457,11 @@ class _CacheEntry:
     no_cache: bool
     no_store: bool
     heuristic_ttl: float # heuristic TTL in seconds (0 if none)
+    # R7-S03 第 4 点 — Vary 字段、凭据模式，以及"存这个条目时请求
+    # 带的 Vary 字段值"（命中时做 Vary 匹配 + 凭据隔离）。
+    vary: list = field(default_factory=list)
+    credentials_mode: str = ""
+    request_headers: dict = field(default_factory=dict)
 
     def ttl(self, now: float) -> float:
         """Remaining freshness lifetime in seconds at *now*."""
@@ -1455,19 +1480,32 @@ class _CacheEntry:
         return 0.0
 
     def to_json(self) -> dict:
+        # R7-S03 第 3 点 — 多值头（set-cookie 列表）按原样落盘，不再
+        # 被 ``str(v)`` 压成 "['a=1']" 这种无法解析的字符串。
+        headers_out: dict = {}
+        for k, v in (self.headers or {}).items():
+            if isinstance(v, (list, tuple)):
+                headers_out[k] = [str(x) for x in v]
+            else:
+                headers_out[k] = str(v)
         return {
             "url": self.url, "status": self.status,
-            "headers": {k: str(v) for k, v in self.headers.items()},
+            "headers": headers_out,
             "body_b64": _b64e(self.body),
             "fetched_at": self.fetched_at,
             "date": self.date, "last_modified": self.last_modified,
             "etag": self.etag, "max_age": self.max_age,
             "no_cache": self.no_cache, "no_store": self.no_store,
             "heuristic_ttl": self.heuristic_ttl,
+            # R7-S03 第 4 点
+            "vary": list(self.vary or []),
+            "credentials_mode": self.credentials_mode or "",
+            "request_headers": dict(self.request_headers or {}),
         }
 
     @classmethod
     def from_json(cls, d: dict) -> "_CacheEntry":
+        # 旧条目（没有 R7-S03 字段）也能读：缺省即"无 Vary / 未知凭据"。
         return cls(
             url=d["url"], status=d["status"],
             headers=d.get("headers", {}),
@@ -1478,6 +1516,9 @@ class _CacheEntry:
             no_cache=bool(d.get("no_cache", False)),
             no_store=bool(d.get("no_store", False)),
             heuristic_ttl=float(d.get("heuristic_ttl", 0.0)),
+            vary=list(d.get("vary") or []),
+            credentials_mode=str(d.get("credentials_mode") or ""),
+            request_headers=dict(d.get("request_headers") or {}),
         )
 
 
@@ -1491,8 +1532,15 @@ def _b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii")) if s else b""
 
 
-def _cache_key(url: "URL") -> str:
-    return hashlib.sha256(url.to_string().encode("utf-8")).hexdigest()
+def _cache_key(url: "URL", credentials_mode: str = "",
+               vary=None, request_headers: "dict | None" = None) -> str:
+    """R7-S03 第 4 点 — 缓存键 = URL + 凭据模式 + Vary 字段值。
+
+    URL 自带 origin（不串 origin）；凭据模式参与键（不串凭据策略）；
+    Vary 字段值参与键（不同 Accept-Encoding 落不同条目）。
+    """
+    return _cv.cache_key(url.to_string() if isinstance(url, URL) else str(url),
+                         credentials_mode, vary, request_headers)
 
 
 def _parse_cache_control(value: str) -> dict:
@@ -1538,9 +1586,22 @@ def _heuristic_ttl(headers: dict) -> float:
     return max(0.0, age * 0.1)
 
 
-def build_cache_entry(url: "URL", resp: "HttpResponse") -> _CacheEntry:
+def build_cache_entry(url: "URL", resp: "HttpResponse",
+                      credentials_mode: str = "",
+                      request_headers: "dict | None" = None,
+                      ) -> "_CacheEntry | None":
     """P23.2 — turn an :class:`HttpResponse` into a cacheable entry
-    (extracting Cache-Control / ETag / Date / Last-Modified)."""
+    (extracting Cache-Control / ETag / Date / Last-Modified).
+
+    R7-S03 第 4 点 — 先过 :func:`cache_validity.is_storable`：``no-store``、
+    不可缓存状态码、``Vary: *``、以及"带 ``Authorization`` 请求拿到的
+    响应"（RFC 7234 §3.2）一律**不入库**，返回 ``None`` 并给出 reason
+    （不静默放行）。Vary 字段、凭据模式与 Vary 字段值一并入条目。
+    """
+    decision = _cv.is_storable(resp.status, resp.headers,
+                               request_headers, credentials_mode)
+    if not decision.allowed:
+        return None
     cc = _parse_cache_control(
         resp.headers.get("cache-control", ""))
     max_age = 0.0
@@ -1554,10 +1615,30 @@ def build_cache_entry(url: "URL", resp: "HttpResponse") -> _CacheEntry:
     heuristic = 0.0
     if not max_age and not no_cache and not no_store:
         heuristic = _heuristic_ttl(resp.headers)
+    # R7-S03 第 3 点 — 多值头（set-cookie）原样保留，不压成字符串。
+    headers_out: dict = {}
+    for k, v in (resp.headers or {}).items():
+        if isinstance(v, (list, tuple)):
+            headers_out[k] = [str(x) for x in v]
+        else:
+            headers_out[k] = str(v)
+    vary = list(decision.vary)
+    req_hdrs = {}
+    for name in vary:
+        if name == "*":
+            continue
+        # 请求头的键大小写不敏感（调用点已归一化，这里再兜一层）。
+        val = None
+        for k, v in (request_headers or {}).items():
+            if str(k).lower() == name:
+                val = v
+                break
+        if val is not None:
+            req_hdrs[name] = val
     return _CacheEntry(
         url=url.to_string(),
         status=resp.status,
-        headers={k: str(v) for k, v in resp.headers.items()},
+        headers=headers_out,
         body=resp.body,
         fetched_at=time.time(),
         date=resp.headers.get("date", ""),
@@ -1567,6 +1648,9 @@ def build_cache_entry(url: "URL", resp: "HttpResponse") -> _CacheEntry:
         no_cache=no_cache,
         no_store=no_store,
         heuristic_ttl=heuristic,
+        vary=vary,
+        credentials_mode=credentials_mode or "",
+        request_headers=req_hdrs,
     )
 
 
@@ -1590,74 +1674,119 @@ class CacheStore:
         if enabled:
             os.makedirs(root_dir, exist_ok=True)
 
-    def _paths(self, url: "URL") -> tuple[str, str]:
-        key = _cache_key(url)
+    def _paths(self, url: "URL", credentials_mode: str = "",
+               vary=None, request_headers: "dict | None" = None
+               ) -> tuple[str, str]:
+        """R7-S03 第 4 点 — 键含凭据模式（不串凭据 / 不串 origin）。
+
+        已知限制（如实记录）：每个 (URL, 凭据模式) 只保留**一个**槽
+        位；``Vary`` 不同的多个变体会互相覆盖，但**绝不会错配**——
+        命中前 :func:`cache_validity.vary_matches` 会比对已存请求头，
+        不匹配即视为 miss 并回源。多变体并存需要变体索引，本轮未做。
+        """
+        key = _cache_key(url, credentials_mode)
         return (os.path.join(self.root_dir, key + ".json"),
                 os.path.join(self.root_dir, key + ".bin"))
 
-    def put(self, url: "URL", resp: "HttpResponse") -> None:
-        """P23.2 — store *resp* for *url* (skips ``no-store``)."""
-        if not self.enabled:
-            return
-        entry = build_cache_entry(url, resp)
-        if entry.no_store:
-            return
-        meta_path, bin_path = self._paths(url)
-        with open(bin_path, "wb") as f:
-            f.write(entry.body)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(entry.to_json(), f, ensure_ascii=False)
+    def put(self, url: "URL", resp: "HttpResponse",
+            credentials_mode: str = "",
+            request_headers: "dict | None" = None) -> bool:
+        """P23.2 — store *resp* for *url*.
 
-    def get_fresh(self, url: "URL", now: float | None = None
-                  ) -> "HttpResponse | None":
-        """P23.2 — return a fresh cached :class:`HttpResponse`, or
-        ``None`` when absent / stale / disabled."""
+        R7-S03 第 4 点 — 是否可存由 :func:`cache_validity.is_storable`
+        决定（``no-store`` / 状态码 / ``Vary: *`` / 带 Authorization
+        的响应），被拒时返回 ``False`` 且**不落盘**。
+        """
         if not self.enabled:
-            return None
-        now = now if now is not None else time.time()
-        meta_path, bin_path = self._paths(url)
-        if not (os.path.exists(meta_path) and os.path.exists(bin_path)):
+            return False
+        entry = build_cache_entry(url, resp, credentials_mode,
+                                  request_headers)
+        if entry is None or entry.no_store:
+            return False
+        meta_path, bin_path = self._paths(url, credentials_mode)
+        try:
+            with open(bin_path, "wb") as f:
+                f.write(entry.body)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(entry.to_json(), f, ensure_ascii=False)
+        except OSError:
+            return False
+        return True
+
+    def _load(self, url: "URL", credentials_mode: str = "",
+              request_headers: "dict | None" = None,
+              ) -> "tuple[_CacheEntry, bytes] | None":
+        """读出条目（含 Vary 匹配）；不匹配 / 缺失 / 坏档 → ``None``。"""
+        path, bin_path = self._paths(url, credentials_mode)
+        if not (os.path.exists(path) and os.path.exists(bin_path)):
             return None
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 entry = _CacheEntry.from_json(json.load(f))
         except (OSError, ValueError, KeyError):
             return None
+        # R7-S03 第 4 点 — Vary 匹配：字段值不同 ⇒ 不是命中。
+        if not _cv.vary_matches(entry.vary, entry.request_headers,
+                                request_headers or {}):
+            return None
+        try:
+            with open(bin_path, "rb") as f:
+                body = f.read()
+        except OSError:
+            return None
+        return entry, body
+
+    def get_fresh(self, url: "URL", now: float | None = None,
+                  credentials_mode: str = "",
+                  request_headers: "dict | None" = None,
+                  ) -> "HttpResponse | None":
+        """P23.2 — return a fresh cached :class:`HttpResponse`, or
+        ``None`` when absent / stale / disabled / Vary 不匹配。"""
+        if not self.enabled:
+            return None
+        now = now if now is not None else time.time()
+        loaded = self._load(url, credentials_mode, request_headers)
+        if loaded is None:
+            return None
+        entry, body = loaded
         if entry.ttl(now) <= 0.0:
             return None
-        with open(bin_path, "rb") as f:
-            body = f.read()
         return _resp_from_entry(entry, body, from_cache=True)
 
-    def get_stale(self, url: "URL") -> "HttpResponse | None":
+    def get_stale(self, url: "URL", credentials_mode: str = "",
+                  request_headers: "dict | None" = None,
+                  ) -> "HttpResponse | None":
         """P23.3 — return a *stale* entry that can still be
         revalidated via ``If-None-Match`` (needs an ETag).  Fresh
         entries and no-ETag entries return ``None``."""
         if not self.enabled:
             return None
-        meta_path, bin_path = self._paths(url)
-        if not (os.path.exists(meta_path) and os.path.exists(bin_path)):
+        loaded = self._load(url, credentials_mode, request_headers)
+        if loaded is None:
             return None
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                entry = _CacheEntry.from_json(json.load(f))
-        except (OSError, ValueError, KeyError):
-            return None
+        entry, body = loaded
         now = time.time()
         if entry.ttl(now) > 0.0:
             return None  # still fresh — caller should use get_fresh.
         if not entry.etag:
             return None  # no ETag → cannot revalidate; refetch.
-        with open(bin_path, "rb") as f:
-            body = f.read()
         return _resp_from_entry(entry, body, from_cache=True)
 
-    def revalidate_304(self, url: "URL", stale: "HttpResponse") -> None:
+    def revalidate_304(self, url: "URL", stale: "HttpResponse",
+                       headers_304: "dict | None" = None,
+                       credentials_mode: str = "",
+                       request_headers: "dict | None" = None) -> None:
         """P23.3 — server returned 304: refresh the cached entry's
-        ``fetched_at`` / ``Date`` so it becomes fresh again."""
+        ``fetched_at`` / ``Date`` so it becomes fresh again.
+
+        R7-S03 第 4 点 — 同时用 :func:`cache_validity.merge_304_headers`
+        把 304 带来的头**更新到已存头之上**（而不是替换），这样 304
+        之后 ``Content-Type`` / CSP 这类只在原始 200 里出现的安全头
+        仍然正确。
+        """
         if not self.enabled:
             return
-        meta_path, _ = self._paths(url)
+        meta_path, _ = self._paths(url, credentials_mode)
         if not os.path.exists(meta_path):
             return
         try:
@@ -1666,9 +1795,15 @@ class CacheStore:
         except (OSError, ValueError, KeyError):
             return
         entry.fetched_at = time.time()
-        entry.date = stale.headers.get("date", entry.date)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(entry.to_json(), f, ensure_ascii=False)
+        merged = _cv.merge_304_headers(entry.headers, headers_304 or {})
+        entry.headers = merged
+        entry.date = merged.get("date", entry.date)
+        entry.etag = merged.get("etag", entry.etag)
+        try:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(entry.to_json(), f, ensure_ascii=False)
+        except OSError:
+            return
 
     def clear(self) -> int:
         """Delete every cached response; return the number removed."""
