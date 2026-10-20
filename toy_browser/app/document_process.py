@@ -39,6 +39,10 @@ from toy_browser.scripting.script_ipc import (
 )
 # R7-A02 第 4 点 — 连续帧 buffer 布局契约 + 父进程可见面校验（纯逻辑）。
 from toy_browser.app.frame_buffer import FrameBufferSpec, FramePayloadContract
+# R7-S04 第 4 点 — 页面维度独立资源限额（纯逻辑判定层，IPC 队列维度）。
+from toy_browser.network.page_limits import (
+    PageResourceLimits, PageDimension as _PageDim,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +328,34 @@ class DocumentProcessPool:
         # 关标签门控：被关 tab 的在途帧全部丢弃
         self._closed_tabs: set = set()
         self._max_seq = 0
+        # R7-S04 第 4 点 — IPC 队列独立限额（纯逻辑判定层）：在途
+        # 命令 + 在途帧的合计超过上限即拒收新命令（防恶意 / 失控
+        # 页面把 IPC 队列撑爆打穿父进程）。真实截断行为由 post 的
+        # 拒收分支保证；这里只给判定与记账。
+        self._ipc_limits = PageResourceLimits()
+        self._ipc_rejected = 0
+
+    @property
+    def ipc_queue_limit(self) -> int:
+        """R7-S04 第 4 点 — IPC 队列当前在途上限（0 = 未启用）。"""
+        return self._ipc_limits.limit(_PageDim.IPC_QUEUE)
+
+    @ipc_queue_limit.setter
+    def ipc_queue_limit(self, value: int) -> None:
+        self._ipc_limits.limits[_PageDim.IPC_QUEUE] = int(value)
+
+    @property
+    def ipc_rejected(self) -> int:
+        """R7-S04 第 4 点 — 因 IPC 队列限额被拒收的命令数（诊断）。"""
+        return self._ipc_rejected
+        # R7-S04 第 4 点 — 页面维度独立资源限额（IPC 队列维度）：
+        # 在途命令数超过上限即拒收（防恶意 / 失控页面把 IPC 队列
+        # 撑爆打穿父进程）。纯逻辑判定层，真实截断行为由调用点保证。
+        self._page_limits = PageResourceLimits()
+        self._stats._ipc_rejected = 0
+
+    def __init_subclass__(cls, **kw):  # pragma: no cover - doc only
+        pass
 
     # -- 查询 -------------------------------------------------------------
 
@@ -343,6 +375,15 @@ class DocumentProcessPool:
         发往 worker，本纯逻辑核心先暂存）。"""
         if cmd.tab_id in self._closed_tabs:
             # 关标签后旧命令丢弃（G09 step 4 不泄漏）
+            return False
+        # R7-S04 第 4 点 — IPC 队列独立限额（分配前防护）：在途命令
+        # + 在途帧的合计已达上限则拒收新命令（防恶意 / 失控页面把
+        # IPC 队列撑爆打穿父进程）。未启用（上限 0）时恒放行。
+        _inflight = len(self._pending_cmds) + len(self._pending_frames)
+        if not self._ipc_limits.admit(_PageDim.IPC_QUEUE, 1) \
+                or (self._ipc_limits.limit(_PageDim.IPC_QUEUE) > 0
+                    and _inflight >= self._ipc_limits.limit(_PageDim.IPC_QUEUE)):
+            self._ipc_rejected += 1
             return False
         self._max_seq = max(self._max_seq, cmd.seq)
         self._pending_cmds.append(cmd)
