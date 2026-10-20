@@ -57,10 +57,14 @@ __all__ = [
 ]
 
 
-def parse_file(path: str) -> Node:
+def parse_file(path: str, page_limits=None) -> Node:
     """P24.5 — read *path* as a byte stream and parse it into a
     :class:`Node` tree (UTF-8 / UTF-16 BOM sniffing + Latin-1
-    fallback, per :func:`html_pkg.tokenize.decode_bytes`)."""
+    fallback, per :func:`html_pkg.tokenize.decode_bytes`).
+
+    R7-S04 第 4 点 — 可选 *page_limits*：节点入树前做 DOM 节点数 / 深度
+    分配前防护（透传给 :func:`build`）。
+    """
     with open(path, "rb") as f:
         data = f.read()
-    return parse(data)
+    return parse(data, page_limits=page_limits)

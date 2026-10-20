@@ -354,6 +354,99 @@ def test_image_entry_refuses_oversized_pixels():
     assert res_none is not None
 
 
+# ---------------------------------------------------------------------------
+# 逐入口接线 — DOM 构建（build.py 的 _DocumentBuilder / _build_flat）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_dom_builder_node_limit_truncates():
+    """build._DocumentBuilder 接 DOM_NODES 限额：节点数超限截断（不崩），
+    树在限额处停止生长；限额内正常。"""
+    from toy_browser.document import html_pkg as _hp
+    from toy_browser.document.html_pkg.node import Node
+
+    html = "<html><body>" + "<div></div>" * 10 + "</body></html>"
+    # 限额压到 3：document 自身不算（_insert 才判），html/body + 前 1 个 div
+    # 入树，后续 div 被截断。
+    limits = PageResourceLimits(limits={PageDimension.DOM_NODES: 3})
+    root = _hp.parse(html, page_limits=limits)
+    # 节点数记账 ≤ 上限（超限的截断，未 charge）。
+    assert limits.used(PageDimension.DOM_NODES) <= 3, \
+        f"DOM_NODES 记账 {limits.used(PageDimension.DOM_NODES)} 须 ≤ 3（截断不超账）"
+    # 截断后树里 div 数 < 10（超限部分未入树）。
+    divs = [c for c in _walk(root) if c.is_element() and c.tag == "div"]
+    assert len(divs) < 10, "超限的 div 须被截断（不入树）"
+
+
+@_reg
+def test_dom_builder_depth_limit_truncates():
+    """build._DocumentBuilder 接 DOM_DEPTH 限额：嵌套深度超限截断（不崩）。"""
+    from toy_browser.document import html_pkg as _hp
+
+    # 50 层嵌套 <div>：深度 = 50（document/html/body 之外）。
+    html = "<html><body>" + "<div>" * 50 + "x" + "</div>" * 50 + "</body></html>"
+    limits = PageResourceLimits(limits={PageDimension.DOM_DEPTH: 5})
+    root = _hp.parse(html, page_limits=limits)
+    # 深度记账不入账（瞬时量），但树的有效嵌套深度 ≤ 限额 + 骨架。
+    # 超限 div 被截断，树不再是 50 层。
+    depth = _max_depth(root)
+    assert depth <= 5 + 4, \
+        f"截断后深度 {depth} 须 ≤ 限额 5 + 骨架 4（document/html/body 豁免）"
+
+
+@_reg
+def test_dom_flat_builder_node_limit_truncates():
+    """_build_flat 接 DOM_NODES 限额：超限截断（不崩）；limits=None 时
+    无截断（向后兼容既有 fragment / innerHTML 路径）。"""
+    from toy_browser.document import html_pkg as _hp
+    from toy_browser.document.html_pkg.node import Node
+
+    frag = "<span>" * 50 + "a" + "</span>" * 50
+    limits = PageResourceLimits(limits={PageDimension.DOM_NODES: 5})
+    root = _hp.parse_fragment(frag, page_limits=limits)
+    assert limits.used(PageDimension.DOM_NODES) <= 5, \
+        f"flat 构建 DOM_NODES 记账 {limits.used(PageDimension.DOM_NODES)} 须 ≤ 5"
+    # 向后兼容：不传 limits 时 50 个 span 全部入树。
+    root2 = _hp.parse_fragment(frag)
+    spans = [c for c in _walk(root2) if c.is_element() and c.tag == "span"]
+    assert len(spans) == 50, "limits=None 时 fragment 不得截断（向后兼容）"
+
+
+@_reg
+def test_dom_limit_backward_compat_none_passes():
+    """parse / parse_fragment 默认 page_limits=None 时，既有行为不变：
+    无截断、全节点入树（既有 50+ 测试与 innerHTML 调用方契约）。"""
+    from toy_browser.document import html_pkg as _hp
+
+    html = "<html><body><div><p>x</p></div></body></html>"
+    root = _hp.parse(html)  # 不传 page_limits → 无截断
+    divs = [c for c in _walk(root) if c.is_element() and c.tag == "div"]
+    ps = [c for c in _walk(root) if c.is_element() and c.tag == "p"]
+    assert len(divs) == 1 and len(ps) == 1, \
+        "默认无截断须保持既有完整树"
+
+
+def _walk(root):
+    """Depth-first walk over *root*'s descendants (elements + text)."""
+    from toy_browser.document.html_pkg.node import Node
+
+    def _dfs(n):
+        for c in n.children:
+            yield c
+            yield from _dfs(c)
+    return list(_dfs(root))
+
+
+def _max_depth(root):
+    """Effective nesting depth of *root* (root itself = 1)."""
+    def _d(n, d=1):
+        m = d
+        for c in n.children:
+            m = max(m, _d(c, d + 1))
+        return m
+    return _d(root)
+
+
 if __name__ == "__main__":
     for name, fn in TESTS:
         fn()

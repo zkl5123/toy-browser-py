@@ -208,15 +208,76 @@ def _looks_like_document(tokens: list) -> bool:
 # Fragment builder (P24.2/3/4 — the historical flat tree)
 # ---------------------------------------------------------------------------
 
-def _build_flat(root: Node, tokens: list, script_hook=None) -> Node:
-    """Fragment tree construction — no implicit html/head/body."""
+def _build_flat(root: Node, tokens: list, script_hook=None, page_limits=None) -> Node:
+    """Fragment tree construction — no implicit html/head/body.
+
+    R7-S04 第 4 点 — 可选 *page_limits*：节点入树前做 DOM 节点数 / 深度
+    分配前防护（与 :class:`_DocumentBuilder` 同口径），超限截断不崩。
+    None = 未启用，恒放行（向后兼容既有 fragment / innerHTML 路径）。
+    """
     stack: list[Node] = [root]
     open_tags: list[str] = []
+
+    # R7-S04 第 4 点 — 节点入树的唯一收口：每个新 element / text 入树
+    # 前都经此（分配前防护 DOM_NODES / DOM_DEPTH）。深度 = len(stack)
+    # （父在栈顶 + 1）。超限直接跳过该节点（截断），不入树、不推进栈。
+    _node_count = [0]
+    _page_limits = page_limits
+
+    def _guarded_insert(node: Node) -> bool:
+        """Return True when *node* was inserted; False when truncated."""
+        if _page_limits is not None:
+            try:
+                from toy_browser.network.page_limits import PageDimension as _PD
+            except ImportError:
+                _PD = None
+            if _PD is not None:
+                # 两维度均**先判后做**（admit 无副作用）：都通过才
+                # charge + 入树；任一不过 → 不 charge、不入树（截断）。
+                if not _page_limits.admit(_PD.DOM_NODES, 1):
+                    return False
+                if not _page_limits.admit(_PD.DOM_DEPTH, len(stack)):
+                    return False
+                _page_limits.charge(_PD.DOM_NODES, 1)
+                _node_count[0] += 1
+        node.parent = stack[-1]
+        stack[-1].children.append(node)
+        return True
+
+    def _guarded_push(node: Node, tag: str) -> None:
+        if _guarded_insert(node):
+            stack.append(node)
+            open_tags.append(tag)
+
+    def _guarded_text(parent_node: Node, text: str) -> None:
+        """Fragment text insertion with node-count guard (P24.2 — merge
+        with a trailing text node so consecutive runs stay one node)."""
+        if not text:
+            return
+        if _page_limits is not None:
+            try:
+                from toy_browser.network.page_limits import PageDimension as _PD
+            except ImportError:
+                _PD = None
+            if _PD is not None and parent_node.children and \
+                    parent_node.children[-1].node_type == Node.TEXT:
+                pass  # merge path: no new node, no guard needed
+            elif _PD is not None:
+                if not _page_limits.admit(_PD.DOM_NODES, 1):
+                    return
+                _page_limits.charge(_PD.DOM_NODES, 1)
+                _node_count[0] += 1
+        if parent_node.children and parent_node.children[-1].node_type == Node.TEXT:
+            parent_node.children[-1].text += text
+        else:
+            node = Node.text_node(text)
+            node.parent = parent_node
+            parent_node.children.append(node)
 
     for tok in tokens:
         kind = tok[0]
         if kind == "text":
-            _add_text(stack[-1], tok[1])
+            _guarded_text(stack[-1], tok[1])
         elif kind in ("comment", "doctype"):
             # P24.3 — comments and DOCTYPEs are dropped from the DOM.
             continue
@@ -239,27 +300,23 @@ def _build_flat(root: Node, tokens: list, script_hook=None) -> Node:
             # R7-H01 — implicit <tbody> / <tr> repair.
             if tag == "tr" and stack[-1].tag == "table":
                 tbody = Node.element("tbody")
-                tbody.parent = stack[-1]
-                stack[-1].children.append(tbody)
-                stack.append(tbody)
-                open_tags.append("tbody")
+                if _guarded_insert(tbody):
+                    stack.append(tbody)
+                    open_tags.append("tbody")
             elif tag in ("td", "th") and stack[-1].tag in _ROW_GROUP_TAGS:
                 tr = Node.element("tr")
-                tr.parent = stack[-1]
-                stack[-1].children.append(tr)
-                stack.append(tr)
-                open_tags.append("tr")
+                if _guarded_insert(tr):
+                    stack.append(tr)
+                    open_tags.append("tr")
             elif tag in ("td", "th") and stack[-1].tag == "table":
                 tbody = Node.element("tbody")
-                tbody.parent = stack[-1]
-                stack[-1].children.append(tbody)
-                stack.append(tbody)
-                open_tags.append("tbody")
+                if _guarded_insert(tbody):
+                    stack.append(tbody)
+                    open_tags.append("tbody")
                 tr = Node.element("tr")
-                tr.parent = tbody
-                tbody.children.append(tr)
-                stack.append(tr)
-                open_tags.append("tr")
+                if _guarded_insert(tr):
+                    stack.append(tr)
+                    open_tags.append("tr")
             node = Node.element(tag, attrs)
             # P24.3 — toy foster parenting for table parts that appear
             # outside any table context (kept: the historical
@@ -269,13 +326,15 @@ def _build_flat(root: Node, tokens: list, script_hook=None) -> Node:
                 parent = _foster_parent(stack)
             else:
                 parent = stack[-1]
-            node.parent = parent
-            parent.children.append(node)
-            if script_hook is not None and tag == "script":
-                _apply_script_hook(node, script_hook)
-            if tag not in VOID_TAGS:
-                stack.append(node)
-                open_tags.append(tag)
+            # R7-S04 第 4 点 — 节点入树前做 DOM 节点数 / 深度分配前防护。
+            # 截断时不挂 parent、不入 children、不推进栈（后续 token 仍
+            # 可能被 _guarded_insert 截断，builder 不崩）。
+            if _guarded_insert(node):
+                if script_hook is not None and tag == "script":
+                    _apply_script_hook(node, script_hook)
+                if tag not in VOID_TAGS:
+                    stack.append(node)
+                    open_tags.append(tag)
         elif kind == "end":
             tag = tok[1].lower()
             if not open_tags:
@@ -320,7 +379,7 @@ class _DocumentBuilder:
     cell or a row group restores the correct mode.
     """
 
-    def __init__(self, root: Node, script_hook=None):
+    def __init__(self, root: Node, script_hook=None, page_limits=None):
         self.root = root
         self.stack: list[Node] = [root]
         self.open_tags: list[str] = []
@@ -332,12 +391,42 @@ class _DocumentBuilder:
         self.script_hook = script_hook
         #: R7-H01 — re-process budget for one start tag (see :meth:`_start`).
         self._reprocess = 0
+        # R7-S04 第 4 点 — 页面维度独立限额（DOM 节点数 / 深度）：
+        # 每次 _insert 前做分配前防护，超限即停（不崩，可诊断）。
+        # None = 未启用（恒放行，向后兼容既有 parse/innerHTML 路径）。
+        self._page_limits = page_limits
+        self._node_count = 0  # 已插入的 element + text 节点总数
 
     # -- stack helpers ---------------------------------------------------
     def _current(self) -> Node:
         return self.stack[-1]
 
     def _insert(self, node: Node) -> Node:
+        # R7-S04 第 4 点 — 页面维度独立限额（DOM 节点数 / 嵌套深度），
+        # 在节点**入树之前**做分配前防护（S04 第 1 点"不能先读完再检查"）。
+        # 超限时该节点不入树（截断）；tree builder 不崩，后续 token 的
+        # _insert 仍会因限额满而继续截断。None = 未启用，恒放行。
+        #   DOM_NODES：累计已插入的 element + text 节点总数（含本笔）。
+        #   DOM_DEPTH：本节点入树后的嵌套深度 = 父深度 + 1。父在栈顶
+        #     （self.stack[-1]），栈深 len(stack) 即父节点深度 + 1，
+        #     所以本节点入树后深度 = len(self.stack)。用"当前值 vs
+        #     上限"做瞬时判定（深度是瞬时量而非累计量，不入账）。
+        if self._page_limits is not None:
+            try:
+                from toy_browser.network.page_limits import PageDimension as _PD
+            except ImportError:
+                _PD = None
+            if _PD is not None:
+                # 两维度均**先判后做**（admit 无副作用）：都通过才
+                # charge + 入树；任一不过 → 不 charge、不入树（截断）。
+                # 避免"记账了却没创建"的串账（S04 决策层契约）。
+                if not self._page_limits.admit(_PD.DOM_NODES, 1):
+                    return node  # 节点数超限：截断，不入树（未记账）
+                if not self._page_limits.admit(_PD.DOM_DEPTH,
+                                                len(self.stack)):
+                    return node  # 深度超限：截断，不入树（未记账）
+                self._page_limits.charge(_PD.DOM_NODES, 1)
+                self._node_count += 1
         node.parent = self._current()
         self._current().children.append(node)
         return node
@@ -814,7 +903,7 @@ class _DocumentBuilder:
 # ---------------------------------------------------------------------------
 
 def build(tokens: list, root: Node | None = None, script_hook=None,
-          document_mode: "bool | None" = None) -> Node:
+          document_mode: "bool | None" = None, page_limits=None) -> Node:
     """P24.2/4 — build a DOM tree from a flat *tokens* list.
 
     *tokens* is the output of :func:`html_pkg.tokenize.tokenize_rawtext`.
@@ -831,24 +920,35 @@ def build(tokens: list, root: Node | None = None, script_hook=None,
 
     *script_hook* (J02 seam) is called with every ``<script>`` element
     as it is inserted.
+
+    R7-S04 第 4 点 — 可选 *page_limits*（:class:`PageResourceLimits`）：
+    DOM 节点数（DOM_NODES）/ 嵌套深度（DOM_DEPTH）在节点**入树前**
+    做分配前防护，超限截断（不崩，可诊断）；``None`` = 未启用，恒
+    放行（向后兼容既有 parse/innerHTML 路径）。
     """
     root = root or Node.element("document")
     if document_mode is None:
         document_mode = _looks_like_document(tokens)
     if not document_mode:
-        return _build_flat(root, tokens, script_hook=script_hook)
-    return _DocumentBuilder(root, script_hook=script_hook).run(tokens)
+        return _build_flat(root, tokens, script_hook=script_hook,
+                           page_limits=page_limits)
+    return _DocumentBuilder(root, script_hook=script_hook,
+                            page_limits=page_limits).run(tokens)
 
 
 def parse(data: "str | bytes", root: Node | None = None, script_hook=None,
-          document_mode: "bool | None" = None) -> Node:
-    """P24.5 — parse *data* (bytes or str) into a DOM tree."""
+          document_mode: "bool | None" = None, page_limits=None) -> Node:
+    """P24.5 — parse *data* (bytes or str) into a DOM tree.
+
+    R7-S04 第 4 点 — 可选 *page_limits*：节点入树前做 DOM 节点数 / 深度
+    分配前防护（透传给 :func:`build`）。
+    """
     return build(tokenize_rawtext(data), root=root, script_hook=script_hook,
-                 document_mode=document_mode)
+                 document_mode=document_mode, page_limits=page_limits)
 
 
 def parse_fragment(data: "str | bytes", context: "str | Node | None" = None,
-                   script_hook=None) -> Node:
+                   script_hook=None, page_limits=None) -> Node:
     """R7-H01 — fragment parsing (``innerHTML``-style).
 
     No implicit ``html`` / ``head`` / ``body`` is created.  When
@@ -857,6 +957,9 @@ def parse_fragment(data: "str | bytes", context: "str | Node | None" = None,
     that element is returned — so ``parse_fragment("<td>x</td>",
     context="tr")`` yields ``<tr><td>x</td></tr>`` rather than a bare
     ``td`` the table machinery cannot place.
+
+    R7-S04 第 4 点 — 可选 *page_limits*：节点入树前做 DOM 节点数 / 深度
+    分配前防护（透传给 :func:`_build_flat` / :func:`build`）。
     """
     tokens = tokenize_rawtext(data) if isinstance(data, (str, bytes)) else list(data)
     ctx_tag = None
@@ -864,5 +967,7 @@ def parse_fragment(data: "str | bytes", context: "str | Node | None" = None,
         ctx_tag = context if isinstance(context, str) else (context.tag or None)
     if ctx_tag:
         root = Node.element(ctx_tag.lower())
-        return _build_flat(root, tokens, script_hook=script_hook)
-    return build(tokens, script_hook=script_hook, document_mode=False)
+        return _build_flat(root, tokens, script_hook=script_hook,
+                           page_limits=page_limits)
+    return build(tokens, script_hook=script_hook, document_mode=False,
+                 page_limits=page_limits)
