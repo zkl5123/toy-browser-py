@@ -53,6 +53,10 @@ from toy_browser.network import cookie_context as _cookie_ctx
 from toy_browser.network import cache_validity as _cv
 # R7-S04 第 3 点 — deadline / 取消 / 页级聚合预算（纯逻辑决策层）。
 from toy_browser.network import request_budget as rb
+# R7-S02 — RequestContext 贯穿所有请求（发送前判定 + 逐跳重定向重评 +
+# 跨源敏感头剥离）。request_context 只依赖 cookie_context/cookie_store，
+# 与 net 无环，可模块级真实导入。
+from toy_browser.network import request_context as _rc
 
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
 # import time; cookie_store only needs net for URL parsing).
@@ -341,6 +345,14 @@ class HttpResponse:
     final_url: str = ""
     redirected: bool = False
     from_cache: bool = False
+    # R7-S02 第 3/6 点 — 发送前被策略拦截（CSP / scheme / 混合内容 /
+    # 未知 destination / same-origin-mode-却跨源）时，response 以
+    # status=0 + ``denied`` 标记落地；``denied`` 是纯逻辑判定
+    # (:class:`request_context.RequestDecision`)，``denied_headers``
+    # 是"若放行本会剥离敏感头后实际发出去"的请求头（跨源剥离的
+    # 证据）。两者都默认 ``None``，正常路径不填。
+    denied: object = None          # request_context.RequestDecision
+    denied_headers: dict | None = None
 
     @property
     def content_type(self) -> str:
@@ -1116,6 +1128,53 @@ class HttpClient:
         if self.page_budget is not None:
             self.page_budget.charge(raw_bytes, decoded_bytes)
 
+    # ------------------------------------------------------------------
+    # R7-S02 — 第 3 点：发送前检查 CSP / connect-src / scheme / 混合内容；
+    # 逐跳重定向重新评估，跨源敏感头按规范剥离（不重复造轮子，纯逻辑
+    # 决策层，真实发包仍走 _single_get）。
+    # ------------------------------------------------------------------
+
+    def _admit_request_context(self, ctx: "_rc.RequestContext",
+                               now: float | None = None) -> "_rc.RequestDecision":
+        """用 :func:`_rc.evaluate_request` 做一次**发送前**判定。
+
+        * 不允许（deadline / 混合内容阻断 / 未知 destination /
+          不支持的 scheme / same-origin-mode-却跨源 / CSP 拒绝）→
+          直接返回 ``allowed=False`` 的判定，调用方**不发包**（第 6 点：
+          被禁止的请求不得先发包再丢响应）。
+        * 允许 → 返回带 ``requires_preflight`` / ``requires_acao`` /
+          ``opaque_response`` 标记的判定；这些标记由**响应到达时**的复核
+          （:func:`filter_response_headers` / ACAO 比对）落实，不在发送前
+          阻塞（否则会把预检/ACAO 的合法流程也挡死）。
+        """
+        return _rc.evaluate_request(ctx, now=now)
+
+    def _strip_cross_origin_headers(self, headers: dict | None,
+                                    document_origin: str = "",
+                                    target: "URL | str" = "") -> dict:
+        """R7-S02 第 3 点 — 跨源请求 / 跨源重定向按 fetch §4.6 剥离
+        敏感请求头（Authorization / Proxy-Authorization / Cookie /
+        Cookie2 / WWW-Authenticate / Proxy-Authenticate）。
+
+        * 同源（含源解析失败最保守地不剥离，避免误伤调用方显式传的头）
+          → 原样返回。
+        * 跨源 → 返回一个新 dict，剔除敏感头，**不修改入参**（调用方
+          可能在后续其它目的地下复用同一份 headers）。
+        """
+        base = dict(headers or {})
+        if not target or not base:
+            return base
+        t = target.to_string() if isinstance(target, URL) else str(target)
+        ro = _rc._origin_of(t)
+        # document_origin 可能是调用方给的"origin 字符串"（可能带尾斜杠），
+        # 统一走 _rc._origin_of 归一化再比。任一源解析不出来 → 最保守
+        # 视为跨源，剥离（宁可少发，不多发）。
+        do = _rc._origin_of(document_origin) if document_origin else ""
+        if not ro or not do or ro.lower() != do.lower():
+            return {k: v for k, v in base.items()
+                    if str(k).lower() not in _rc.SENSITIVE_REQUEST_HEADERS}
+        return base
+
     def _single_get(self, url: URL,
                     headers: dict | None = None,
                     revalidate_etag: str = "",
@@ -1288,7 +1347,9 @@ class HttpClient:
             headers: dict | None = None,
             follow_redirects: bool = True,
             max_redirects: int = MAX_REDIRECTS,
-            cookie_context: dict | None = None) -> HttpResponse:
+            cookie_context: dict | None = None,
+            request_context: "_rc.RequestContext | None" = None,
+            now: float | None = None) -> HttpResponse:
         """GET *url*; P22.1 — follow 3xx redirects up to
         *max_redirects* (cap 5) with loop detection.  ``follow_redirects``
         False (the P21 behavior) returns the first 3xx as-is.
@@ -1314,6 +1375,31 @@ class HttpClient:
         """
         if not isinstance(url, URL):
             url = parse_url(url)
+
+        # R7-S02 第 3 点 — 提供 request_context 时做一次**发送前**判定
+        # （deadline / 混合内容阻断 / 未知 destination / 不支持的 scheme /
+        # same-origin-mode-却跨源 / CSP 拒绝）。被禁的请求**不发包**，
+        # 返回一个带原因的占位响应（ok=False、status=0），调用方按
+        # 失败处理——绝不"先发再丢"（方案第 6 点）。
+        _rc_ctx = request_context
+        if _rc_ctx is not None:
+            decision = self._admit_request_context(_rc_ctx, now=now)
+            if not decision.allowed:
+                _doc_origin = _rc_ctx.document_origin or ""
+                _stripped = self._strip_cross_origin_headers(
+                    headers, _doc_origin, url)
+                return HttpResponse(
+                    status=0, status_text="denied",
+                    headers={}, body=b"",
+                    final_url=url.to_string(),
+                    denied=decision,
+                    denied_headers=_stripped,
+                )
+            # 允许 → 跨源剥敏感头（fetch §4.6），再走缓存与重定向链。
+            _doc_origin = _rc_ctx.document_origin or ""
+            headers = self._strip_cross_origin_headers(
+                headers, _doc_origin, url)
+
         self._emit(PHASE_START, 0.0, url.to_string())
 
         # R7-S03 第 4 点 — 缓存键要带凭据模式与请求头（Vary 匹配 +
@@ -1344,6 +1430,8 @@ class HttpClient:
             revalidate_etag=(stale.etag if stale else ""),
             stale_body=(stale.body if stale else b""),
             cookie_context=_ctx,
+            request_context=_rc_ctx,
+            now=now,
         )
 
         # P23.2 — store successful, cacheable responses.
@@ -2213,7 +2301,9 @@ def _follow_redirects(client: "HttpClient",
                      follow: bool = True,
                      revalidate_etag: str = "",
                      stale_body: bytes = b"",
-                     cookie_context: dict | None = None) -> HttpResponse:
+                     cookie_context: dict | None = None,
+                     request_context: "_rc.RequestContext | None" = None,
+                     now: float | None = None) -> HttpResponse:
     """P22.1 — follow a 3xx redirect chain (cap *max_redirects*,
     loop-detect via the set of visited URLs).  P23.3 — the *first*
     hop may carry a conditional GET (``If-None-Match``) when
@@ -2226,16 +2316,26 @@ def _follow_redirects(client: "HttpClient",
     :meth:`CookieRequestContext.for_redirect` **重新求值**（跨站标记
     按新 URL 的站点重算，非导航请求的跨源跳转把凭据降为 ``omit``）。
     旧代码把第 0 跳算出的 dict 原样带到最后一跳——``a.test`` 文档里
-    的子资源 302 到 ``b.test`` 之后仍被当成同站，Lax cookie 泄漏。"""
+    的子资源 302 到 ``b.test`` 之后仍被当成同站，Lax cookie 泄漏。
+
+    R7-S02 第 3 点 — *request_context*（可选）：每一跳都用
+    :meth:`RequestContext.for_redirect` **重新求值**（跨源跳转把凭据
+    降为 ``omit`` 并剥离敏感头，redirect_chain 逐跳追加）。**逐跳先
+    判后做**：``for_redirect`` 之后立刻做
+    :meth:`HttpClient._admit_request_context`，被禁的那一跳**不发包**，
+    直接落地带 ``denied`` 标记的占位响应。第 0 跳不做（由调用方
+    在 :meth:`HttpClient.get` 入口已经判过）。"""
     visited: list[URL] = []
     cur = url
     hops = 0
     first = True
     cur_ctx = client._cookie_ctx_for(url, "GET", cookie_context)
+    cur_rc = request_context          # 第 0 跳的 context（若提供）
+    cur_hdrs = headers                # 第 0 跳的请求头（若跨源已被调用方剥过）
     while True:
         visited.append(cur)
         resp = client._single_get(
-            cur, headers,
+            cur, cur_hdrs,
             revalidate_etag=(revalidate_etag if first else ""),
             stale_body=(stale_body if first else b""),
             cookie_context=cur_ctx,
@@ -2264,6 +2364,31 @@ def _follow_redirects(client: "HttpClient",
             )
         # R7-S03 第 2 点 — 下一跳重新求值（而不是沿用上一跳的判定）。
         cur_ctx = cur_ctx.for_redirect(nxt.to_string())
+        # R7-S02 第 3 点 — 下一跳重新评估 + 跨源敏感头剥离（纯逻辑，
+        # 未发包）。被禁的那一跳直接落地占位响应，不继续发包。
+        if cur_rc is not None:
+            cur_rc = cur_rc.for_redirect(nxt.to_string())
+            decision = client._admit_request_context(cur_rc, now=now)
+            if not decision.allowed:
+                _doc_origin = cur_rc.document_origin or ""
+                _stripped = client._strip_cross_origin_headers(
+                    cur_hdrs, _doc_origin, nxt)
+                _denied = HttpResponse(
+                    status=0, status_text="denied",
+                    headers={}, body=b"",
+                    final_url=nxt.to_string(),
+                    denied=decision,
+                    denied_headers=_stripped,
+                )
+                _denied.redirected = True
+                return _denied
+            # 允许 → 跨源剥敏感头，继续下一跳。
+            _doc_origin = cur_rc.document_origin or ""
+            cur_hdrs = client._strip_cross_origin_headers(
+                cur_hdrs, _doc_origin, nxt)
+        else:
+            # 无 request_context → 保持旧语义（headers 原样透传）。
+            cur_hdrs = headers
         cur = nxt
 
 
@@ -2309,18 +2434,29 @@ def fetch_html(url: "URL | str", client: HttpClient | None = None,
 def fetch_resource(url: "URL | str",
                    client: HttpClient | None = None,
                    timeout: float | None = None,
-                   cookie_context: dict | None = None) -> "HttpResponse | None":
+                   cookie_context: dict | None = None,
+                   request_context: "_rc.RequestContext | None" = None,
+                   now: float | None = None,
+                   ) -> "HttpResponse | None":
     """P22.4 — fetch a subresource (stylesheet / image / script).
 
     Returns the :class:`HttpResponse` (body bytes) on success, or
-    ``None`` on any failure (network error, 4xx/5xx, bad content).
-    Subresource loading must never block or crash the page — the
-    caller ignores ``None``.
+    ``None`` on any failure (network error, 4xx/5xx, bad content,
+    or a pre-flight policy denial under R7-S02).  Subresource
+    loading must never block or crash the page — the caller ignores
+    ``None``.
 
     R7-S05 — *cookie_context* carries the request's cross-site /
     method / top-level metadata to the cookie jar (subresources are
     not top-level navigations; a cross-origin subresource must not
     carry a Lax cookie).
+
+    R7-S02 第 3/6 点 — *request_context* (可选)：发送前用
+    :func:`_rc.evaluate_request` 判定一次（deadline / 混合内容阻断 /
+    未知 destination / 不支持的 scheme / same-origin-mode-却跨源 /
+    CSP 拒绝），被禁的请求**不发包**，直接返回 ``None``（子资源
+    失败契约与 404 相同）。跨源敏感头按 :func:`fetch §4.6` 剥离
+    （经 :meth:`HttpClient.get` 在发送前统一处理）。
     """
     c = client or (
         HttpClient(timeout=timeout if timeout is not None else DEFAULT_TIMEOUT)
@@ -2328,8 +2464,14 @@ def fetch_resource(url: "URL | str",
     if not isinstance(url, URL):
         url = parse_url(url)
     try:
-        resp = c.get(url, cookie_context=cookie_context)
+        resp = c.get(
+            url, cookie_context=cookie_context,
+            request_context=request_context, now=now)
     except Exception:
+        return None
+    # R7-S02 第 6 点 — 被策略拦截的请求落地为 status=0 + denied，
+    # 按子资源失败契约（与 404 相同）返回 None。
+    if resp.denied is not None:
         return None
     if not resp.ok:
         return None
@@ -2354,6 +2496,49 @@ def _subresource_cookie_context(absu: URL, doc_origin: str) -> dict:
     return {"is_cross_site": is_cross_site,
             "method": "GET",
             "is_top_level": False}
+
+
+#: R7-S02 — spec kind → request_context.destination 映射（script 需
+#: 依 crossorigin / type 细分为 classic-script / module，其余按 kind）。
+_SPEC_KIND_TO_DESTINATION = {
+    "image": _rc.DEST_IMAGE,
+    "stylesheet": _rc.DEST_STYLE,
+    "script": _rc.DEST_CLASSIC_SCRIPT,   # 被 _build_subresource_request_context 细化
+    "font": _rc.DEST_FONT,
+    "connect": _rc.DEST_FETCH,
+}
+
+
+def _build_subresource_request_context(spec: dict, absu: "URL",
+                                       doc_origin: str,
+                                       policy: "DocumentPolicy | None"
+                                       ) -> "_rc.RequestContext":
+    """R7-S02 第 3/4 点 — 为子资源 spec 构建发送前判定用的 context。
+
+    * destination：script 按 ``type=module`` / ``crossorigin`` 细分为
+      module / classic-script；其余按 spec kind 映射。
+    * mode / credentials：按 :func:`_rc.default_mode_for` /
+      :func:`_rc.default_credentials_for` 默认值；未知 destination
+      保持空串（evaluate 时明确拒绝，不偷换成放行）。
+    * policy：透传给 CSP / connect-src 判定。
+    """
+    kind = spec.get("kind", "")
+    if kind == "script":
+        if spec.get("script_type") == "module":
+            dest = _rc.DEST_MODULE
+        elif spec.get("crossorigin") is not None:
+            dest = _rc.DEST_CLASSIC_SCRIPT
+        else:
+            dest = _rc.DEST_CLASSIC_SCRIPT
+    else:
+        dest = _SPEC_KIND_TO_DESTINATION.get(kind, _rc.DEST_FETCH)
+    ctx = _rc.context_for_destination(
+        doc_origin, absu.to_string(), dest,
+        crossorigin=spec.get("crossorigin"),
+        policy=policy,
+        base_url=absu.to_string(),
+    )
+    return ctx
 
 
 def _subresource_cookie_ctx(absu: "URL", doc_origin: str,
@@ -2580,6 +2765,11 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
             by_kind.setdefault(spec["kind"], {})[absu.to_string()] = None
             done += 1
             continue
+        # R7-S02 第 3/4 点 — 每个 spec 派生自己的 request_context：
+        # destination / mode / credentials 按 spec 属性算，发送前做
+        # 一次完整判定（scheme / 混合内容 / CSP / 预检标记）。
+        _rc_ctx = _build_subresource_request_context(
+            spec, absu, doc_origin, policy)
         # R7-S05 — subresource requests carry their real cookie
         # context (subresource = not top-level; cross-site when the
         # registrable site differs from the document's).
@@ -2587,7 +2777,9 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         # 让凭据门禁真正生效。
         _sub_ctx = _subresource_cookie_ctx(
             absu, doc_origin, kind_map.get(spec["kind"], spec["kind"]))
-        resp = fetch_resource(absu, client=c, cookie_context=_sub_ctx)
+        resp = fetch_resource(
+            absu, client=c, cookie_context=_sub_ctx,
+            request_context=_rc_ctx)
         # GPT P0-4 — enforce CORS/CSP on the fetched subresource.
         # When *doc_csp* is supplied the document's CSP header is
         # used to gate the subresource (the real browser behaviour);
@@ -2764,10 +2956,15 @@ def load_subresources_parallel(dom_root, base_url,
                 by_kind.setdefault(spec["kind"], {})[absu.to_string()] = None
                 done += 1
                 continue
+            # R7-S02 第 3/4 点 — 每个 spec 派生 request_context，做
+            # 发送前判定（scheme / 混合内容 / CSP / 预检标记）。
+            _rc_ctx = _build_subresource_request_context(
+                spec, absu, doc_origin, policy)
             resp = _apply_policy(
                 fetch_resource(absu, client=c,
                                cookie_context=_subresource_cookie_ctx(
-                                   absu, doc_origin, spec["kind"])),
+                                   absu, doc_origin, spec["kind"]),
+                               request_context=_rc_ctx),
                 absu, spec)
             by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
             done += 1
@@ -2779,11 +2976,14 @@ def load_subresources_parallel(dom_root, base_url,
             absu = parse_url(spec["src"], base=eff_base)
             if _csp_pre_blocked(absu, spec):
                 return spec, absu, None
+            _rc_ctx = _build_subresource_request_context(
+                spec, absu, doc_origin, policy)
             try:
                 resp = fetch_resource(
                     absu, client=c,
                     cookie_context=_subresource_cookie_ctx(
-                        absu, doc_origin, spec["kind"]))
+                        absu, doc_origin, spec["kind"]),
+                    request_context=_rc_ctx)
             except Exception:
                 resp = None
             return spec, absu, resp

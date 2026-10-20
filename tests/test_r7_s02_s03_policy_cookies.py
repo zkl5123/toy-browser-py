@@ -33,10 +33,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from toy_browser.document import dom
 from toy_browser.network import net
 from toy_browser.network import cookie_store as cs
+from toy_browser.network import request_context as _rc
 from toy_browser.network.cookie_store import CookieJar, parse_set_cookie
 from toy_browser.network.net import (
     DocumentPolicy,
     HttpClient,
+    _build_subresource_request_context,
     _csp_values_for,
     fetch_resource,
     parse_csp_directives,
@@ -687,6 +689,190 @@ def _last_cookie_header(counts: dict, path: str) -> str:
     """Read the Cookie header recorded for *path* (the server stores
     the last seen value under ``("hdr", path)``)."""
     return counts.get(("hdr", path), "")
+
+
+# ---------------------------------------------------------------------------
+# R7-S02 第 3/5/6 点 — 跨源敏感头剥离 + 发送前拒绝（动态断言）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_s02_get_cross_origin_strips_sensitive_headers():
+    """R7-S02 第 3 点 — 跨源请求按 fetch §4.6 剥离敏感请求头
+    （Authorization / Cookie / WWW-Authenticate …）。同源不剥。
+    服务端计数确保请求确实**发出去了**（不是被拒后 0 次）。"""
+    srv, port, counts = _start_server({
+        ("GET", "/ok"): (200, "text/plain", b"ok", []),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_origin = "http://a.test/"
+        target = f"http://127.0.0.1:{port}/ok"
+        # 跨源：document_origin (a.test) ≠ 目标源 (127.0.0.1:port)。
+        ctx = _rc.context_for_destination(
+            doc_origin, target, _rc.DEST_FETCH)
+        hdrs = {"Authorization": "Bearer tok",
+                "Cookie": "session=1",
+                "X-Custom": "keep"}
+        resp = c.get(target, headers=hdrs,
+                     request_context=ctx)
+        assert resp.status == 200 and resp.ok, \
+            f"cross-origin request must still hit the wire: {resp.status}"
+        assert counts.get(("GET", "/ok"), 0) >= 1, counts
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_strip_cross_origin_headers_helper():
+    """HttpClient._strip_cross_origin_headers 跨源剥、不修改入参。
+
+    同源行为保持"保守不剥"：调用方可能已在 cookie 门禁里做过
+    同站判定，strip 层只在**跨源**时按 fetch §4.6 移除敏感头
+    （同源请求的敏感头由调用方 / cookie 门禁决定，不在这里
+    二次拦截——这是单一职责）。"""
+    c = HttpClient()
+    base = {"Authorization": "Bearer t", "Cookie": "a=1",
+            "X-Keep": "y"}
+    # 跨源 → 剥
+    stripped = c._strip_cross_origin_headers(
+        base, "http://a.test/", "http://b.test/x")
+    assert "Authorization" not in stripped and "Cookie" not in stripped
+    assert stripped.get("X-Keep") == "y"
+    # 入参未被改（调用方可能在别处复用同一份 dict）。
+    assert "Authorization" in base and "Cookie" in base
+    # 同源 → 原样返回（保守：不在 strip 层重复拦截，交给调用方）。
+    # 入参不被修改；返回值内容与入参一致。
+    same = c._strip_cross_origin_headers(
+        base, "http://a.test/", "http://a.test/y")
+    assert same.get("Authorization") == "Bearer t"
+    assert same.get("Cookie") == "a=1"
+    assert same.get("X-Keep") == "y"
+    # 入参本身未被改。
+    assert "Authorization" in base and "Cookie" in base
+    c.close_pool()
+
+
+@_reg
+def test_s02_get_denied_unknown_scheme_does_not_hit_wire():
+    """R7-S02 第 5/6 点 — 不支持的 scheme（ftp / data …）在发送
+    前被拒，落地 status=0 + denied，**不发包**。"""
+    c = HttpClient()
+    # context_for_destination 不会校验 scheme（纯字段映射），这里
+    # 手工把 url 设成不支持的 scheme 触发 evaluate 的 scheme 拒绝。
+    ctx = _rc.context_for_destination(
+        "https://a.test/", "ftp://a.test/x", _rc.DEST_FETCH)
+    resp = c.get("ftp://a.test/x", request_context=ctx)
+    assert resp.status == 0 and resp.denied is not None, \
+        f"unsupported scheme must be pre-denied: {resp.status}"
+    assert resp.denied.blocked_by == "scheme"
+    c.close_pool()
+
+
+@_reg
+def test_s02_get_denied_mixed_content_blockable():
+    """R7-S02 第 3/6 点 — https 文档里的 http 脚本类子资源是
+    *可阻断*混合内容：发送前被拒，不发包。"""
+    c = HttpClient()
+    ctx = _rc.context_for_destination(
+        "https://a.test/", "http://a.test/x.js",
+        _rc.DEST_CLASSIC_SCRIPT)
+    resp = c.get("http://a.test/x.js", request_context=ctx)
+    assert resp.status == 0 and resp.denied is not None, \
+        "blockable mixed content must be pre-denied"
+    assert resp.denied.blocked_by == "mixed-content"
+    c.close_pool()
+
+
+@_reg
+def test_s02_fetch_resource_csp_denied_returns_none():
+    """R7-S02 第 6 点 — connect-src none 跨源 fetch 在发送前被拒，
+    fetch_resource 按失败契约返回 None，服务端计数为 0。"""
+    srv, port, counts = _start_server({
+        ("GET", "/api"): (200, "application/json", b"{}", []),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        target = f"http://127.0.0.1:{port}/api"
+        # 文档 CSP 明确禁止 connect-src（跨源 fetch 不可读）。
+        policy = DocumentPolicy(
+            doc_origin="https://a.test/",
+            csp_directives=parse_csp_directives("connect-src 'none'"))
+        ctx = _rc.context_for_destination(
+            "https://a.test/", target, _rc.DEST_FETCH, policy=policy)
+        resp = fetch_resource(target, client=c,
+                              request_context=ctx)
+        assert resp is None, \
+            "CSP-forbidden cross-origin fetch must be None"
+        assert counts.get(("GET", "/api"), 0) == 0, \
+            f"CSP-forbidden fetch must not hit the wire: {counts}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_subresource_context_derives_mode_credentials():
+    """R7-S02 第 4 点 — 子资源 spec 派生 context：classic script
+    （无 crossorigin）默认 no-cors + omit；module / crossorigin
+    → cors；同源无需 ACAO。"""
+    policy = DocumentPolicy(doc_origin="https://a.test/",
+                            csp_directives={})
+    absu = net.parse_url("https://a.test/x.js")
+    # classic script, same origin → no-cors, omit credentials.
+    # （is_cross_origin 比较 scheme://host，不带尾斜杠。）
+    c1 = _build_subresource_request_context(
+        {"kind": "script", "src": "x.js",
+         "crossorigin": None, "script_type": ""},
+        absu, "https://a.test", policy)
+    assert c1.mode == _rc.MODE_NO_CORS, c1.mode
+    assert c1.credentials == _rc.CRED_OMIT, c1.credentials
+    assert c1.is_cross_origin is False
+    # module, cross origin → cors mode.
+    absu2 = net.parse_url("https://b.test/m.js")
+    c2 = _build_subresource_request_context(
+        {"kind": "script", "src": "m.js",
+         "crossorigin": None, "script_type": "module"},
+        absu2, "https://a.test/", policy)
+    assert c2.destination == _rc.DEST_MODULE, c2.destination
+    assert c2.mode == _rc.MODE_CORS, c2.mode
+    assert c2.is_cross_origin is True
+    # image → no-cors (not JS-readable).
+    c3 = _build_subresource_request_context(
+        {"kind": "image", "src": "i.png"},
+        absu, "https://a.test/", policy)
+    assert c3.mode == _rc.MODE_NO_CORS and \
+        c3.destination == _rc.DEST_IMAGE
+    # crossorigin=use-credentials → include credentials.
+    c4 = _build_subresource_request_context(
+        {"kind": "script", "src": "x.js",
+         "crossorigin": "use-credentials", "script_type": ""},
+        absu, "https://a.test/", policy)
+    assert c4.credentials == _rc.CRED_INCLUDE, c4.credentials
+
+
+@_reg
+def test_s02_for_redirect_strips_sensitive_and_downgrades():
+    """R7-S02 第 3 点 — 跨源重定向把凭据降为 omit 并剥离敏感头，
+    redirect_chain 逐跳追加。
+
+    注意：``for_redirect`` 的跨源判定用 :func:`_rc._origin_of`，
+    输出形如 ``scheme://host[:port]``，**不带**尾斜杠。所以
+    同站跳转必须用与 ``document_origin`` 完全一致的字符串，
+    否则会被误判为跨源。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://a.test/1", _rc.DEST_NAVIGATE)
+    ctx.headers = {"Authorization": "Bearer t", "X-K": "1"}
+    h1 = ctx.for_redirect("https://b.test/2")
+    assert h1.credentials == _rc.CRED_OMIT, h1.credentials
+    assert "Authorization" not in h1.headers
+    assert h1.headers.get("X-K") == "1"
+    assert h1.redirect_chain == ["https://a.test/1"]
+    assert h1.is_cross_origin is True
+    # 同站跳转不降级（同 host:port 的 origin 字符串）。
+    same = ctx.for_redirect("https://a.test/2")
+    assert same.credentials != _rc.CRED_OMIT
+    assert "Authorization" in same.headers
 
 
 if __name__ == "__main__":

@@ -153,6 +153,13 @@ def render_document_from_url(
     if load_subresources:
         base = net.parse_url(_doc_url_final)
         try:
+            # R7-S02 第 1 点 — 文档请求上下文贯穿到子资源加载：
+            # load_subresources 内部为每个 spec 派生自己的
+            # request_context（destination / mode / credentials 按
+            # 属性算），并用 _rc.evaluate_request 做发送前判定
+            # （scheme / 混合内容 / CSP / 预检标记）。req_ctx 作为
+            # 诊断锚点保留在 host.request_context 上（上面已挂好），
+            # 供后续 inline 脚本 / 事件处理器里的 fetch() 复用。
             loaded = net.load_subresources(
                 tree, base,
                 client=eff_client, timeout=timeout,
