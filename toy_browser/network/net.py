@@ -1543,6 +1543,12 @@ def _cache_key(url: "URL", credentials_mode: str = "",
                          credentials_mode, vary, request_headers)
 
 
+#: R7-S03 第 4 点 — 缓存凭据桶的**探测顺序**（仅在调用方未声明
+#: 凭据模式时使用；已声明的调用方永远走自己的桶）。
+_CREDENTIAL_BUCKETS = ("", _cookie_ctx.CRED_INCLUDE,
+                       _cookie_ctx.CRED_SAME_ORIGIN, _cookie_ctx.CRED_OMIT)
+
+
 def _parse_cache_control(value: str) -> dict:
     """P23.2 — toy parse of Cache-Control into {directive: arg}."""
     out: dict = {}
@@ -1674,17 +1680,35 @@ class CacheStore:
         if enabled:
             os.makedirs(root_dir, exist_ok=True)
 
+    def _paths_for(self, url: "URL", credentials_mode: str) -> tuple[str, str]:
+        """**（严格）**按凭据模式定位条目：不做任何回退。"""
+        key = _cache_key(url, credentials_mode)
+        return (os.path.join(self.root_dir, key + ".json"),
+                os.path.join(self.root_dir, key + ".bin"))
+
     def _paths(self, url: "URL", credentials_mode: str = "",
                vary=None, request_headers: "dict | None" = None
                ) -> tuple[str, str]:
         """R7-S03 第 4 点 — 键含凭据模式（不串凭据 / 不串 origin）。
+
+        凭据模式**已声明**时（``omit`` / ``same-origin`` / ``include``）
+        严格按该桶定位，绝不跨桶——这就是"不得串凭据策略"。
+        未声明（``""``，直接调用 :class:`CacheStore` 的遗留用法，例如
+        测试里"看看刚才那次请求存进去没有"）时按顺序探测已知桶；
+        这类调用方本来就没有凭据概念，探测只影响它自己。
 
         已知限制（如实记录）：每个 (URL, 凭据模式) 只保留**一个**槽
         位；``Vary`` 不同的多个变体会互相覆盖，但**绝不会错配**——
         命中前 :func:`cache_validity.vary_matches` 会比对已存请求头，
         不匹配即视为 miss 并回源。多变体并存需要变体索引，本轮未做。
         """
-        key = _cache_key(url, credentials_mode)
+        if credentials_mode:
+            return self._paths_for(url, credentials_mode)
+        for bucket in _CREDENTIAL_BUCKETS:
+            meta, binp = self._paths_for(url, bucket)
+            if os.path.exists(meta) and os.path.exists(binp):
+                return meta, binp
+        return self._paths_for(url, "")
         return (os.path.join(self.root_dir, key + ".json"),
                 os.path.join(self.root_dir, key + ".bin"))
 

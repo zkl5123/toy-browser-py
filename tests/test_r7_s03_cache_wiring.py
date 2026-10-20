@@ -285,6 +285,32 @@ def test_cache_entries_do_not_mix_credentials():
 
 
 @_reg
+def test_undeclared_probe_sees_client_entry():
+    """未声明凭据的调用方（遗留用法：直接问 store）看得到 client
+    刚存的条目——已声明的调用方之间仍然严格隔离（见上一条）。"""
+    store = _store()
+
+    def h(method, path, headers):
+        return (200, [("Content-Type", "text/plain"),
+                      ("Cache-Control", "max-age=600")], b"v")
+
+    srv, port, counts, last = _start_server(h)
+    try:
+        c = net.HttpClient(timeout=5.0, cache=store)
+        u = net.parse_url(f"http://127.0.0.1:{port}/compat")
+        c.get(u)
+        # HttpClient 用导航凭据（include）落盘；直接 probe 用 "" 也能
+        # 找到（否则 p23 那类"看看存进去没有"的用例会凭空失败）。
+        assert store.get_fresh(u) is not None, \
+            "未声明凭据的 probe 必须能读到 client 存的条目"
+        # 但 omit 这种**已声明**的桶绝不能读到它。
+        assert store.get_fresh(u, credentials_mode="omit") is None
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
 def test_no_store_never_written():
     store = _store()
 
