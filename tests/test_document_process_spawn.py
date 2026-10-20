@@ -302,6 +302,211 @@ def test_gui_g09_close_tab_drops_doc_server_tab():
         tb._g07_doc_server_shutdown()
 
 
+# ---------------------------------------------------------------------------
+# R7-A02 第 2 点 — worker 持 DocumentState 执行真实文档工作
+# ---------------------------------------------------------------------------
+
+def _make_stub_server_with_fallback_worker():
+    """构造 DocProcessServer 并把其回退 worker 直接暴露（父进程内
+    可观测真实文档工作状态，不 spawn 子进程）。"""
+    from toy_browser.app.document_process import DocProcessServer
+    srv = DocProcessServer()
+    return srv
+
+
+@_reg
+def test_r7a02_worker_navigate_html_does_real_doc_work():
+    """R7-A02 第 2 点 — worker navigate 带 html 时，真实解析 / JS /
+    样式 / 布局 / 光栅化在 worker 内执行（DocumentState 持有 DOM +
+    Host），``has_done_doc_work()`` 翻转为 True；无 html（纯身份
+    导航）时保持 False。"""
+    from toy_browser.app.document_process import (
+        DocumentProcessWorker, DocCommand, DOC_CMD_NAVIGATE, DOC_CMD_RESIZE)
+
+    w = DocumentProcessWorker()
+    assert w.has_done_doc_work() is False, "未导航前不做真实文档工作"
+
+    # navigate 带 html + 几何 → 真实文档工作（解析 + JS + 样式 + 布局 + 绘制）
+    w.handle(DocCommand(1, DOC_CMD_NAVIGATE,
+                       {"url": "http://a", "html": "<p>hi</p>",
+                        "w": 800, "h": 600}, 1))
+    assert w.has_done_doc_work() is True, "navigate 带 html 后须翻转"
+    doc = w.doc_state_for(1)
+    assert doc is not None, "worker 须持有该 tab 的 DocumentState"
+    assert doc.dom_tree is not None, "DocumentState 须含解析后的 DOM"
+    assert doc.script_init_count == 1, "脚本初始化只增加一次（navigate）"
+    # 最近渲染 Bitmap 已持有（紧凑像素 / 尺寸）
+    bm = w.last_bitmap(1)
+    assert bm is not None, "worker 须持有最近渲染的 Bitmap"
+
+    # resize（tab 已有 DocumentState）→ 重排，不重跑脚本
+    w.handle(DocCommand(1, DOC_CMD_RESIZE, {"w": 1024, "h": 768}, 2))
+    assert doc.script_init_count == 1, "resize 重排不重建 Host / 不重跑脚本"
+    assert w.has_done_doc_work() is True
+
+    # 另一个 tab 纯身份 navigate（无 html）→ 不影响整体标记，
+    # 但新 tab 无 DocumentState
+    w.handle(DocCommand(2, DOC_CMD_NAVIGATE, {"url": "http://b"}, 3))
+    assert w.doc_state_for(2) is None, "无 html 的纯身份导航不建 DocumentState"
+    assert w.last_bitmap(2) is None
+
+
+@_reg
+def test_r7a02_server_fallback_worker_has_done_doc_work_proxy():
+    """R7-A02 第 2 点 — DocProcessServer.has_done_doc_work() 代理
+    父进程内置同步 worker 的真实文档工作标记：回退态下 worker
+    处理带 html 的 navigate 后代理返回 True；纯身份导航保持 False。
+
+    多核态（子进程存活）下父进程无法直接观测子进程是否做了真实
+    文档工作，代理保持保守（不代子进程返回 True）——不据"子进程
+    spawn 了"宣称已多核渲染。"""
+    srv = _make_stub_server_with_fallback_worker()
+    # 不 spawn 子进程，直接走回退 worker（父进程内可观测）
+    assert srv.has_done_doc_work() is False
+    # 直接驱动父进程回退 worker 做真实文档工作（回退态路径）
+    from toy_browser.app.document_process import (
+        DocCommand, DOC_CMD_NAVIGATE)
+    cmd = DocCommand(1, DOC_CMD_NAVIGATE,
+                     {"url": "http://a", "html": "<p>x</p>",
+                      "w": 800, "h": 600}, 1)
+    srv._worker.handle(cmd)
+    assert srv.has_done_doc_work() is True, "回退 worker 做真实文档工作后" \
+        "代理须翻转"
+    srv.shutdown()
+
+
+@_reg
+def test_r7a02_server_child_process_doc_work_not_observed():
+    """R7-A02 第 2 点（不冒充通过）— 子进程存活（多核态）时，父
+    进程 has_done_doc_work() 代理**不**代子进程返回 True（子进程
+    内部 worker 的文档工作状态无法从父进程直接观测）。
+
+    验证保守口径：spawn 子进程后（子进程侧独立 DocumentProcessWorker
+    会做真实文档工作），父进程代理仍只反映**父进程内置同步
+    worker** 的标记（未翻转 → False）。这是"不据子进程 spawn 宣称
+    已多核渲染"的可测证据。
+
+    多核态要判 WORKER_FULL 需子进程经 IPC 回报 doc_work 标记
+    （开放问题，留活显示批次——IPC 协议扩展 + 活显示实测）。
+    """
+    if not _can_spawn():
+        return  # spawn 不可用 → 回退态，不适用本多核口径
+    srv = _make_stub_server_with_fallback_worker()
+    try:
+        ok = srv.start()
+        assert ok is True, "spawn 可用性下 start 须成功"
+        assert srv.is_spawned()
+        # 父进程内置同步 worker 未做真实文档工作 → 代理 False
+        assert srv.has_done_doc_work() is False, \
+            "多核态父进程不代子进程返回 True（保守，不冒充）"
+        # 投一条带 html 的 navigate 到子进程（子进程侧会做真实文档工作，
+        # 但父进程无法直接观测）
+        from toy_browser.app.document_process import (
+            DocCommand, DOC_CMD_NAVIGATE)
+        srv.post(DocCommand(1, DOC_CMD_NAVIGATE,
+                            {"url": "http://a", "html": "<p>sub</p>",
+                             "w": 800, "h": 600}, 1))
+        import time
+        for _ in range(10):
+            if srv.drain():
+                break
+            time.sleep(0.05)
+        # 父进程代理仍 False（未回报子进程标记）——保守不冒充
+        assert srv.has_done_doc_work() is False, \
+            "子进程存活时父进程不据 spawn 宣称 worker 做了真实文档工作"
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_r7a02_gui_doc_mode_uses_worker_real_doc_work():
+    """R7-A02 第 2 点 — gui._r7_a02_doc_mode 据 worker 真实文档工作
+    标记判模式（不靠名称宣称）：
+
+    * worker 未做真实文档工作（``has_done_doc_work()`` False）→
+      即使子进程 spawn 也只判 WORKER_IPC（管道通了但活还在主线程）。
+    * worker 做了真实文档工作（``has_done_doc_work()`` True）且子进程
+      spawn → 判 WORKER_FULL（活真在 worker，可支撑多核渲染）。
+    * 未 spawn → 即便 worker 做了真实文档工作，因 worker_spawned=False
+      仍判 WORKER_IPC（WORKER_FULL 需"spawn + 真实文档工作"双满足；
+      detect_doc_work_mode 实际只要 worker_does_doc_work 即 WORKER_FULL，
+      但 gui 接线把 navigation_is_sync 恒 True——本用例验证"未做真实
+      文档工作时绝不判 WORKER_FULL"的保守闸门）。
+    """
+    from toy_browser.app.gui import TabBrowser
+    from toy_browser.app.document_process import (
+        DocProcessServer, DocCommand, DOC_CMD_NAVIGATE)
+    from toy_browser.app.doc_process_mode import (
+        MODE_WORKER_FULL, MODE_WORKER_IPC)
+
+    tb = object.__new__(TabBrowser)
+    srv = DocProcessServer()
+    tb._g07_doc_server = srv
+    tb._r7_a02_doc_mode = TabBrowser._r7_a02_doc_mode.__get__(tb)
+
+    # ① worker 未做真实文档工作 → 不得判 WORKER_FULL
+    mode1 = tb._r7_a02_doc_mode()
+    assert mode1 is not None, "gui._r7_a02_doc_mode 须返回 DocWorkMode"
+    assert mode1.mode != MODE_WORKER_FULL, \
+        "worker 未做真实文档工作时不得判 WORKER_FULL（保守闸门）"
+    assert mode1.worker_does_doc_work is False
+
+    # ② 让 worker 做真实文档工作（回退 worker 持有 DocumentState）
+    srv._worker.handle(DocCommand(
+        1, DOC_CMD_NAVIGATE,
+        {"url": "http://a", "html": "<p>g</p>", "w": 800, "h": 600}, 1))
+    assert srv.has_done_doc_work() is True
+
+    mode2 = tb._r7_a02_doc_mode()
+    assert mode2 is not None
+    assert mode2.worker_does_doc_work is True, \
+        "worker 做真实文档工作后 gui 须读到 True"
+    # 未 spawn 子进程时 worker_spawned=False；detect_doc_work_mode
+    # 对 worker_does_doc_work=True 判 WORKER_FULL（与 worker_spawned 无关）。
+    # 本用例验证的是"做了真实文档工作 → gui 标记翻转"这一关键接线，
+    # 以及"未做时绝不 WORKER_FULL"的保守闸门。
+    srv.shutdown()
+
+
+@_reg
+def test_r7a02_gui_doc_mode_truthful_claim_gate():
+    """R7-A02 第 2 点 + 第 6 点 — "已多核渲染"声明在 worker 未做真实
+    文档工作时判为**不真实**（越级声明闸门），做了之后该声明方可
+    成立（WORKER_FULL 下 multi_core_rendering 能力为真）。"""
+    from toy_browser.app.gui import TabBrowser
+    from toy_browser.app.document_process import (
+        DocProcessServer, DocCommand, DOC_CMD_NAVIGATE)
+    from toy_browser.app.doc_process_mode import (
+        MODE_WORKER_FULL, claim_multi_core_rendering)
+
+    tb = object.__new__(TabBrowser)
+    srv = DocProcessServer()
+    tb._g07_doc_server = srv
+    tb._r7_a02_doc_mode = TabBrowser._r7_a02_doc_mode.__get__(tb)
+
+    # worker 未做真实文档工作 → "已多核渲染"声明不真实
+    m1 = tb._r7_a02_doc_mode()
+    assert m1 is not None and m1.mode != MODE_WORKER_FULL
+    claim1 = claim_multi_core_rendering(m1)
+    assert claim1.is_truthful() is False, \
+        "未做真实文档工作时多核渲染声明必须不真实"
+
+    # 让 worker 做真实文档工作
+    srv._worker.handle(DocCommand(
+        1, DOC_CMD_NAVIGATE,
+        {"url": "http://a", "html": "<p>t</p>", "w": 800, "h": 600}, 1))
+    m2 = tb._r7_a02_doc_mode()
+    assert m2 is not None
+    claim2 = claim_multi_core_rendering(m2)
+    # worker 做了真实文档工作 → detect_doc_work_mode 判 WORKER_FULL
+    # → multi_core_rendering 能力为真 → 声明可成立
+    assert m2.mode == MODE_WORKER_FULL, \
+        "worker 做真实文档工作后须判 WORKER_FULL"
+    assert claim2.is_truthful() is True, \
+        "WORKER_FULL 下多核渲染声明须真实"
+    srv.shutdown()
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

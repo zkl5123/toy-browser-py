@@ -155,6 +155,96 @@ class DocumentProcessWorker:
         # R7-A02 第 3 点 — navigation_id：同一 tab 内每次导航 +1
         # （与 doc_id/epoch/frame_id 共同构成版本化 IPC 四元组）。
         self._nav_id: dict[int, int] = {}
+        # R7-A02 第 2 点 — 按 tab 持有**真实文档工作容器**
+        # （:class:`DocumentState` + 渲染管线产物）。navigate 时解析
+        # + JS + 样式 + 布局 + 光栅化全在 worker 内执行（真实文档
+        # 工作，不再只回身份计数）；resize/scroll 走重排（只 bump
+        # layout，不重跑脚本）。``_doc_states`` 持有每个 tab 的
+        # DocumentState（DOM / Host / 资源 / 版本长期留在 worker 进程，
+        # G07 step 4"DOM 长期留该进程"）；``_last_bitmap`` 持有最近
+        # 渲染的 :class:`Bitmap`（紧凑，可跨进程传像素句柄 / 尺寸）。
+        # 默认 None（纯身份模式，向后兼容既有协议回归）；调用方按
+        # 需在 navigate / resize 时填 payload 里的 html / css / 几何
+        # 才会触发真实文档工作（见 :meth:`handle` 的
+        # ``_do_doc_work`` 分支）。
+        self._doc_states: dict[int, object] = {}
+        self._last_bitmap: dict[int, object] = {}
+        # R7-A02 第 6 点 — 标记本 worker 是否执行过**真实**文档工作
+        # （解析 / 样式 / 布局 / 绘制）。:func:`detect_doc_work_mode`
+        # 据此把模式判为 WORKER_FULL（而非据名称误判）；未执行过
+        # 真实文档工作时保持 WORKER_IPC。
+        self._has_done_doc_work: bool = False
+
+    # -- R7-A02 第 2 点 — 真实文档工作路径 ---------------------------------
+
+    def _do_doc_work(self, tab: int, cmd: "DocCommand",
+                     payload: dict) -> None:
+        """R7-A02 第 2 点 — 在 worker 内执行真实文档工作（解析 / JS /
+        样式 / 布局 / 绘制），复用 :func:`document_renderer.render_
+        document_state` 管线（不重复造轮子，C01 唯一修改入口）。
+
+        * ``navigate`` → 新文档：解析 + 脚本初始化（``new_document``，
+          脚本初始化计数 +1）+ 样式 / 布局 / 光栅化。
+        * ``resize`` / ``scroll`` → 同文档重排：复用已有 DOM / Host，
+          只 bump ``layout_revision`` + 重解样式 / 布局 / 光栅化
+          （``render_document_state_restate``，不重建 Host、不重跑
+          脚本——验收"重排后点击监听仍在"）。
+
+        仅在 payload 带 html / css 或 tab 已有 DocumentState（navigate
+        时经 html 解析）才真正执行；否则保持既有纯身份契约（向后
+        兼容既有协议回归——不发 html 的 navigate 仍只回身份计数）。
+
+        **不冒充通过**：本路径是真实 CPU 工作（解析 / 样式 / 布局 /
+        绘制），但跨进程的**像素共享段**（mmap / posix）仍由
+        :meth:`frame_spec_for` 描述布局，真实共享段执行留活显示
+        批次；本批只落地"文档工作在 worker 进程执行"的判定与
+        可测子集，不把"已共享像素"当通过。
+        """
+        from toy_browser.app import document_renderer as _rend
+        html = payload.get("html", "")
+        css = payload.get("css", "")
+        width = int(payload.get("w", payload.get("width", 800)) or 800)
+        height = int(payload.get("h", payload.get("height", 600)) or 600)
+
+        if cmd.kind == DOC_CMD_NAVIGATE:
+            doc = self._doc_states.get(tab)
+            if doc is None:
+                from toy_browser.app.document_state_full import DocumentState
+                doc = DocumentState()
+                self._doc_states[tab] = doc
+            # 网络等待（真实 navigate 时由调用方先 fetch 再经 payload
+            # 传 html；本层只做"拿到 html 后的解析 / 样式 / 布局 /
+            # 绘制"——网络等待在活显示批次接，本批标注"未实现"）。
+            if html:
+                bm = _rend.render_document_state(
+                    doc, html, css_text=css, width=width, height=height,
+                    base_url=payload.get("url", ""))
+                self._last_bitmap[tab] = bm
+                self._has_done_doc_work = True
+        elif cmd.kind in (DOC_CMD_RESIZE, DOC_CMD_SCROLL):
+            doc = self._doc_states.get(tab)
+            if doc is not None and doc.dom_tree is not None:
+                bm = _rend.render_document_state_restate(
+                    doc, css_text=css, width=width, height=height)
+                self._last_bitmap[tab] = bm
+                self._has_done_doc_work = True
+
+    def doc_state_for(self, tab: int):
+        """R7-A02 第 2 点 — 该 tab 持有的 :class:`DocumentState`
+        （真实文档工作容器；未执行过真实文档工作返回 None）。"""
+        return self._doc_states.get(tab)
+
+    def last_bitmap(self, tab: int):
+        """R7-A02 第 2 点 — 该 tab 最近渲染的 :class:`Bitmap`
+        （紧凑像素 / 尺寸，跨进程呈现层消费；未渲染返回 None）。"""
+        return self._last_bitmap.get(tab)
+
+    def has_done_doc_work(self) -> bool:
+        """R7-A02 第 6 点 — 本 worker 是否执行过**真实**文档工作
+        （解析 / 样式 / 布局 / 绘制）。:func:`detect_doc_work_mode`
+        据此判 WORKER_FULL（而非 WORKER_IPC）；未执行过则保持
+        WORKER_IPC（不据名称宣称多核渲染）。"""
+        return self._has_done_doc_work
 
     # -- 命令处理 -----------------------------------------------------------
 
@@ -183,12 +273,38 @@ class DocumentProcessWorker:
             nav_id = cmd.navigation_id or self._nav_id[tab]
             if cmd.navigation_id:
                 self._nav_id[tab] = cmd.navigation_id
+            # R7-A02 第 2 点 — 真实文档工作：navigate 时 payload 带
+            # html（解析 / JS / 样式 / 布局 / 绘制）在 worker 内执行。
+            # 不破坏既有身份契约：身份计数照旧；真实文档工作后帧
+            # payload 多带渲染几何（w/h），父进程经 frame_spec_for
+            # 取像素布局。无 html（网络等待留活显示批次）时只做
+            # 身份 bump，不发渲染帧。
+            if cmd.payload.get("html"):
+                self._do_doc_work(tab, cmd, cmd.payload)
+                # R7-A02 第 2 点 — 真实文档工作帧：payload 只带白名单键
+                # （kind/url/frame_id/doc_id/navigation_id）；几何 w/h
+                # 不入帧 payload（非白名单，会被 FramePayloadContract
+                # 拒收）——父进程侧经 frame_spec_for(命令 payload) 取
+                # 像素布局（与既有 resize/scroll 帧同口径：帧不带几何）。
+                return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
+                                navigation_id=nav_id,
+                                payload={"url": cmd.payload.get("url", ""),
+                                         "kind": cmd.kind,
+                                         "doc_id": self._doc_id[tab],
+                                         "frame_id": self._frame_id[tab],
+                                         "navigation_id": nav_id})
             return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
                             navigation_id=nav_id,
                             payload={"url": cmd.payload.get("url", ""),
                                      "doc_id": self._doc_id[tab],
                                      "frame_id": self._frame_id[tab],
                                      "navigation_id": nav_id})
+        # R7-A02 第 2 点 — 真实文档工作：tab 已有 DocumentState
+        # （resize / scroll 重排，不重建 Host、不重跑脚本）时在 worker
+        # 内执行。navigate 的 html 路径已在上面处理。
+        if tab in self._doc_states and cmd.kind in (DOC_CMD_RESIZE,
+                                                    DOC_CMD_SCROLL):
+            self._do_doc_work(tab, cmd, cmd.payload)
         if cmd.kind == DOC_CMD_STOP:
             # 取消收尾：在途帧标 cancelled（G08 step 3 不强杀）
             self._frame_id[tab] += 1
@@ -210,7 +326,7 @@ class DocumentProcessWorker:
         返回被丢弃的 tab 计数（存在则 1，否则 0）。"""
         dropped = 0
         for m in (self._doc_id, self._nav_epoch, self._frame_id,
-                  self._nav_id):
+                  self._nav_id, self._doc_states, self._last_bitmap):
             if tab_id in m:
                 del m[tab_id]
                 dropped = 1
@@ -987,6 +1103,24 @@ class DocProcessServer:
 
     def is_fallback(self) -> bool:
         return self._stats.on_fallback
+
+    def has_done_doc_work(self) -> bool:
+        """R7-A02 第 2 点 — worker 是否执行过**真实**文档工作。
+
+        读**父进程内置同步 worker**（:attr:`_worker`）的
+        :meth:`DocumentProcessWorker.has_done_doc_work` 标记——
+        回退态 / 子进程未 spawn 时，真实解析 / 样式 / 布局 / 绘制
+        就发生在这个父进程 worker 里，父进程可直接观测。
+
+        **不冒充通过**（保守口径）：子进程存活（多核态）时，真实
+        文档工作在**子进程**的独立 ``DocumentProcessWorker`` 里执行，
+        父进程**无法直接观测**子进程是否做了真实文档工作（需子进程
+        经 IPC 回报 ``doc_work`` 标记——见开放问题"多核态判
+        WORKER_FULL 需 IPC 协议扩展 + 活显示实测"）。本方法在子进程
+        存活时**不**代子进程返回 True（父进程侧标记未翻转则
+        False），调用点据此判 WORKER_IPC 而非 WORKER_FULL——不据
+        "子进程 spawn 了"宣称已多核渲染。"""
+        return self._worker.has_done_doc_work()
 
     # -- 命令投递（UI 主线程 → 文档进程，轻量不阻塞） ------------------------
 

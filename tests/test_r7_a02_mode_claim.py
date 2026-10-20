@@ -85,11 +85,14 @@ def test_static_gui_mode_wiring_contract():
     assert "_r7_a02_doc_mode" in src, "gui 缺 _r7_a02_doc_mode 探测"
     assert "_r7_a02_mode_describe" in src, "gui 缺 _r7_a02_mode_describe"
     assert "_r7_a02_debug_mode" in src, "gui 缺显式单进程调试模式字段"
-    # 关键：探测如实传 worker_does_doc_work=False（现有 worker 不做
-    # 真实解析/布局/绘制），不得为了"好看"传 True。
-    assert "worker_does_doc_work=False" in src, (
-        "gui 探测必须如实传 worker_does_doc_work=False"
-        "（现有 worker 只做紧凑身份/命令，不执行真实文档工作）")
+    # 关键：探测须据 worker 真实文档工作状态判定（R7-A02 第 2 点已
+    # 接上 worker 真实解析 / 样式 / 布局 / 绘制路径），**不**为"好看"
+    # 写死 True 也**不**写死 False——经 has_done_doc_work() 探测后
+    # 透传。写死 False 会在 worker 真实做了文档工作后误判 WORKER_IPC
+    # （不冒充失败的镜像：把"做了"谎报成"没做"）。
+    assert "has_done_doc_work" in src, (
+        "gui 探测须经 has_done_doc_work() 据 worker 真实文档工作状态"
+        "判定 worker_does_doc_work，不得写死 True/False")
     assert "navigation_is_sync=True" in src, (
         "gui 探测必须如实标记默认导航仍同步")
 

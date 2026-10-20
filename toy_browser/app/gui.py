@@ -1745,12 +1745,13 @@ class TabBrowser:
 
         * ``navigation_is_sync=True`` — 默认导航 :meth:`_commit_navigation`
           仍**同步**调 ``page.load_url()``（事实）。
-        * ``worker_does_doc_work=False`` — 既有
-          :class:`DocumentProcessWorker` 只处理紧凑身份 / 命令
-          （doc_id / nav_epoch / frame_id / navigation_id），**不**
-          执行真实解析 / 样式 / 布局 / 绘制（事实）。因此即使子进程
-          真实 spawn，也只是 ``worker_ipc``（管道通了，活还在主线程），
-          **不是**多核渲染。
+        * ``worker_does_doc_work`` — 取自真实文档进程池
+          :meth:`~DocumentProcessServer.has_done_doc_work`（父进程
+          内置同步 worker 是否执行过真实解析 / 样式 / 布局 / 绘制）。
+          回退态 / 子进程未 spawn 时，真实文档工作发生在父进程
+          worker，可观测；子进程存活（多核态）时父进程无法直接
+          观测子进程是否做了真实文档工作，标记保持 False（保守，
+          不据"子进程 spawn 了"宣称已多核渲染）。
         * ``worker_spawned`` — 取自真实文档进程池 ``is_spawned()``。
 
         返回 :class:`DocWorkMode`（document_process_mode 不可用或
@@ -1765,10 +1766,23 @@ class TabBrowser:
             spawned = bool(self._g07_doc_server.is_spawned())
         except Exception:
             spawned = False
+        # R7-A02 第 2 点 — worker 是否做了真实文档工作（解析/样式/
+        # 布局/绘制）。读父进程文档进程池的内置同步 worker 标记：
+        # 回退态 / 子进程未 spawn 时，真实文档工作发生在父进程
+        # worker，可观测；子进程存活（多核态）时父进程无法直接
+        # 观测子进程是否做了真实文档工作，标记保持 False（保守，
+        # 不据"子进程 spawn 了"宣称已多核渲染）。
+        worker_does_doc_work = False
+        try:
+            if self._g07_doc_server is not None:
+                worker_does_doc_work = bool(
+                    self._g07_doc_server.has_done_doc_work())
+        except Exception:
+            worker_does_doc_work = False
         try:
             return detect_doc_work_mode(
                 navigation_is_sync=True,        # 默认导航仍同步（事实）
-                worker_does_doc_work=False,     # worker 不做真实文档工作（事实）
+                worker_does_doc_work=worker_does_doc_work,
                 worker_spawned=spawned)
         except Exception:
             return None
