@@ -758,3 +758,115 @@ def test_xhr_response_headers_use_unified_filter():
         c.close_pool()
     finally:
         srv.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# J03 第 2 点 / S02 第 5 点 — Response.type 按 S02 决策层判定
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_response_type_pure_logic_matrix():
+    """S02 第 5 点 — request_context.response_type 纯逻辑判定矩阵：
+    同源 basic / 跨源 no-cors opaque / 跨源 fetch cors / 不支持 error。
+    与 evaluate_request 的 CORS 标记（opaque_response / requires_acao）
+    同源，不各写一套。"""
+    from toy_browser.network import request_context as rc
+
+    # 同源 fetch → basic
+    ctx = rc.context_for_destination(
+        "https://a.test", "https://a.test/api", rc.DEST_FETCH)
+    assert rc.response_type(ctx) == "basic"
+
+    # 跨源 fetch（cors 模式）→ cors
+    ctx = rc.context_for_destination(
+        "https://a.test", "https://b.test/api", rc.DEST_FETCH)
+    assert rc.response_type(ctx) == "cors"
+
+    # 跨源 classic script（no-cors，opaque）→ opaque
+    ctx = rc.context_for_destination(
+        "https://a.test", "https://b.test/lib.js", rc.DEST_CLASSIC_SCRIPT)
+    assert rc.response_type(ctx) == "opaque"
+
+    # 跨源 image（no-cors，opaque）→ opaque
+    ctx = rc.context_for_destination(
+        "https://a.test", "https://b.test/x.png", rc.DEST_IMAGE)
+    assert rc.response_type(ctx) == "opaque"
+
+    # 同源 image → basic
+    ctx = rc.context_for_destination(
+        "https://a.test", "https://a.test/x.png", rc.DEST_IMAGE)
+    assert rc.response_type(ctx) == "basic"
+
+    # 不支持的 destination（空串）→ error，不偷换 basic 放行
+    ctx = rc.RequestContext(
+        url="https://a.test", document_origin="https://a.test",
+        destination="", mode="")
+    assert rc.response_type(ctx) == "error"
+
+
+@_reg
+def test_fetch_response_type_same_origin_basic():
+    """J03 第 2 点 / S02 第 5 点 — 同源 fetch 的 Response.type 为
+    "basic"（不再写死，按 S02 决策层判定）。"""
+    srv, port, seen = _start_echo_server({
+        ("GET", "/full.txt"): (200, "text/plain", b"body", {}),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        base = f"http://127.0.0.1:{port}/"
+        host, logs = _make_host(base, (
+            "<html><body><script>"
+            "fetch('" + base + "full.txt')"
+            ".then(function(r){"
+            "  console.log('TYPE:' + r.type);"
+            "})"
+            ".catch(function(e){ console.log('ERR:' + e.name); });"
+            "</script></body></html>"))
+        host._fetch_transport = FetchTransport(c, base_url=base)
+        host.execute_all()
+        host.flush_timers()
+        host.flush_microtasks()
+        joined = "\n".join(logs)
+        assert "TYPE:basic" in joined, \
+            f"same-origin fetch must be basic: {joined}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_fetch_cross_origin_js_response_type_cors():
+    """J03 第 2 点 / S02 第 5 点 — 跨源 fetch 的 JS 侧
+    ``_js_response_type`` 判定为 ``cors``（不再写死 basic）。
+    用两个本地端口的 FetchTransport：文档源是 server A，fetch
+    目标是 server B（跨源）→ 纯逻辑层判定 cors。"""
+    srv_a, port_a, _ = _start_echo_server({
+        ("GET", "/doc"): (200, "text/plain", b"doc", {}),
+    })
+    srv_b, port_b, _ = _start_echo_server({
+        ("GET", "/api"): (200, "text/plain", b"cross", {}),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        base_a = f"http://127.0.0.1:{port_a}/"
+        base_b = f"http://127.0.0.1:{port_b}/"
+        host, logs = _make_host(base_a, (
+            "<html><body><script>"
+            "fetch('" + base_b + "api')"
+            ".then(function(r){"
+            "  console.log('TYPE:' + r.type);"
+            "})"
+            ".catch(function(e){ console.log('ERR:' + e.name); });"
+            "</script></body></html>"))
+        host._fetch_transport = FetchTransport(c, base_url=base_a)
+        host.execute_all()
+        host.flush_timers()
+        host.flush_microtasks()
+        joined = "\n".join(logs)
+        # 跨源 fetch（127.0.0.1:A → 127.0.0.1:B）→ cors
+        assert "TYPE:cors" in joined, \
+            f"cross-origin fetch must be cors: {joined}"
+        c.close_pool()
+    finally:
+        srv_a.shutdown()
+        srv_b.shutdown()

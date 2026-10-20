@@ -6155,7 +6155,8 @@ class Host:
     def _fetch_response(self, status: int, ok: bool, body_text: str,
                         url: str, content_type: str = "",
                         headers: "dict | None" = None,
-                        redirected: bool = False) -> dict:
+                        redirected: bool = False,
+                        destination: str = "") -> dict:
         """R4 stage 3 + R7-J03 — a toy Response object (the Fetch spec
         surface the report's functional_response_methods case checks:
         ``typeof r.text`` / ``typeof r.json`` must both be
@@ -6173,6 +6174,10 @@ class Host:
         * ``headers`` exposes a case-insensitive ``get()`` with the
           forbidden response-header names (``set-cookie`` &co)
           filtered out, like the spec's "response" headers guard.
+
+        R7-S02 第 5 点 — ``type`` 不再写死 ``"basic"``，按 *destination*
+        与目标 URL 走 :func:`_js_response_type`（同源 basic / 跨源
+        no-cors opaque / 跨源 cors），与 S02 决策层同一来源。
         """
         import json as _json
 
@@ -6247,7 +6252,10 @@ class Host:
             "ok": ok,
             "status": status,
             "url": url,
-            "type": "basic",
+            # R7-S02 第 5 点 — 按 destination + 目标 URL 判定（同源
+            # basic / 跨源 no-cors opaque / 跨源 cors / 不支持 error），
+            # 不再写死 "basic"（不偷换跨源 opaque 为 basic 放行）。
+            "type": self._js_response_type(url, destination),
             "redirected": bool(redirected),
             "statusText": "",
             "content_type": content_type,
@@ -7971,6 +7979,27 @@ class Host:
         visible, _stripped = _rc_mod.filter_response_headers(
             ctx, dict(headers or {}))
         return {str(k).lower(): v for k, v in visible.items()}
+
+    def _js_response_type(self, target_url: str,
+                          destination: str = "") -> str:
+        """J03 第 2 点 / S02 第 5 点 — JS 侧 ``Response.type``（Fetch
+        规范 ``basic`` / ``cors`` / ``opaque`` / ``error``）统一走
+        :func:`_rc_mod.response_type`，与 ``filter_response_headers``
+        同一 S02 决策源（不再各写一套 CORS 判定）。
+
+        * 按 *destination*（``fetch`` / ``xhr``）与目标 *target_url*
+          构造 context，相对 URL 对文档 origin 归一化后判定跨源；
+        * 同源 → ``"basic"``；跨源 no-cors（opaque）→ ``"opaque"``；
+          跨源 cors（需 ACAO）→ ``"cors"``；不支持模式 → ``"error"``；
+        * 默认不读时钟 / 不发请求，纯逻辑。
+        """
+        base_url = getattr(self, "doc_url", "") or ""
+        doc_origin = _rc_mod._origin_of(base_url) if base_url else ""
+        dest = destination or _rc_mod.DEST_FETCH
+        ctx = _rc_mod.context_for_destination(
+            doc_origin, target_url or base_url, dest,
+            base_url=base_url)
+        return _rc_mod.response_type(ctx)
 
     def _csp_connect_blocked(self, url: str) -> bool:
         """R7-S02 — True when the document's CSP ``connect-src``

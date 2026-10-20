@@ -44,7 +44,7 @@ __all__ = [
     "RequestContext", "RequestDecision",
     "default_mode_for", "default_credentials_for",
     "context_for_destination", "evaluate_request",
-    "filter_response_headers",
+    "filter_response_headers", "response_type",
 ]
 
 
@@ -496,3 +496,32 @@ def filter_response_headers(ctx: RequestContext,
         else:
             visible[k] = v
     return (visible, stripped)
+
+
+def response_type(ctx: RequestContext) -> str:
+    """R7-S02 第 5 点 — JS 侧 ``Response.type``（Fetch 规范
+    ``basic`` / ``cors`` / ``opaque`` / ``error``）的纯逻辑判定。
+
+    与 :func:`evaluate_request` 的 CORS 判定（``opaque_response`` /
+    ``requires_acao`` 标记）严格同源，不各写一套：
+
+    * 同源 → ``"basic"``（脚本可读，无需 ACAO）；
+    * 跨源 no-cors → ``"opaque"``（不可被 JS 读取，响应体 / 头不可见）；
+    * 跨源 cors（响应须带匹配 ACAO）→ ``"cors"``；
+    * 其它不支持的 mode（unknown destination / empty mode 等）→
+      ``"error"``（规范：无法判定的响应类型，不得偷换成 basic 放行）。
+
+    纯逻辑：不读时钟、不发请求、不 import 运行时；``ctx`` 由调用点
+    按 destination 构造（:func:`context_for_destination`）。
+    """
+    decision = evaluate_request(ctx)
+    if not decision.allowed:
+        # 被发送前策略拒（scheme / mode / destination / 混合内容 /
+        # same-origin-mode-却跨源）——规范语义是 "error" 类型。
+        return "error"
+    if decision.opaque_response:
+        return "opaque"
+    if decision.requires_acao:
+        return "cors"
+    # 同源请求（evaluate 在此处返回 allowed=True 且无 CORS 标记）。
+    return "basic"
