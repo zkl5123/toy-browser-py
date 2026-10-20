@@ -37,6 +37,8 @@ from toy_browser.app.worker_timeout import WorkerTerminationState
 from toy_browser.scripting.script_ipc import (
     validate_command, validate_frame, MessageBudget as _IPC_Budget,
 )
+# R7-A02 第 4 点 — 连续帧 buffer 布局契约 + 父进程可见面校验（纯逻辑）。
+from toy_browser.app.frame_buffer import FrameBufferSpec, FramePayloadContract
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,12 @@ class DocFrame:
     # R7-A02 第 3 点 — 产出该帧的 navigation_id（与命令同源）。UI
     # 侧据此丢弃"旧导航"的迟到帧（旧任务不可覆盖新页）。
     navigation_id: int = 0
+    # R7-A02 第 4 点 — 该帧像素的**连续 buffer 布局**（可选；None =
+    # 本帧不携带像素 buffer，如纯导航 / stop 帧）。父进程据
+    # :class:`FrameBufferSpec` 申请 / 校验共享段大小，**不**逐像素
+    # 复制、不接触 worker 内部 Host。真实跨进程共享段（mmap /
+    # posix 共享）的执行路径留活显示批次，本字段只描述布局。
+    frame_spec: Optional[FrameBufferSpec] = None
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +234,40 @@ class DocumentProcessWorker:
                 "navigation_id": self._nav_id.get(tab_id, 0),
                 "document_version": self._doc_id.get(tab_id, 0),
                 "frame_id": self._frame_id.get(tab_id, 0)}
+
+    # -- R7-A02 第 4 点 — 帧像素的连续 buffer 布局 -------------------------
+
+    @staticmethod
+    def frame_spec_for(payload: dict) -> Optional["FrameBufferSpec"]:
+        """由紧凑 payload 里的几何（``w``/``h`` 或
+        ``width``/``height``）描述一帧像素的**连续 buffer 布局**。
+
+        R7-A02 第 4 点：帧用连续 buffer（对齐 :class:`CPUImage` 的
+        ``bytearray``），父进程据 :class:`FrameBufferSpec` 申请 /
+        校验共享段大小，**不**逐像素复制、不接触 worker 内部
+        Host。本方法只做**布局描述**（纯逻辑）——真实跨进程共享
+        段（mmap / posix）的执行路径留活显示批次，不在此冒充
+        "已经共享了"。
+
+        只认**几何键**（``w``/``h``/``width``/``height``）；payload
+        缺几何（navigate / stop / input 帧，如只带 url / kind /
+        frame_id）→ 返回 ``None``（本帧不携带像素 buffer）。
+        rgb8 缺省（与 :class:`CPUImage` 参考实现同口径）。
+        """
+        w = payload.get("w", payload.get("width", 0))
+        h = payload.get("h", payload.get("height", 0))
+        # 只认几何键；navigate / stop / input 帧不带几何 → 无像素
+        # buffer（None）。frame_id / doc_id / kind / url 等非几何键
+        # 不触发 buffer（这些是 C01 身份摘要，不是像素几何）。
+        if "w" not in payload and "width" not in payload:
+            return None
+        try:
+            w, h = int(w), int(h)
+        except (TypeError, ValueError):
+            return None
+        if w <= 0 or h <= 0:
+            return None
+        return FrameBufferSpec(format="rgb8", width=w, height=h)
 
 
 # ---------------------------------------------------------------------------
@@ -774,6 +816,18 @@ class DocProcessServer:
         # 真实 terminate/kill/join 仍由 DocProcessServer.shutdown 执行，
         # 这里的状态机供调用方查询"能否导航"）。
         self._termination = WorkerTerminationState()
+        # R7-A02 第 4 点 — 父进程可见面校验：worker 传回的帧 payload
+        # 只允许有限摘要 + buffer 句柄，不得携带 Host / 对象图。
+        self._frame_contract = FramePayloadContract()
+
+    def _frame_parent_visible(self, frame: DocFrame) -> bool:
+        """R7-A02 第 4 点 — 该帧对父进程是否可见（payload 有限性）。
+
+        经 :meth:`FramePayloadContract.validate` 校验：合法 → True；
+        违规（worker 试图把 Host / 对象图 / 超限摘要塞进 payload）
+        → False（调用方拒收，不计入 frames_drained）。"""
+        ok, _reasons = self._frame_contract.validate(frame.payload)
+        return ok
 
     # 供外部查询（审计"不允许冒充已终止"——只暴露状态机，不假装终止）
     @property
@@ -930,13 +984,23 @@ class DocProcessServer:
         （G09 step 4）。
 
         R7-S01 第 5 点 — 所有帧（父侧暂存 + 经 pipe 收回的）都过
-        有限 IPC 校验，非法帧拒收（不计入 frames_drained）。"""
+        有限 IPC 校验，非法帧拒收（不计入 frames_drained）。
+
+        R7-A02 第 4 点 — 每帧经父进程可见面校验（``FramePayload
+        Contract.validate``）：worker 传回 payload 只允许有限摘要 +
+        buffer 句柄引用，不得携带 Host / 对象图。违规帧拒收
+        （不计入 frames_drained，审计"父进程不接触 worker 内部
+        Host"）。"""
         _validated: list[DocFrame] = []
         for _pf in self._pending_frames:
             _fr = validate_frame(
                 _pf.tab_id, _pf.seq, _pf.ok,
                 _pf.error_category, _pf.payload, _pf.navigation_id)
-            if _fr is None and _pf.tab_id not in self._closed_tabs:
+            # R7-A02 第 4 点 — 父进程可见面校验（有限摘要 + buffer
+            # 句柄，不得含 Host / 对象图）。
+            _parent_ok = self._frame_parent_visible(_pf)
+            if _fr is None and _parent_ok \
+                    and _pf.tab_id not in self._closed_tabs:
                 _validated.append(_pf)
             else:
                 self._stats.dropped_tab_frames += 1
@@ -960,7 +1024,9 @@ class DocProcessServer:
                         item.tab_id, item.seq, item.ok,
                         item.error_category, item.payload,
                         item.navigation_id)
-                    if _fr is not None:
+                    # R7-A02 第 4 点 — 父进程可见面校验。
+                    _parent_ok = self._frame_parent_visible(item)
+                    if _fr is not None or not _parent_ok:
                         self._stats.dropped_tab_frames += 1
                         continue
                     frames.append(item)
@@ -984,8 +1050,11 @@ class DocProcessServer:
                     frame.tab_id, frame.seq, frame.ok,
                     frame.error_category, frame.payload,
                     frame.navigation_id)
-                if _fr is not None:
-                    # 非法帧拒收，不计入 drained（不静默放行）。
+                # R7-A02 第 4 点 — 父进程可见面校验（有限摘要 +
+                # buffer 句柄，不得含 Host / 对象图）。
+                _parent_ok = self._frame_parent_visible(frame)
+                if _fr is not None or not _parent_ok:
+                    # 非法帧 / 越面帧拒收，不计入 drained（不静默放行）。
                     self._stats.dropped_tab_frames += 1
                     continue
                 frames.append(frame)
