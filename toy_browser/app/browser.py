@@ -207,8 +207,18 @@ def render_document_from_url(
     # service the document load used (shared keep-alive client), so a
     # local /data.json fetch reports the real status + body (the
     # report's fetch_real / xhr_real cases).
+    # R7-S03 第 2 点 — in-page fetch()/XHR 携带"文档归属"：站点与源
+    # 取自文档，凭据默认 same-origin（跨源 fetch 默认不带 cookie）。
+    # 同时把顶层文档 URL 挂到 client 上，让未显式给上下文的请求也按
+    # 真实"文档 vs 子资源"判定。
+    _doc_final_url = resp.final_url or url
+    if eff_client is not None:
+        try:
+            eff_client.top_level_url = _doc_final_url
+        except Exception:
+            pass
     host._fetch_transport = net.FetchTransport(
-        eff_client, base_url=resp.final_url or url)
+        eff_client, base_url=_doc_final_url, document_url=_doc_final_url)
     # R7-S01 第 1 点 — 远程脚本信任闸门：默认策略 local_only，任意
     # 网络页面的脚本**默认不执行**（回环 / file: / about: 等可信源
     # 不受影响）。判定结果挂在 host 上（可观测），被拒时**跳过**

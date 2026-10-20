@@ -47,11 +47,13 @@ from urllib.parse import urljoin
 
 from toy_browser.network.request_context import (
     CRED_INCLUDE, CRED_OMIT, CRED_SAME_ORIGIN, VALID_CREDENTIALS,
-    DEST_NAVIGATE, _origin_of,
+    DEST_NAVIGATE, DEST_FETCH, DEST_XHR, _origin_of,
 )
 
 __all__ = [
     "CookieRequestContext",
+    "CRED_OMIT", "CRED_SAME_ORIGIN", "CRED_INCLUDE",
+    "DEST_NAVIGATE", "DEST_FETCH", "DEST_XHR",
     "for_navigation", "for_subresource", "unknown_context",
     "from_legacy_dict", "from_request_context",
     "same_origin", "site_for_cookies_of",

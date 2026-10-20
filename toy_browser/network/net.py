@@ -45,6 +45,11 @@ if TYPE_CHECKING:
     # for static checkers without a runtime import at all.
     from toy_browser.network import cookie_store
 
+# R7-S03 第 2 点 — cookie 上下文（真实 site-for-cookies / credentials）。
+# 真实（非 TYPE_CHECKING）导入：cookie_context 只依赖 request_context
+# 与 cookie_store（后者在函数级 import net），与 net 无环。
+from toy_browser.network import cookie_context as _cookie_ctx
+
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
 # import time; cookie_store only needs net for URL parsing).
 
@@ -940,6 +945,10 @@ class HttpClient:
         # decompressed body at ``max_response_bytes`` and raises
         # :class:`ResponseTooLarge` when the cap is exceeded.
         self.max_response_bytes = max_response_bytes
+        # R7-S03 第 2 点 — 该 client 正在服务的顶层文档 URL。设置后，
+        # 未显式给 cookie_context 的请求会按"顶层文档 vs 子资源"真实
+        # 判定，而不是退回"同站顶层 GET"缺省值。空串 = 未知（保守）。
+        self.top_level_url = ""
 
     # ------------------------------------------------------------------
     # P33.R2 — connection reuse
@@ -1029,6 +1038,30 @@ class HttpClient:
                 pass
         self._conn_pool.clear()
 
+    def _cookie_ctx_for(self, url: "URL", method: str = "GET",
+                        cookie_context=None) -> "_cookie_ctx.CookieRequestContext":
+        """R7-S03 第 2 点 — 把调用点给的东西收敛成类型化上下文。
+
+        * 已经是 :class:`CookieRequestContext` → 原样用；
+        * 旧 dict（``_subresource_cookie_context`` 的形状）→ 提升；
+        * ``None`` → **不再**是"同站顶层 GET"缺省值：顶层文档请求按
+          导航上下文（站点取自请求自身），其余交给
+          :func:`cookie_context.unknown_context`（保守：不发）。
+          绑定了 ``self.top_level_url`` 且与请求不同 URL 时按子资源
+          上下文（站点/源取顶层文档的）。
+        """
+        us = url.to_string() if isinstance(url, URL) else str(url or "")
+        if isinstance(cookie_context, _cookie_ctx.CookieRequestContext):
+            return cookie_context
+        if isinstance(cookie_context, dict):
+            return _cookie_ctx.from_legacy_dict(us, cookie_context)
+        if cookie_context is None:
+            top = getattr(self, "top_level_url", "") or ""
+            if top and top != us:
+                return _cookie_ctx.for_subresource(us, top, method=method)
+            return _cookie_ctx.for_navigation(us, method=method)
+        return _cookie_ctx.unknown_context(us, method=method)
+
     def _emit(self, phase: str, fraction: float, detail: str = "") -> None:
         if self.progress is not None:
             self.progress.emit(LoadProgress(phase, fraction, detail))
@@ -1071,26 +1104,14 @@ class HttpClient:
         if revalidate_etag:
             # P23.3 — conditional GET for stale cached entries.
             hdrs["If-None-Match"] = revalidate_etag
-        # P0 (GPT report) — cookie emission now carries the
-        # cross-site / method / top-level metadata so the jar's
-        # SameSite filter can apply.  The legacy call
-        # ``cookie_header_for(url)`` sent every live cookie on every
-        # request, ignoring the Secure / SameSite flags.
-        # ``cookie_context`` is a dict with optional keys:
-        #   is_cross_site: bool   (True when the request host differs
-        #                          from the top-level page's host)
-        #   method: str           ("GET" / "POST" / …)
-        #   is_top_level: bool    (True for document navigations)
-        # Defaults are same-site GET top-level (the document fetch
-        # itself); subresource fetchers override as needed.
+        # R7-S03 第 2 点 — cookie 发送改由**类型化上下文**决定：
+        # 跨站（schemeful same-site，逐跳重算）、顶层标记（只有
+        # destination=navigate 才算）与 credentials 模式（omit /
+        # same-origin / include）三者共同决定发不发。旧代码在这里吃
+        # dict 缺省值（"同站 + 顶层 + GET"），且凭据模式从未参与。
+        ctx = self._cookie_ctx_for(url, "GET", cookie_context)
         if self.cookies is not None:
-            ctx = cookie_context or {}
-            cookie_hdr = self.cookies.cookie_header_for(
-                url,
-                is_cross_site=ctx.get("is_cross_site", False),
-                method=ctx.get("method", "GET"),
-                is_top_level=ctx.get("is_top_level", True),
-            )
+            cookie_hdr = ctx.cookie_header(self.cookies)
             if cookie_hdr:
                 hdrs["Cookie"] = cookie_hdr
         if headers:
@@ -1144,8 +1165,10 @@ class HttpClient:
                 headers_out = self._headers_from_response(resp)
                 # P32.3 — ingest Set-Cookie into the jar before the
                 # response leaves the client.
+                # R7-S03 第 3 点 — GET / 跳转每一跳都走同一个入库
+                # 入口（多值 Set-Cookie 全部保留）。
                 if self.cookies is not None:
-                    self.cookies.ingest_response(url, headers_out)
+                    ctx.ingest(self.cookies, headers_out)
                 final = url.to_string()
                 # P22.2 — transparent gzip decode (R7-S04: bounded
                 # incremental decode against the instance cap, not a
@@ -1311,14 +1334,11 @@ class HttpClient:
         hdrs.setdefault("Host", url.authority)
         hdrs.setdefault("User-Agent", "toy-browser-py/1.2 (P21-P23)")
         # P0 (GPT report) — attach matching cookies from the jar.
+        # R7-S03 第 2 点 — 同 GET：走类型化上下文（凭据门禁 + 真实
+        # 跨站/顶层判定），不再吃 dict 缺省值。
+        ctx = self._cookie_ctx_for(url, m, cookie_context)
         if self.cookies is not None:
-            ctx = cookie_context or {}
-            cookie_hdr = self.cookies.cookie_header_for(
-                url,
-                is_cross_site=ctx.get("is_cross_site", False),
-                method=m,
-                is_top_level=ctx.get("is_top_level", False),
-            )
+            cookie_hdr = ctx.cookie_header(self.cookies)
             if cookie_hdr:
                 hdrs["Cookie"] = cookie_hdr
 
@@ -1353,8 +1373,9 @@ class HttpClient:
                 headers_out = self._headers_from_response(resp)
                 # R7-S05 — POST responses are ingested too (the legacy
                 # POST path never touched the cookie jar).
+                # R7-S03 第 3 点 — 与 GET / 跳转共用同一入库入口。
                 if self.cookies is not None:
-                    self.cookies.ingest_response(url, headers_out)
+                    ctx.ingest(self.cookies, headers_out)
                 conn_hdr = (resp.getheader("Connection") or "").lower()
                 self._release_conn(url, conn, dead=("close" in conn_hdr))
                 return HttpResponse(
@@ -1775,7 +1796,9 @@ class FetchTransport:
     page does (the report's ``fetch_real`` / ``xhr_real`` cases).
     """
 
-    def __init__(self, client: "HttpClient | None", base_url: str = ""):
+    def __init__(self, client: "HttpClient | None", base_url: str = "",
+                 document_url: str = "",
+                 credentials_mode: str = "") -> None:
         # R4 stage 3 — *client* may be None when the GUI's load_url was
         # called without a shared HttpClient (the legacy path created a
         # throwaway client inside fetch_html and discarded it).  Build
@@ -1785,6 +1808,14 @@ class FetchTransport:
         # fetch/XHR target ("/data.json") resolves against the page's
         # own origin exactly like the browser's URL resolver does.
         self._base_url = base_url
+        # R7-S03 第 2 点 — 发起 fetch/XHR 的**文档** URL 与凭据模式。
+        # 没有它们时 in-page fetch 走的是 HttpClient 的"顶层导航"
+        # 缺省，等于把 Lax cookie 无条件带给任意跨站目标（审计点名的
+        # 缺口）。默认凭据 ``same-origin``（fetch 规范默认）：跨源
+        # fetch 默认**不带** cookie。
+        self._document_url = document_url or base_url
+        self._credentials_mode = (credentials_mode
+                                  or _cookie_ctx.CRED_SAME_ORIGIN)
 
     def fetch(self, url: str, method: str = "GET",
               body: "str | bytes | None" = None,
@@ -1805,6 +1836,17 @@ class FetchTransport:
             base = self._base_url or None
             url = parse_url(url, base=base) if base else parse_url(url)
         m = (method or "GET").upper()
+        # R7-S03 第 2 点 — in-page fetch/XHR 按"子资源"判定：站点与
+        # 源取自文档，凭据模式按规范默认（same-origin）。跨源 fetch
+        # 因此不再无条件携带 cookie。
+        ctx = _cookie_ctx.for_subresource(
+            url.to_string() if isinstance(url, URL) else str(url),
+            self._document_url,
+            destination=(_cookie_ctx.DEST_FETCH if m in ("GET", "HEAD")
+                         else _cookie_ctx.DEST_XHR),
+            method=m,
+            credentials_mode=self._credentials_mode,
+        )
         try:
             # follow_redirects=True mirrors the spec's default fetch
             # behaviour (a 3xx chain yields the final resource, not a
@@ -1813,11 +1855,12 @@ class FetchTransport:
             # rejects the promise / fires onerror on !ok).
             if m in ("GET", "HEAD"):
                 return self._client.get(url, headers=dict(headers or {}) or None,
-                                        follow_redirects=True)
+                                        follow_redirects=True,
+                                        cookie_context=ctx)
             return self._client.post(
                 url, data=body if body is not None else "",
                 headers=dict(headers or {}),
-                follow_redirects=True, method=m)
+                follow_redirects=True, method=m, cookie_context=ctx)
         except (OSError, socket.timeout, socket.error,
                 http.client.HTTPException):
             return None
@@ -1937,21 +1980,25 @@ def _follow_redirects(client: "HttpClient",
     *revalidate_etag* is set; a 304 is surfaced as a 200 backed by
     *stale_body*.
 
-    R7-S05 — *cookie_context* is threaded to every hop so the jar's
-    SameSite filter sees the real request metadata on each request of
-    the chain (the legacy code dropped it, so every hop silently used
-    the "same-site top-level GET" default)."""
+    R7-S05 — *cookie_context* is threaded to every hop.
+
+    R7-S03 第 2 点 — 透传的不再**是同一个对象**：每一跳都用
+    :meth:`CookieRequestContext.for_redirect` **重新求值**（跨站标记
+    按新 URL 的站点重算，非导航请求的跨源跳转把凭据降为 ``omit``）。
+    旧代码把第 0 跳算出的 dict 原样带到最后一跳——``a.test`` 文档里
+    的子资源 302 到 ``b.test`` 之后仍被当成同站，Lax cookie 泄漏。"""
     visited: list[URL] = []
     cur = url
     hops = 0
     first = True
+    cur_ctx = client._cookie_ctx_for(url, "GET", cookie_context)
     while True:
         visited.append(cur)
         resp = client._single_get(
             cur, headers,
             revalidate_etag=(revalidate_etag if first else ""),
             stale_body=(stale_body if first else b""),
-            cookie_context=cookie_context,
+            cookie_context=cur_ctx,
         )
         first = False
         if not follow or resp.status not in _REDIRECT_STATUS \
@@ -1975,6 +2022,8 @@ def _follow_redirects(client: "HttpClient",
                 f"redirect loop detected at {nxt.to_string()}",
                 chain=[u.to_string() for u in visited],
             )
+        # R7-S03 第 2 点 — 下一跳重新求值（而不是沿用上一跳的判定）。
+        cur_ctx = cur_ctx.for_redirect(nxt.to_string())
         cur = nxt
 
 
@@ -2065,6 +2114,23 @@ def _subresource_cookie_context(absu: URL, doc_origin: str) -> dict:
     return {"is_cross_site": is_cross_site,
             "method": "GET",
             "is_top_level": False}
+
+
+def _subresource_cookie_ctx(absu: "URL", doc_origin: str,
+                            destination: str = "",
+                            credentials_mode: str = "") -> "_cookie_ctx.CookieRequestContext":
+    """R7-S03 第 2 点 — 子资源请求的**类型化** cookie 上下文。
+
+    与 :func:`_subresource_cookie_context`（旧 dict 形状，保留给既有
+    调用点与测试）的区别：带 destination 与 credentials 模式，因此
+    凭据门禁真正生效（例如无 ``crossorigin`` 的 classic 脚本默认
+    ``omit``，不再无条件带 cookie）。
+    """
+    return _cookie_ctx.for_subresource(
+        absu.to_string() if isinstance(absu, URL) else str(absu),
+        doc_origin, destination=destination, method="GET",
+        credentials_mode=credentials_mode
+        or _cookie_ctx.CRED_SAME_ORIGIN)
 
 
 # ---------------------------------------------------------------------------
@@ -2277,7 +2343,10 @@ def load_subresources(dom_root, base_url, client: HttpClient | None = None,
         # R7-S05 — subresource requests carry their real cookie
         # context (subresource = not top-level; cross-site when the
         # registrable site differs from the document's).
-        _sub_ctx = _subresource_cookie_context(absu, doc_origin)
+        # R7-S03 第 2 点 — 改成类型化上下文并带上 destination，
+        # 让凭据门禁真正生效。
+        _sub_ctx = _subresource_cookie_ctx(
+            absu, doc_origin, kind_map.get(spec["kind"], spec["kind"]))
         resp = fetch_resource(absu, client=c, cookie_context=_sub_ctx)
         # GPT P0-4 — enforce CORS/CSP on the fetched subresource.
         # When *doc_csp* is supplied the document's CSP header is
@@ -2457,8 +2526,8 @@ def load_subresources_parallel(dom_root, base_url,
                 continue
             resp = _apply_policy(
                 fetch_resource(absu, client=c,
-                               cookie_context=_subresource_cookie_context(
-                                   absu, doc_origin)),
+                               cookie_context=_subresource_cookie_ctx(
+                                   absu, doc_origin, spec["kind"])),
                 absu, spec)
             by_kind.setdefault(spec["kind"], {})[absu.to_string()] = resp
             done += 1
@@ -2473,8 +2542,8 @@ def load_subresources_parallel(dom_root, base_url,
             try:
                 resp = fetch_resource(
                     absu, client=c,
-                    cookie_context=_subresource_cookie_context(
-                        absu, doc_origin))
+                    cookie_context=_subresource_cookie_ctx(
+                        absu, doc_origin, spec["kind"]))
             except Exception:
                 resp = None
             return spec, absu, resp

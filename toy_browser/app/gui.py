@@ -965,8 +965,15 @@ class PageInstance:
                 # R4 stage 3 — in-page fetch()/XMLHttpRequest reach the
                 # SAME real service the document load used (shared
                 # keep-alive client), mirroring the CLI pipeline.
+                # R7-S03 第 2 点 — 与 CLI 一致：in-page fetch/XHR 带
+                # 文档归属 + 凭据默认 same-origin。
+                if eff_client is not None:
+                    try:
+                        eff_client.top_level_url = url
+                    except Exception:
+                        pass
                 _host._fetch_transport = net.FetchTransport(
-                    eff_client, base_url=url)
+                    eff_client, base_url=url, document_url=url)
                 _script_cache: dict = {}
                 for url_key, r in sub.get("script", {}).items():
                     if r is not None and getattr(r, "ok", True):
