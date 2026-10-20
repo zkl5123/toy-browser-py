@@ -454,6 +454,8 @@ def main() -> int:
                 "platform": platform.platform(),
                 "executable": sys.executable,
                 "tkinter": _env_has_tk(),
+                # R7-Q01 第 6 条 — 环境/后端字段：wgpu-py 可选依赖可用性。
+                "wgpu": _env_has_wgpu(),
             },
             "counts": counts,
             "total": total,
@@ -495,12 +497,21 @@ def _write_junit(path: str, mode: str,
     with the reason as the message.
     """
     suite_name = f"toy-browser-py-{mode}"
+    # R7-Q01 第 6 条 — 环境/后端字段进 JUnit properties（wgpu-py 可选
+    # 依赖可用性），与 JSON 报告同口径。
+    wgpu = "true" if _env_has_wgpu() else "false"
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<testsuite name="{_xml_escape(suite_name)}" '
         f'tests="{len(results)}" failures="{counts[_FAIL]}" '
         f'errors="{counts[_ERROR] + counts[_TIMEOUT]}" '
         f'skipped="{counts[_SKIP]}" time="{wall:.3f}">',
+        '  <properties>',
+        f'    <property name="python" value="{_xml_escape(sys.version)}"/>',
+        '    <property name="platform" '
+        f'value="{_xml_escape(platform.platform())}"/>',
+        f'    <property name="wgpu" value="{wgpu}"/>',
+        '  </properties>',
     ]
     for tid, st, detail, ms in results:
         name = tid.split("::", 1)[-1] if "::" in tid else tid
@@ -534,6 +545,22 @@ def _write_junit(path: str, mode: str,
 def _env_has_tk() -> bool:
     try:
         import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _env_has_wgpu() -> bool:
+    """R7-Q01 第 6 条 — wgpu-py 可选依赖是否可用（环境/后端字段）。
+
+    与 :func:`_env_has_tk` 同风格：只探测 import 成功与否，不创建设备
+    （设备可用性由测试自己经 ``acquire_wgpu_device`` 实测，P02 契约
+    "不根据显卡名称保证任何后端可用"）。报告里 ``environment.wgpu``
+    让机器可读结果能区分"无 wgpu 走 P13 CPU 回退断言"与"有 wgpu
+    走真实光栅化路径"——两环境同为 PASS 时，环境字段是唯一可观测差异。
+    """
+    try:
+        import wgpu  # noqa: F401
         return True
     except Exception:
         return False
