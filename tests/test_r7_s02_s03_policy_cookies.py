@@ -875,6 +875,67 @@ def test_s02_for_redirect_strips_sensitive_and_downgrades():
     assert "Authorization" in same.headers
 
 
+# ---------------------------------------------------------------------------
+# R7-S02 第 6 点 — 字符串脚本执行入口（eval / execute）共用
+# 文档 inline script-src 策略
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_s02_string_script_gate_blocks_under_none():
+    """R7-S02 第 6 点 — ``script-src 'none'`` 下字符串脚本入口
+    （``host.execute("…")`` 与 ``host.eval("…")``）被拒，不跑
+    （"被禁的请求不得先发包再丢响应"的脚本侧对偶）。"""
+    host = js.Host(dom.parse('<html><body></body></html>'),
+                   lambda s: None)
+    host.csp_directives = parse_csp_directives("script-src 'none'")
+    host.execute('console.log("SHOULD_NOT_RUN");')
+    assert not any("SHOULD_NOT_RUN" in l for l in host.logs), \
+        f"execute under script-src 'none' must not run: {host.logs}"
+    r = host.eval('1 + 2')
+    assert r is None, \
+        f"eval under script-src 'none' must return None: {r!r}"
+
+
+@_reg
+def test_s02_string_script_gate_allows_unsafe_inline():
+    """R7-S02 第 6 点 — ``'unsafe-inline'`` 下字符串脚本入口放行
+    （与内联 <script> 同一门）。"""
+    host = js.Host(dom.parse('<html><body></body></html>'),
+                   lambda s: None)
+    host.csp_directives = parse_csp_directives("script-src 'unsafe-inline'")
+    host.execute('console.log("ok");')
+    assert any("ok" in l for l in host.logs), \
+        f"execute under 'unsafe-inline' must run: {host.logs}"
+    assert host.eval('4 * 5') == 20, "eval under 'unsafe-inline' must run"
+
+
+@_reg
+def test_s02_string_script_gate_no_policy_allows():
+    """R7-S02 第 6 点 — 无策略（csp_directives 为 None）时字符串
+    脚本入口恒放行（向后兼容，离线单测不受影响）。"""
+    host = js.Host(dom.parse('<html><body></body></html>'),
+                   lambda s: None)
+    # csp_directives 默认 None
+    assert host.csp_directives is None
+    host.execute('console.log("free");')
+    assert any("free" in l for l in host.logs), \
+        f"execute without policy must run: {host.logs}"
+    assert host.eval('2 + 2') == 4
+
+
+@_reg
+def test_s02_string_script_gate_present_empty_blocks():
+    """R7-S02 第 6 点 — present-but-empty ``script-src``（无值）等价
+    于 ``'none'``，字符串脚本入口被拒。"""
+    host = js.Host(dom.parse('<html><body></body></html>'),
+                   lambda s: None)
+    host.csp_directives = parse_csp_directives("script-src")
+    host.execute('console.log("NOPE");')
+    assert not any("NOPE" in l for l in host.logs), \
+        f"execute under present-empty script-src must not run: {host.logs}"
+    assert host.eval('1') is None
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

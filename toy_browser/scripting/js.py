@@ -7795,6 +7795,33 @@ class Host:
 
     # --- execution entry points ---
 
+    def _csp_string_script_allowed(self, source_label: str = "") -> bool:
+        """R7-S02 第 6 点 — 字符串脚本执行入口（``eval("…")`` /
+        ``new Function("…")`` / 宿主直接喂 :meth:`execute` 的代码段）
+        共享文档的 **inline** ``script-src`` 策略。
+
+        与 ``<script>`` 内联元素同一判定（:meth:`_csp_inline_allowed`
+        + nonce=None）：
+
+        * ``script-src`` 缺省 / 无约束 → 放行；
+        * ``script-src 'none'`` 或 present-but-empty → 拒（字符串脚本
+          等同内联脚本，不得"跑了再丢"）；
+        * ``'unsafe-inline'`` → 放行；nonce 门（无 nonce 属性）仍拒；
+        * 任何其它 token → 拒。
+
+        纯逻辑判定，不发请求；``source_label`` 仅作诊断（日志）。
+        默认 ``self.csp_directives is None`` → 恒放行（向后兼容，
+        离线 / 无策略单测不受影响）。
+        """
+        directives = getattr(self, "csp_directives", None)
+        if not directives:
+            return True
+        if not self._csp_inline_allowed(directives, None):
+            self.log(
+                f"CSP blocked string script{(' ' + source_label) if source_label else ''}")
+            return False
+        return True
+
     def _csp_source_values(self, csp_directives: dict | None,
                            directive: str) -> "list | None":
         """The *directive* values (falling back to default-src).
@@ -8009,7 +8036,7 @@ class Host:
             scripts = self._collect_scripts(self.root)
             for s in scripts:
                 try:
-                    self.execute(s)
+                    self.execute(s, gated=False)
                 except JSUncaughtError as e:
                     # B03 / R7-J03 — an uncaught runtime throw must
                     # surface in the diagnostics panel (structured
@@ -8034,7 +8061,7 @@ class Host:
                 if not code:
                     continue
                 try:
-                    self.execute(code)
+                    self.execute(code, gated=False)
                 except JSUncaughtError as e:
                     # B03 / R7-J03 — same contract as the inline
                     # branch: record structurally and emit the legacy
@@ -8200,7 +8227,7 @@ class Host:
                 if code is None:
                     continue  # failed / policy-blocked fetch: skip.
                 try:
-                    self.execute(code)
+                    self.execute(code, gated=False)
                 except JSUncaughtError as e:
                     # B03 / R7-J03 — an uncaught runtime throw must
                     # surface in the diagnostics panel (structured
@@ -8249,7 +8276,9 @@ class Host:
                         + (f" (nonce={nonce!r})" if nonce else ""))
                     continue
                 try:
-                    self.execute(txt)
+                    # 元素级 nonce 门已放行，传 gated=False 跳过重复字符串门
+                    #（否则 nonce-only CSP 下 nonce=None 门会把已放行脚本拒掉）
+                    self.execute(txt, gated=False)
                 except JSUncaughtError as e:
                     # B03 / R7-J03 — same contract as external: record
                     # the uncaught throw structurally and emit the
@@ -8452,7 +8481,20 @@ class Host:
         walk(root)
         return out
 
-    def execute(self, code: str) -> None:
+    def execute(self, code: str, gated: bool = True) -> None:
+        # R7-S02 第 6 点 — 字符串脚本入口共策略：execute() 是宿主直接
+        # 喂代码段给解析器的入口（GUI 控制台 / 测试 / eval 等），与
+        # <script> 内联元素共享同一 script-src 门。无策略（None）时
+        # 恒放行，避免回归既有离线单测。
+        #
+        # gated 参数区分两种调用：
+        #   gated=True  — 独立字符串入口（宿主直接调 execute），需过
+        #                  script-src 门（与 <script> 内联元素同判）。
+        #   gated=False — 元素级门已在调用方完成（execute_scripts_in_order
+        #                  里 nonce 门已放行），不再重复门控，避免把已放行
+        #                  的字符串脚本又拒掉（回归 csp_nonce 用例）。
+        if gated and code and not self._csp_string_script_allowed("execute()"):
+            return
         # R7-S04 第 4 点 — 页面源码字节（SOURCE_BYTES）独立限额：执行
         # 该段 JS 前按 code 字节数做分配前防护（S04 第 1 点"不能先
         # 读完整段再检查"——这里在 parse 之前判定，超限拒执行该段）。
@@ -8528,7 +8570,14 @@ class Host:
         exhaustion) propagates to the caller so tests can assert on
         it; the legacy eval() would have hung the process forever
         on a non-terminating expression.
+
+        R7-S02 第 6 点 — 字符串脚本入口共策略：eval() 与 <script>
+        内联元素共享同一 script-src 门。无策略（csp_directives 为
+        None）时恒放行；``script-src 'none'`` 时返回 ``None`` 并
+        记一条日志（不执行字符串脚本），避免"跑了再丢"。
         """
+        if code and not self._csp_string_script_allowed("eval()"):
+            return None
         interpreter = Interpreter(self)
         interpreter.env = Env(self.globals, None)
         interpreter.env._is_func = True  # P33.R3
