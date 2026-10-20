@@ -18,6 +18,7 @@ or any other private host state — off-table names read as undefined.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from dataclasses import dataclass, field
@@ -27,70 +28,81 @@ from typing import Any, Optional
 # localStorage / sessionStorage — in-memory key/value store with 5 MiB quota
 # ---------------------------------------------------------------------------
 
-_QUOTA_BYTES = 5 * 1024 * 1024
+from toy_browser.scripting import storage_service as _storage
+
+#: R7-S03 第 5 点 — opaque origin 的文档 token 序列（单调递增，避免
+#: 用 ``id(host)`` 时被 CPython 的地址复用坑到）。
+_HOST_TOKEN_SEQ = itertools.count(1)
+
+#: Web Storage 单源配额（5 MiB）——现在是 :mod:`storage_service` 的常量。
+_QUOTA_BYTES = _storage.QUOTA_BYTES_PER_ORIGIN
 
 
-@dataclass
 class Storage:
-    """P33.P1 — a minimal ``Storage`` object (localStorage / sessionStorage).
+    """P33.P1 — the JS-facing ``Storage`` object (localStorage /
+    sessionStorage).
 
     Mirrors the Web Storage spec's observable surface: ``getItem`` /
     ``setItem`` / ``removeItem`` / ``clear`` / ``key`` / ``length``.
-    The toy implementation is in-memory (no disk persistence); a real
-    browser would back it with per-origin files under the user data dir.
 
-    Quota enforcement: the total byte size of all stored values
-    (``len(key) + len(value)`` summed, both UTF-8 encoded) must stay
-    under 5 MiB.  ``setItem`` that would exceed the quota raises
-    ``QuotaExceededError`` (a JS-side Error with that name).
+    R7-S03 第 5/6 点 — 本对象**不再持有数据**：它只是宿主侧
+    :class:`storage_service.StorageArea`（= 一个分区）的**外观**。
+    分区由 :class:`StorageService` 按 ``profile+origin``（local）或
+    ``tab+origin``（session）发放，opaque origin 每文档一份，因此
+    同源导航**保留**、跨源**隔离**。配额由分区增量维护，失败原子化；
+    内部字典在分区内部是私有的，JS 侧连属性名都看不到（S01 白名单）。
+
+    ``Storage()``（不传分区）只用于**测试与遗留调用点**：它拿到一份
+    opaque 的临时分区，不参与任何共享。
     """
-    _store: dict = field(default_factory=dict, repr=False)
+    __slots__ = ("_Storage__area",)
 
-    def __post_init__(self):
-        self._store = {}
+    def __init__(self, area=None) -> None:
+        if area is None:
+            area = _storage.default_storage_service()._area(
+                _storage.LOCAL, "", opaque_token=_ephemeral_token())
+        self.__area = area
 
     # --- JS-facing methods (returning Python values the interpreter
     #     coerces to JS strings / null) ---
 
-    def _used_bytes(self) -> int:
-        return sum(len(k.encode("utf-8")) + len(v.encode("utf-8"))
-                   for k, v in self._store.items())
+    @property
+    def _area(self):
+        """宿主侧分区（内部用；JS 侧由 S01 白名单挡住）。"""
+        return self.__area
 
     def getItem(self, key: str) -> Optional[str]:
-        return self._store.get(str(key))
+        return self.__area.get_item(key)
 
     def setItem(self, key: str, value: str) -> None:
-        k, v = str(key), str(value)
-        new_used = self._used_bytes()
-        # If the key already exists, subtract its current size first.
-        if k in self._store:
-            new_used -= len(k.encode("utf-8")) + len(self._store[k].encode("utf-8"))
-        new_used += len(k.encode("utf-8")) + len(v.encode("utf-8"))
-        if new_used > _QUOTA_BYTES:
-            raise QuotaExceededError(
-                f"localStorage quota exceeded ({new_used} bytes > {_QUOTA_BYTES})")
-        self._store[k] = v
+        # 配额判定与写入都在分区里做（失败原子化）。
+        self.__area.set_item(key, value)
 
     def removeItem(self, key: str) -> None:
-        self._store.pop(str(key), None)
+        self.__area.remove_item(key)
 
     def clear(self) -> None:
-        self._store.clear()
+        self.__area.clear()
 
     def key(self, index: int) -> Optional[str]:
-        keys = list(self._store.keys())
-        i = int(index)
-        if 0 <= i < len(keys):
-            return keys[i]
-        return None
+        return self.__area.key(index)
 
     @property
     def length(self) -> int:
-        return len(self._store)
+        return self.__area.length
+
+    def __repr__(self) -> str:
+        return f"Storage({self.__area.storage_key})"
 
 
-class QuotaExceededError(Exception):
-    """JS-side Error for storage quota violations (Web Storage spec)."""
+def _ephemeral_token() -> str:
+    """``Storage()`` 这种"无归属"实例用的唯一 token（opaque）。"""
+    return _storage.default_storage_service()._new_token()
+
+
+#: JS 侧 ``QuotaExceededError``（Web Storage 规范）——统一由
+#: :mod:`storage_service` 抛出，这里保留同名导出以兼容旧调用点。
+QuotaExceededError = _storage.QuotaExceededError
 
 
 # ---------------------------------------------------------------------------
@@ -488,9 +500,35 @@ def register_web_api(host) -> None:
     * ``URLSearchParams`` — :class:`ToyURLSearchParams`.
     """
     g = host.globals
-    # Storage
-    g["localStorage"] = Storage()
-    g["sessionStorage"] = Storage()
+    # Storage — R7-S03 第 5 点：分区由宿主侧的 StorageService 发放
+    # （local = profile+origin，session = tab+origin，opaque 每文档
+    # 一份），不再每个 Host 造一个裸 dict。
+    _svc = getattr(host, "storage_service", None) \
+        or _storage.default_storage_service()
+    try:
+        host.storage_service = _svc
+    except Exception:
+        pass
+    _origin = (getattr(host, "doc_origin", "")
+               or getattr(host, "doc_url", "")
+               or getattr(host, "url", ""))
+    _profile = getattr(host, "profile_id", "") or "default"
+    _tab = getattr(host, "tab_id", "") or ""
+    # opaque origin 用**本文档**的 token（保证不跨导航保留）。用单调
+    # 递增序号而不是 ``id(host)``：CPython 会**复用**已回收对象的
+    # 地址，两个先后创建的文档可能拿到同一个 id，从而错误地共享
+    # opaque 分区（回环测试里表现为偶发串数据）。
+    _token = getattr(host, "_storage_opaque_token", None)
+    if not _token:
+        _token = f"host{next(_HOST_TOKEN_SEQ)}"
+        try:
+            host._storage_opaque_token = _token
+        except Exception:
+            pass
+    _local, _session = _svc.areas_for_document(
+        _origin, profile_id=_profile, tab_id=_tab, opaque_token=_token)
+    g["localStorage"] = Storage(_local)
+    g["sessionStorage"] = Storage(_session)
     # WebSocket
     g["WebSocket"] = ToyWebSocket
     # navigator / location / history

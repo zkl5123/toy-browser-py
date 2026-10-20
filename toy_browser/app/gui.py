@@ -53,6 +53,10 @@ class PageInstance:
         self.title: str = "New Tab"
         self.bitmap: paint.Bitmap | None = None
         self._full_bitmap: paint.Bitmap | None = None  # P33.R2
+        # R7-S03 第 5 点 — sessionStorage 的分区身份（tab_id）。由
+        # BrowserWindow 在标签建立时写入（``_tab_ids[idx]``）；宿主用
+        # 它向 StorageService 要"本标签"的 session 分区。
+        self.tab_id: object = None
         # R7-A01 历史栈收敛 — 双栈字段（back_stack / fwd_stack）不再
         # 由页面自持，而是其页内 :class:`HistoryCommitter` 游标模型的
         # 只读投影（游标下界 / 上界）。外部消费者（TabBrowser 主链、
@@ -353,6 +357,8 @@ class PageInstance:
             if run_scripts and not getattr(self, "_reuse_doc", False):
                 _tree = _dom_mod.parse(html)
                 _host = _js_mod.Host(_tree, lambda _s: None)
+                # R7-S03 第 5 点 — sessionStorage 按 tab+origin 分区。
+                _host.tab_id = getattr(self, "tab_id", None) or ""
                 _host.execute_all()
             self.bitmap = browser.render_document(html, css, w, h)
             self.content_height = self.bitmap.height
@@ -399,6 +405,8 @@ class PageInstance:
         # the DOM the layout below builds.
         if run_scripts:
             _host = _js_mod.Host(tree, lambda _s: None)
+            # R7-S03 第 5 点 — sessionStorage 按 tab+origin 分区。
+            _host.tab_id = getattr(self, "tab_id", None) or ""
             self._script_host = _host
             _host.execute_all()
         styled = _css_mod.apply(tree, author_css, ua_css=ua_css,
@@ -952,6 +960,8 @@ class PageInstance:
                 # own copy of the body (a duplicated tag runs it
                 # twice, mirroring the HTML spec).
                 _host = _js_mod.Host(tree, lambda _s: None)
+                # R7-S03 第 5 点 — sessionStorage 按 tab+origin 分区。
+                _host.tab_id = getattr(self, "tab_id", None) or ""
                 self._script_host = _host
                 # R4 stage 0 — script execution sees the SAME policy
                 # context as subresource loading (one source of truth
@@ -1329,6 +1339,11 @@ class TabBrowser:
         from toy_browser.app.tab_session import TabSession
         self._g09_session = TabSession()
         self._tab_ids: list[int] = [self._g09_session.open_tab()]
+        # R7-S03 第 5 点 — 首个标签也要有稳定的 session 分区身份。
+        try:
+            self.tabs[0].tab_id = self._tab_ids[0]
+        except Exception:
+            pass
         self._ensure_page_frame(0)
         self._show_tab(0)
 
@@ -1961,6 +1976,12 @@ class TabBrowser:
         self.tabs.append(page)
         # G09 — 批次 37：为新标签分配稳定 tab_id（与 idx 对应）。
         self._tab_ids.append(self._g09_session.open_tab())
+        # R7-S03 第 5 点 — 让页面知道自己的 tab_id（sessionStorage
+        # 按 tab+origin 分区）。
+        try:
+            page.tab_id = self._tab_ids[idx]
+        except Exception:
+            pass
         self._ensure_page_frame(idx)
         return idx
 
@@ -1973,6 +1994,15 @@ class TabBrowser:
             return
         # G09 — 批次 37：关标签经会话协议层（取消在途任务 + 释放资源
         # + 重建 idx 映射 + 前台让给剩余标签 + 关闭审计）。
+        # R7-S03 第 6 点 — 关标签即清理该标签的 sessionStorage 分区
+        # （localStorage 不动）。
+        try:
+            _tid = getattr(self.tabs[idx], "tab_id", None)
+            if _tid is not None:
+                from toy_browser.scripting import storage_service as _ss
+                _ss.default_storage_service().clear_tab(str(_tid))
+        except Exception:
+            pass
         self._g09_close_tab(idx)
         # Drop the removed tab and rebuild the notebook consistently.
         del self.tabs[idx]

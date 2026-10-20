@@ -6737,8 +6737,23 @@ class Host:
                 try:
                     return attr(*args)
                 except Exception as e:
-                    self.host.log(f"method error: {method}: {e}")
-                    return None
+                    # R7-S03 第 6 点 — 方法抛错（例如 setItem 超配额的
+                    # QuotaExceededError）必须能**传到页面**：这里只能
+                    # 记日志并返回 None，绝不能自己再抛一个
+                    # AttributeError（旧代码写成 ``self.host.log``，Host
+                    # 没有 .host 属性，于是配额错误变成宿主崩溃）。
+                    try:
+                        _log = getattr(self, "log", None)
+                        if callable(_log):
+                            _log(f"method error: {method}: {e}")
+                    except Exception:
+                        pass
+                    # 转成**页面可见**的 JS 异常（而不是静默吞掉）：
+                    # 引擎用 ``{"name", "message"}`` 表示 Error 对象，
+                    # 这样 ``try { … } catch (e) { e.name }`` 能拿到
+                    # ``QuotaExceededError``（第 6 点的失败必须可观测）。
+                    _ename = type(e).__name__
+                    raise _Throw({"name": _ename, "message": str(e)})
             # P10.2 — non-callable properties on ToyMap / ToySet.
             if method == "size":
                 # Map / Set store size via @property → int.
