@@ -936,6 +936,63 @@ def test_s02_string_script_gate_present_empty_blocks():
     assert host.eval('1') is None
 
 
+@_reg
+def test_s02_inline_on_handler_gate():
+    """R7-S02 第 6 点 — ``onclick="…"`` 内联字符串事件处理器与
+    ``<script>`` 内联元素共享同一 ``script-src`` 门：``'none'`` /
+    present-but-empty 下拒执行（不"跑了再丢"）；无策略时放行。
+
+    经 :meth:`Host._run_event_handler` 直接验证字符串处理器入口的
+    门（事件委托路径 :meth:`execute_event_bubbled` 已同判，此处锁
+    定"独立调用也不跑"的契约）。button 经 ``element_table`` 取
+    （``id="b"``），避免 DOM 遍历 API 差异。"""
+    # 无策略 → on* 字符串处理器执行
+    host = js.Host(dom.parse(
+        '<html><body><button id="b" onclick="console.log(\'clicked\')">'
+        'x</button></body></html>'),
+        lambda s: None)
+    btn = host.element_table.get("b")
+    assert btn is not None, "button must be in element_table"
+    host._run_event_handler(
+        btn, "console.log('clicked');", "onclick", this_el=btn)
+    assert any("clicked" in l for l in host.logs), \
+        f"on* handler without policy must run: {host.logs}"
+    # script-src 'none' → on* 字符串处理器被拒
+    host2 = js.Host(dom.parse(
+        '<html><body><button id="b" onclick="console.log(\'NOPE\')">'
+        'x</button></body></html>'),
+        lambda s: None)
+    host2.csp_directives = parse_csp_directives("script-src 'none'")
+    btn2 = host2.element_table.get("b")
+    host2._run_event_handler(
+        btn2, "console.log('NOPE');", "onclick", this_el=btn2)
+    assert not any("NOPE" in l for l in host2.logs), \
+        f"on* handler under script-src 'none' must not run: {host2.logs}"
+    # present-but-empty script-src（等价 'none'）→ 拒
+    host3 = js.Host(dom.parse(
+        '<html><body><button id="b" onclick="console.log(\'NOPE\')">'
+        'x</button></body></html>'),
+        lambda s: None)
+    host3.csp_directives = parse_csp_directives("script-src")
+    btn3 = host3.element_table.get("b")
+    host3._run_event_handler(
+        btn3, "console.log('NOPE');", "onclick", this_el=btn3)
+    assert not any("NOPE" in l for l in host3.logs), \
+        f"on* handler under present-empty script-src must not run: " \
+        f"{host3.logs}"
+    # 'unsafe-inline' → 放行
+    host4 = js.Host(dom.parse(
+        '<html><body><button id="b" onclick="console.log(\'inline\')">'
+        'x</button></body></html>'),
+        lambda s: None)
+    host4.csp_directives = parse_csp_directives("script-src 'unsafe-inline'")
+    btn4 = host4.element_table.get("b")
+    host4._run_event_handler(
+        btn4, "console.log('inline');", "onclick", this_el=btn4)
+    assert any("inline" in l for l in host4.logs), \
+        f"on* handler under 'unsafe-inline' must run: {host4.logs}"
+
+
 # ---------------------------------------------------------------------------
 # R7-S02 第 5 点 — 跨源 CORS 响应到达后 ACAO/ACAC 校验（纯逻辑层）
 # ---------------------------------------------------------------------------
