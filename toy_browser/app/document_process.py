@@ -33,6 +33,10 @@ from typing import Callable, Optional
 # R7-S04 第 5 点 — worker 超时后有界终止契约（纯逻辑判定层，无运行时依赖）。
 from toy_browser.app import worker_timeout as _worker_timeout
 from toy_browser.app.worker_timeout import WorkerTerminationState
+# R7-S01 第 5 点 — 有限 IPC 消息 schema 校验（纯逻辑判定层，无运行时依赖）。
+from toy_browser.scripting.script_ipc import (
+    validate_command, validate_frame, MessageBudget as _IPC_Budget,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -893,9 +897,19 @@ class DocProcessServer:
 
     def post(self, cmd: DocCommand) -> bool:
         """投递紧凑命令。已关 tab 直接丢弃（False）；子进程存活时
-        经 pipe 发往 worker（多核），否则回退到父进程内置同步暂存。"""
+        经 pipe 发往 worker（多核），否则回退到父进程内置同步暂存。
+
+        R7-S01 第 5 点 — 投递前做有限 IPC 校验（消息 schema）：
+        字段类型 / kind 枚举 / payload 有限性，任一失败拒收（False），
+        不静默放行。"""
         if cmd.tab_id in self._closed_tabs:
             return False
+        # R7-S01 第 5 点 — 有限 IPC 校验（拒绝非法消息，不静默放行）。
+        _r = validate_command(
+            tab_id=cmd.tab_id, kind=cmd.kind, payload=cmd.payload,
+            seq=cmd.seq, navigation_id=cmd.navigation_id)
+        if _r is not None:
+            return False  # 拒收：不计数、不入队、不回 pipe。
         self._max_seq = max(self._max_seq, cmd.seq)
         self._stats.commands_posted += 1
         if self.is_spawned():
@@ -913,8 +927,20 @@ class DocProcessServer:
     def drain(self) -> list[DocFrame]:
         """非阻塞取回紧凑帧。子进程存活时经 pipe 收帧（多核）；
         回退态处理父侧暂存命令（内置同步）。关标签帧全丢弃
-        （G09 step 4）。"""
-        frames = list(self._pending_frames)
+        （G09 step 4）。
+
+        R7-S01 第 5 点 — 所有帧（父侧暂存 + 经 pipe 收回的）都过
+        有限 IPC 校验，非法帧拒收（不计入 frames_drained）。"""
+        _validated: list[DocFrame] = []
+        for _pf in self._pending_frames:
+            _fr = validate_frame(
+                _pf.tab_id, _pf.seq, _pf.ok,
+                _pf.error_category, _pf.payload, _pf.navigation_id)
+            if _fr is None and _pf.tab_id not in self._closed_tabs:
+                _validated.append(_pf)
+            else:
+                self._stats.dropped_tab_frames += 1
+        frames = _validated
         self._pending_frames = []
         if self.is_spawned():
             # 子进程收帧
@@ -926,6 +952,15 @@ class DocProcessServer:
                         self._fallback_sync()
                         break
                     if item.tab_id in self._closed_tabs:
+                        self._stats.dropped_tab_frames += 1
+                        continue
+                    # R7-S01 第 5 点 — 经 pipe 收回的帧也过有限 IPC
+                    # 校验（防 worker 回传宿主对象/非法类别）。
+                    _fr = validate_frame(
+                        item.tab_id, item.seq, item.ok,
+                        item.error_category, item.payload,
+                        item.navigation_id)
+                    if _fr is not None:
                         self._stats.dropped_tab_frames += 1
                         continue
                     frames.append(item)
@@ -941,6 +976,16 @@ class DocProcessServer:
                     continue
                 frame = self._worker.handle(cmd)
                 if frame.tab_id in self._closed_tabs:
+                    self._stats.dropped_tab_frames += 1
+                    continue
+                # R7-S01 第 5 点 — worker 产出的帧也须过有限 IPC 校验
+                # （回传结果只允许有限摘要，不允许宿主对象）。
+                _fr = validate_frame(
+                    frame.tab_id, frame.seq, frame.ok,
+                    frame.error_category, frame.payload,
+                    frame.navigation_id)
+                if _fr is not None:
+                    # 非法帧拒收，不计入 drained（不静默放行）。
                     self._stats.dropped_tab_frames += 1
                     continue
                 frames.append(frame)
