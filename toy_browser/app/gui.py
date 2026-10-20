@@ -1399,6 +1399,9 @@ class TabBrowser:
             self._r7_a02_cancel = None
         # 每 tab 当前 navigation_id（导航时 +1，与 worker 同源）。
         self._r7_a02_nav_id: dict = {}
+        # R7-A02 第 3 点 — 命令序号 + 被版本门控丢弃的旧帧计数。
+        self._r7_a02_seq = 0
+        self._r7_a02_stale_dropped = 0
         # R7-A02 第 6 点 — 文档工作模式 + 能力声明校验（不靠名字
         # 宣称"已多核渲染"）+ 显式单进程调试模式。
         try:
@@ -1532,6 +1535,164 @@ class TabBrowser:
         tr = getattr(self, "_r7_a02_trace", None)
         if tr is not None:
             tr.end(span, ok=True, note=note)
+
+    # ------------------------------------------------------------------
+    # R7-A02 第 3 点 — 版本化 IPC 投递：命令合并 / 背压 / 取消确认
+    # ------------------------------------------------------------------
+
+    def _r7_a02_next_seq(self) -> int:
+        """单调命令序号（cancel / stop 等新命令用）。stub 缺席时自建。"""
+        self._r7_a02_seq = getattr(self, "_r7_a02_seq", 0) + 1
+        return self._r7_a02_seq
+
+    def _r7_a02_submit(self, cmd, flush: bool = True):
+        """R7-A02 第 3 点 — 统一命令提交入口（背压 + 合并 + 投递）。
+
+        所有 UI → 文档进程的命令都经本入口（navigate / resize / stop…
+        ），一次性套上两道门：
+
+        1. **背压**：在途量（server 在途命令 + 帧，合并器待投）达
+           :class:`BackpressureGate` 上限时**拒收**（返回 False 并计
+           ``dropped``），避免慢页 / 坏脚本期间命令队列无界增长。
+        2. **合并**：可合并 kind（resize / scroll）进
+           :class:`CommandCoalescer`——同一 (tab, navigation_id, kind)
+           只保留最新一条（旧几何命令的结果会被新几何覆盖，全投只
+           会撑满队列）。
+
+        ``flush=True``（默认）提交后立即投递合并结果，返回值即真实
+        投递结果（关标签 / 校验失败时 False，与既有 :meth:`post`
+        语义一致）；``flush=False`` 攒批（返回 True 表示被接纳），
+        由 :meth:`_r7_a02_flush_commands` 统一投递——批量提交（拖拽
+        窗口、连续滚轮）经此路径合并。
+
+        组件为 None（``document_process`` 不可用 / stub）时退化为直
+        接 ``server.post``，**不改变既有行为**（向后兼容）。
+        """
+        server = getattr(self, "_g07_doc_server", None)
+        if server is None:
+            return False
+        coalescer = getattr(self, "_r7_a02_coalescer", None)
+        gate = getattr(self, "_r7_a02_backpressure", None)
+        if gate is not None:
+            try:
+                depth = int(server.inflight())
+            except Exception:
+                depth = 0
+            if coalescer is not None:
+                depth += coalescer.pending()
+            if not gate.admit(depth):
+                return False            # 背压拒收（计 dropped）
+        if coalescer is not None:
+            coalescer.push(cmd)
+            if not flush:
+                return True             # 攒批：被接纳，待 flush
+            return self._r7_a02_flush_commands() > 0
+        return bool(server.post(cmd))
+
+    def _r7_a02_flush_commands(self) -> int:
+        """投递合并器里攒下的命令（按 seq 升序），返回成功投递条数。
+
+        被丢弃的旧几何命令（被同 key 新命令取代）不投——它们的
+        结果已被覆盖，投递只会在慢页时撑满队列。
+        """
+        coalescer = getattr(self, "_r7_a02_coalescer", None)
+        server = getattr(self, "_g07_doc_server", None)
+        if coalescer is None or server is None:
+            return 0
+        posted = 0
+        for c in coalescer.drain():
+            try:
+                if server.post(c):
+                    posted += 1
+            except Exception:
+                continue
+        return posted
+
+    def _r7_a02_discard_pending(self) -> int:
+        """丢弃合并器里待投命令（关窗口 / 关标签后不再投递），
+        返回丢弃条数。"""
+        coalescer = getattr(self, "_r7_a02_coalescer", None)
+        if coalescer is None:
+            return 0
+        return len(coalescer.drain())
+
+    def _r7_a02_request_cancel(self, tab_id: int) -> int:
+        """R7-A02 第 3 点 — 发起一次**可确认**的取消。
+
+        返回 cancel token（0 = 取消跟踪不可用）。取消**必须被确认**：
+        token 在 :meth:`_r7_a02_ack_cancels` 收到 worker 的
+        ``cancelled`` 帧前一直在途（:meth:`CancelTracker.pending` > 0），
+        UI 可据此继续等待或走超时兜底——不静默宣称"已取消"。
+        """
+        tracker = getattr(self, "_r7_a02_cancel", None)
+        if tracker is None:
+            return 0
+        nav_map = getattr(self, "_r7_a02_nav_id", None) or {}
+        nav_id = int(nav_map.get(tab_id, 0))
+        token = tracker.request(tab_id, nav_id)
+        try:
+            from toy_browser.app.document_process import (
+                DocCommand, DOC_CMD_STOP)
+            self._r7_a02_submit(DocCommand(
+                tab_id=tab_id, kind=DOC_CMD_STOP, payload={},
+                navigation_id=nav_id, seq=self._r7_a02_next_seq()))
+        except Exception:
+            pass
+        return token
+
+    def _r7_a02_ack_cancels(self, frames) -> int:
+        """R7-A02 第 3 点 — 用 worker 回的 ``cancelled`` 帧确认在途
+        取消，返回确认条数。未被确认的取消保持在途（不冒充已取消）。"""
+        tracker = getattr(self, "_r7_a02_cancel", None)
+        if tracker is None:
+            return 0
+        acked = 0
+        for f in frames or ():
+            if getattr(f, "cancelled", False):
+                acked += tracker.ack_tab(f.tab_id, int(f.navigation_id or 0))
+        return acked
+
+    def _r7_a02_abandon_cancels(self, tab_id: int) -> int:
+        """标签销毁：该 tab 的在途取消**作废**（任务已随标签丢弃）。
+
+        与 :meth:`_r7_a02_ack_cancels` 语义不同——不是"取消被 worker
+        确认完成"，而是"取消请求已无意义"。关标签走这里，**不**用
+        ack 冒充确认（不冒充通过）。
+        """
+        tracker = getattr(self, "_r7_a02_cancel", None)
+        if tracker is None:
+            return 0
+        try:
+            return tracker.abandon_tab(tab_id)
+        except Exception:
+            return 0
+
+    def _r7_a02_gated_frames(self, frames) -> list:
+        """R7-A02 第 3 点 — "旧任务不可覆盖新页"门控（呈现层入口）。
+
+        每帧经 :class:`NavVersionGate.admit(tab, navigation_id,
+        frame_id)``：同 tab 而 navigation_id 更小的**旧导航迟到帧**
+        一律丢弃；同导航内 frame_id 不推进的旧帧同样丢弃。这是方案
+        验收目标"旧任务不可覆盖新页"在 UI 侧的可测判定层。
+
+        门控为 None 时原样返回（不改变既有行为）；被丢弃帧计入
+        :attr:`_r7_a02_stale_dropped`（诊断，不静默）。
+        """
+        gate = getattr(self, "_r7_a02_nav_gate", None)
+        if gate is None:
+            return list(frames or ())
+        out = []
+        for f in frames or ():
+            try:
+                fid = int((f.payload or {}).get("frame_id", 0) or 0)
+            except Exception:
+                fid = 0
+            if gate.admit(f.tab_id, int(f.navigation_id or 0), fid):
+                out.append(f)
+            else:
+                self._r7_a02_stale_dropped = getattr(
+                    self, "_r7_a02_stale_dropped", 0) + 1
+        return out
 
     # ------------------------------------------------------------------
     # G01/G05 — scroll protocol and wheel routing (extracted for testability)
@@ -1767,12 +1928,21 @@ class TabBrowser:
 
     def _g07_post_nav(self, tab_id: int, url: str, seq: int = 0) -> bool:
         """G07 批次 46 — 经真实 spawn 池投递导航命令（不阻塞 UI，
-        多核收益；回退态走内置同步 worker）。返回是否成功投递。"""
+        多核收益；回退态走内置同步 worker）。返回是否成功投递。
+
+        R7-A02 第 3 点 — 经 :meth:`_r7_a02_submit` 统一提交（背压
+        拒收 + 版本化 IPC 身份）。navigate **不合并**（每次导航是
+        新文档身份），返回值仍为真实投递结果（关标签时 False，与
+        既有契约一致）。
+        """
         from toy_browser.app.document_process import (
             DocCommand, DOC_CMD_NAVIGATE)
-        return self._g07_doc_server.post(
+        nav_map = getattr(self, "_r7_a02_nav_id", None)
+        nav_id = nav_map.get(tab_id, 0) if nav_map is not None else 0
+        return self._r7_a02_submit(
             DocCommand(tab_id=tab_id, kind=DOC_CMD_NAVIGATE,
-                       payload={"url": url}, seq=seq))
+                       payload={"url": url}, seq=seq,
+                       navigation_id=nav_id))
 
     def _g07_post_resize(self, tab_id: int, w: int, h: int,
                          seq: int = 0) -> bool:
@@ -1784,22 +1954,47 @@ class TabBrowser:
         入口真实发出"，**不**证明"重排在多核侧执行"——后者由
         :meth:`_r7_a02_doc_mode` 依真实接线判定（WORKER_FULL /
         WORKER_IPC / SINGLE_DEBUG），trace 里不混淆两者。
+
+        R7-A02 第 3 点 — 经 :meth:`_r7_a02_submit` 统一提交：resize
+        属**可合并**命令，同一 (tab, navigation_id) 的连续 resize
+        只保留最新几何（拖拽窗口时旧尺寸命令的结果必被覆盖，全投
+        只会在慢页时撑满队列撑死 UI）。
         """
         from toy_browser.app.document_process import (
             DocCommand, DOC_CMD_RESIZE)
         _span = self._r7_a02_record("resize", tab_id,
                                      note=f"{w}x{h}")
-        ok = self._g07_doc_server.post(
+        nav_map = getattr(self, "_r7_a02_nav_id", None)
+        nav_id = nav_map.get(tab_id, 0) if nav_map is not None else 0
+        ok = self._r7_a02_submit(
             DocCommand(tab_id=tab_id, kind=DOC_CMD_RESIZE,
-                       payload={"w": w, "h": h}, seq=seq))
+                       payload={"w": w, "h": h}, seq=seq,
+                       navigation_id=nav_id))
         self._r7_a02_finish(_span, f"{w}x{h} posted={ok}")
         return ok
 
     def _g07_drain_frames(self) -> list:
         """G07 批次 46 — 非阻塞取回文档进程的紧凑帧结果（多核侧经
         pipe 收帧；回退态经内置同步）。供 UI 事件循环调用，经 C01
-        门控后由呈现层应用。"""
-        return self._g07_doc_server.drain()
+        门控后由呈现层应用。
+
+        R7-A02 第 3 点 — 取回的帧再过两道门：
+
+        1. **取消确认**：worker 回的 ``cancelled`` 帧经
+           :meth:`_r7_a02_ack_cancels` 确认在途取消（取消必须被确认，
+           不是发出即算数）；
+        2. **版本门控**：每帧经 :meth:`_r7_a02_gated_frames`——旧
+           导航的迟到帧（navigation_id 更小）与同导航内不推进的旧
+           帧一律丢弃（"旧任务不可覆盖新页"）。
+
+        组件为 None 时两者 no-op，返回帧与既有行为一致。
+        """
+        frames = self._g07_doc_server.drain()
+        try:
+            self._r7_a02_ack_cancels(frames)
+        except Exception:
+            pass
+        return self._r7_a02_gated_frames(frames)
 
     def _r7_a02_doc_mode(self):
         """R7-A02 第 6 点 — 探测**当前真实**文档工作模式。
@@ -1903,6 +2098,8 @@ class TabBrowser:
             parts.append(f"backpressure={bp.describe()}")
         if ct is not None:
             parts.append(f"cancel={ct.describe()}")
+        parts.append(
+            f"stale_dropped={getattr(self, '_r7_a02_stale_dropped', 0)}")
         return "r7_a02: " + " ".join(parts)
 
     def _g07_doc_server_shutdown(self) -> None:
@@ -1910,7 +2107,15 @@ class TabBrowser:
 
         回退态（未真实 spawn）时 no-op；真实 spawn 态经
         :meth:`DocProcessServer.shutdown` 置 stop_evt + join +
-        terminate（必要时）。"""
+        terminate（必要时）。
+
+        R7-A02 第 3 点 — 进程退出回收：终止子进程**前**先丢弃合并
+        器里待投命令（不再向即将终止的进程投命令，避免"投递到已死
+        进程"的无意义工作）。"""
+        try:
+            self._r7_a02_discard_pending()
+        except Exception:
+            pass
         try:
             self._g07_doc_server.shutdown()
         except Exception:
@@ -2111,6 +2316,18 @@ class TabBrowser:
         """
         tab_id = self._tab_ids[idx]
         res = self._g09_session.close_tab(tab_id)
+        # R7-A02 第 3 点 — 关标签时该 tab 的在途取消**作废**（任务
+        # 随标签丢弃，不再等 worker 确认）。不用 ack 冒充"取消已被
+        # 确认"——那是假确认（不冒充通过）。
+        try:
+            self._r7_a02_abandon_cancels(tab_id)
+        except Exception:
+            pass
+        # 关标签后不再投递该 tab 攒下的合并命令（旧几何已无意义）
+        try:
+            self._r7_a02_discard_pending()
+        except Exception:
+            pass
         # G07 批次 46 — 关标签同步丢弃文档进程池在途身份（子进程侧
         # 经 close_q drop_tab，G09 step 4 不泄漏已关闭标签任务）。
         try:

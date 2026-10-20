@@ -459,6 +459,202 @@ def test_dynamic_drop_tab_clears_navigation_identity():
     assert w.drop_tab(1) == 0, "重复 drop 应返回 0"
 
 
+# ----------------------------------------------------------------------
+# R7-A02 第 3 点 — 投递路径接线（背压 / 合并 / 取消确认 / 版本门控）
+# ----------------------------------------------------------------------
+
+def _make_stub_browser_v3():
+    """构造带**完整 R7-A02 第 3 点组件**的 TabBrowser stub。
+
+    与 :func:`_make_stub_browser` 的差异：额外注入真实
+    :class:`NavVersionGate` / :class:`CommandCoalescer` /
+    :class:`BackpressureGate` / :class:`CancelTracker` + 绑定第 3 点
+    入口方法，验证"UI 投递路径真的过背压 / 合并 / 门控"，而不是
+    "组件存在"（不冒充通过）。
+    """
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        from skip_support import SkipTest
+        raise SkipTest("tkinter 不可用，跳过第 3 点投递路径动态断言"
+                       "（gui 模块导入需 tkinter；不伪装通过）")
+    from toy_browser.app import gui as _gui
+    from toy_browser.app.document_process import (
+        UiHeartbeat, TaskTrace, DocProcessServer,
+        NavVersionGate, CommandCoalescer, BackpressureGate, CancelTracker)
+
+    class _FakePage:
+        height = 600
+        content_height = 2000
+
+        def scroll_max(self):
+            return max(0, self.content_height - self.height)
+
+        def scroll_by(self, dy):
+            pass
+
+        def scroll_to(self, y):
+            pass
+
+    cls = None
+    for nm in dir(_gui):
+        o = getattr(_gui, nm)
+        if isinstance(o, type) and hasattr(o, "handle_scroll_command"):
+            cls = o
+            break
+    tb = cls.__new__(cls)
+    tb.tabs = [_FakePage()]
+    tb.current = 0
+    tb._r7_a02_heartbeat = UiHeartbeat()
+    tb._r7_a02_trace = TaskTrace()
+    tb._r7_a02_nav_id = {}
+    tb._r7_a02_seq = 0
+    tb._r7_a02_stale_dropped = 0
+    tb._g07_doc_server = DocProcessServer()
+    tb._r7_a02_nav_gate = NavVersionGate()
+    tb._r7_a02_coalescer = CommandCoalescer()
+    tb._r7_a02_backpressure = BackpressureGate()
+    tb._r7_a02_cancel = CancelTracker()
+    for name in ("_r7_a02_submit", "_r7_a02_flush_commands",
+                 "_r7_a02_discard_pending", "_r7_a02_request_cancel",
+                 "_r7_a02_ack_cancels", "_r7_a02_abandon_cancels",
+                 "_r7_a02_gated_frames", "_g07_post_nav",
+                 "_g07_post_resize", "_g07_drain_frames"):
+        setattr(tb, name, getattr(cls, name).__get__(tb))
+    tb._refresh_canvas = lambda idx: None
+    return tb
+
+
+@_test
+def test_static_post_entries_use_submit_and_gate():
+    """R7-A02 第 3 点（静态）：nav / resize / drain 三个入口都经统一
+    提交 / 门控（按函数体断言，不是"文件里有这个符号"）。"""
+    src = _read(os.path.join("toy_browser", "app", "gui.py"))
+    for entry, sym in (("def _g07_post_nav", "_r7_a02_submit"),
+                       ("def _g07_post_resize", "_r7_a02_submit"),
+                       ("def _g07_drain_frames", "_r7_a02_gated_frames"),
+                       ("def _g07_drain_frames", "_r7_a02_ack_cancels")):
+        i = src.index(entry)
+        body = src[i:src.index("\n    def ", i + 1)]
+        assert sym in body, f"{entry} 未接 {sym}（第 3 点投递路径）"
+
+
+@_test
+def test_dynamic_submit_backpressure_rejects_when_saturated():
+    """R7-A02 第 3 点 — 背压：在途量达上限时**拒收**新命令（返回
+    False + 计 dropped），不是无界入队把 UI 拖死。"""
+    tb = _make_stub_browser_v3()
+    tb._r7_a02_backpressure = BackpressureGate(limit=1)
+    # 先在途塞 1 条命令（server 侧真实在途）
+    assert tb._r7_a02_submit(DocCommand(
+        tab_id=1, kind=DOC_CMD_NAVIGATE, payload={"url": "http://a"},
+        seq=1)) is True
+    assert tb._g07_doc_server.inflight() >= 1, "应有 1 条在途命令"
+    assert tb._r7_a02_backpressure.dropped == 0, "未饱和时不该拒收"
+    # 已达上限 → 拒收
+    ok = tb._r7_a02_submit(DocCommand(
+        tab_id=1, kind=DOC_CMD_NAVIGATE, payload={"url": "http://b"},
+        seq=2))
+    assert ok is False, "在途达上限时新命令应被背压拒收"
+    assert tb._r7_a02_backpressure.dropped == 1, \
+        f"拒收应计 dropped=1：{tb._r7_a02_backpressure.describe()}"
+
+
+@_test
+def test_dynamic_submit_coalesces_batch_resize():
+    """R7-A02 第 3 点 — 命令合并：同一 (tab, navigation_id, kind) 的
+    批量 resize 只投**最新一条**（旧几何结果必被覆盖）。"""
+    tb = _make_stub_browser_v3()
+    base = tb._g07_doc_server.stats.commands_posted
+    # 攒批（flush=False）：3 条 resize 同 tab / 同 nav
+    for w in (800, 900, 1024):
+        assert tb._r7_a02_submit(DocCommand(
+            tab_id=1, kind=DOC_CMD_RESIZE, payload={"w": w, "h": 768},
+            seq=w // 100), flush=False) is True
+    assert tb._r7_a02_coalescer.pending() == 1, \
+        f"3 条 resize 应合并为 1 条待投：{tb._r7_a02_coalescer.describe()}"
+    assert tb._r7_a02_coalescer.merged == 2, \
+        f"应合并掉 2 条旧命令：{tb._r7_a02_coalescer.describe()}"
+    assert tb._r7_a02_flush_commands() == 1, "flush 只投 1 条"
+    assert tb._g07_doc_server.stats.commands_posted == base + 1, \
+        "server 只收到 1 条命令（不是 3 条）"
+    posted = tb._g07_doc_server._pending_cmds[-1]
+    assert posted.payload["w"] == 1024, \
+        f"应保留最新几何 w=1024：{posted.payload}"
+
+
+@_test
+def test_dynamic_gated_frames_drops_stale_navigation():
+    """R7-A02 第 3 点 — "旧任务不可覆盖新页"：旧导航的迟到帧与同
+    导航内不推进的旧帧都被门控丢弃。"""
+    tb = _make_stub_browser_v3()
+    f_new = DocFrame(tab_id=1, seq=1, ok=True, navigation_id=3,
+                     payload={"frame_id": 5})
+    f_old_nav = DocFrame(tab_id=1, seq=1, ok=True, navigation_id=2,
+                         payload={"frame_id": 9})
+    f_same_nav_old_frame = DocFrame(tab_id=1, seq=1, ok=True,
+                                    navigation_id=3,
+                                    payload={"frame_id": 5})
+    f_same_nav_new_frame = DocFrame(tab_id=1, seq=2, ok=True,
+                                    navigation_id=3,
+                                    payload={"frame_id": 6})
+    assert tb._r7_a02_gated_frames([f_new]) == [f_new], "首帧应放行"
+    assert tb._r7_a02_gated_frames([f_old_nav]) == [], \
+        "旧导航（nav 2 < 3）的迟到帧必须丢弃（不可覆盖新页）"
+    assert tb._r7_a02_gated_frames([f_same_nav_old_frame]) == [], \
+        "同导航内 frame_id 不推进的旧帧必须丢弃"
+    assert tb._r7_a02_gated_frames([f_same_nav_new_frame]) == \
+        [f_same_nav_new_frame], "frame_id 推进的新帧应放行"
+    assert tb._r7_a02_stale_dropped == 2, \
+        f"应累计丢弃 2 帧：{tb._r7_a02_stale_dropped}"
+
+
+@_test
+def test_dynamic_cancel_requires_acknowledgement():
+    """R7-A02 第 3 点 — 取消必须**被确认**：token 在 worker 回
+    cancelled 帧前一直在途；关标签是"作废"不是"确认"（不冒充）。"""
+    tb = _make_stub_browser_v3()
+    token = tb._r7_a02_request_cancel(1)
+    assert token > 0, "应返回 cancel token"
+    assert tb._r7_a02_cancel.pending() == 1, \
+        "取消发出后在途（未被确认）"
+    assert tb._r7_a02_cancel.is_acked(token) is False, \
+        "未确认前不得算已确认"
+    # worker 回 cancelled 帧 → 确认
+    frame = DocFrame(tab_id=1, seq=1, ok=True, cancelled=True,
+                     navigation_id=0)
+    assert tb._r7_a02_ack_cancels([frame]) == 1, "cancelled 帧应确认 1 条"
+    assert tb._r7_a02_cancel.pending() == 0, "确认后无在途"
+    assert tb._r7_a02_cancel.is_acked(token) is True
+    # 关标签 = 作废（不是确认）：pending 清零但不得记为已确认
+    t2 = tb._r7_a02_request_cancel(2)
+    assert tb._r7_a02_abandon_cancels(2) == 1, "关标签应作废该 tab 取消"
+    assert tb._r7_a02_cancel.pending() == 0
+    assert tb._r7_a02_cancel.is_acked(t2) is False, \
+        "作废≠确认：不得把 abandon 当 ack（不冒充通过）"
+
+
+@_test
+def test_dynamic_drain_acks_cancel_and_discard_pending_on_close():
+    """R7-A02 第 3 点 — 关窗口/关标签前丢弃待投合并命令（不再往即将
+    终止的进程投命令），drain 路径同时做取消确认 + 版本门控。"""
+    tb = _make_stub_browser_v3()
+    tb._r7_a02_submit(DocCommand(tab_id=1, kind=DOC_CMD_RESIZE,
+                                 payload={"w": 640, "h": 480}, seq=1),
+                      flush=False)
+    assert tb._r7_a02_coalescer.pending() == 1
+    assert tb._r7_a02_discard_pending() == 1, "应丢弃 1 条待投命令"
+    assert tb._r7_a02_coalescer.pending() == 0
+    # stop 命令 → drain 回 cancelled 帧 → 取消被确认
+    token = tb._r7_a02_request_cancel(1)
+    assert tb._r7_a02_cancel.pending() == 1
+    frames = tb._g07_drain_frames()
+    assert frames, "drain 应取回 stop 的 cancelled 帧"
+    assert tb._r7_a02_cancel.pending() == 0, \
+        "drain 路径应确认在途取消（ack_cancels 接线生效）"
+    assert tb._r7_a02_cancel.is_acked(token) is True
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in TESTS:

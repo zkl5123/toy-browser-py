@@ -485,6 +485,15 @@ class DocumentProcessPool:
 
     # -- 命令投递（UI 主线程 → 文档进程，轻量不阻塞） ---------------------
 
+    def inflight(self) -> int:
+        """R7-A02 第 3 点 — 当前在途量（在途命令 + 在途帧）。
+
+        供 :class:`BackpressureGate` 取背压深度：慢页 / 坏脚本期间
+        队列无界增长时 UI 侧据此**拒收**新命令（不把 UI 拖死）。
+        公开方法而非让调用方读私有字段（IPC 面不泄漏内部结构）。
+        """
+        return len(self._pending_cmds) + len(self._pending_frames)
+
     def post(self, cmd: DocCommand) -> bool:
         """G07 step 4 — 投递一条紧凑命令。已关 tab 的命令直接丢弃
         （返回 False，不串页）；否则入在途队列（真实进程下经 pipe
@@ -716,6 +725,23 @@ class CancelTracker:
                 if tb == tab_id and (navigation_id == 0 or nv == navigation_id)]
         for t in hits:
             self.ack(t)
+        return len(hits)
+
+    def abandon_tab(self, tab_id: int) -> int:
+        """标签销毁：该 tab 的在途取消**作废**（不再等确认）。
+
+        语义与 :meth:`ack_tab` **不同**，不得混用：
+
+        * ``ack_tab`` — worker 回了 cancelled 帧，取消**被确认完成**；
+        * ``abandon_tab`` — 标签已销毁（在途命令 / 帧 / 文档身份
+          全部丢弃），取消请求本身**已无意义**，不是"取消完成了"。
+
+        按"不冒充通过"，关标签不得用 ``ack_tab`` 冒充"取消已被
+        worker 确认"——那是假的确认。返回作废条数。
+        """
+        hits = [t for t, (tb, _nv) in self._pending.items() if tb == tab_id]
+        for t in hits:
+            del self._pending[t]
         return len(hits)
 
     def is_acked(self, token: int) -> bool:
@@ -1123,6 +1149,14 @@ class DocProcessServer:
         return self._worker.has_done_doc_work()
 
     # -- 命令投递（UI 主线程 → 文档进程，轻量不阻塞） ------------------------
+
+    def inflight(self) -> int:
+        """R7-A02 第 3 点 — 当前在途量（在途命令 + 在途帧，含子进程
+        存活时待经 pipe 发出的命令）。
+
+        供 :class:`BackpressureGate` 取背压深度——慢页 / 坏脚本期间
+        UI 侧据此拒收新命令（队列无界增长会拖死 UI）。"""
+        return len(self._pending_cmds) + len(self._pending_frames)
 
     def post(self, cmd: DocCommand) -> bool:
         """投递紧凑命令。已关 tab 直接丢弃（False）；子进程存活时
