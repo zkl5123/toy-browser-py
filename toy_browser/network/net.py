@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 from toy_browser.network import cookie_context as _cookie_ctx
 # R7-S03 第 4 点 — 缓存校验（Vary / 授权响应 / 304 头合并 / 凭据隔离）。
 from toy_browser.network import cache_validity as _cv
+# R7-S04 第 3 点 — deadline / 取消 / 页级聚合预算（纯逻辑决策层）。
+from toy_browser.network import request_budget as rb
 
 # P32.3 — cookie jar (lazy import to avoid a hard module dependency at
 # import time; cookie_store only needs net for URL parsing).
@@ -928,7 +930,9 @@ class HttpClient:
                  cache: "CacheStore | None" = None,
                  progress: "LoadEventSink | None" = None,
                  cookies: "cookie_store.CookieJar | None" = None,
-                 max_response_bytes: int = MAX_RESPONSE_BYTES) -> None:
+                 max_response_bytes: int = MAX_RESPONSE_BYTES,
+                 deadline: "rb.Deadline | None" = None,
+                 page_budget: "rb.PageBudget | None" = None) -> None:
         self.timeout = timeout
         self.verify_tls = verify_tls
         self.cache = cache
@@ -951,6 +955,11 @@ class HttpClient:
         # 未显式给 cookie_context 的请求会按"顶层文档 vs 子资源"真实
         # 判定，而不是退回"同站顶层 GET"缺省值。空串 = 未知（保守）。
         self.top_level_url = ""
+        # R7-S04 第 3 点 — deadline / 取消 / 页级聚合预算（纯逻辑决策层
+        # request_budget；连接关闭与池清理仍由调用方执行）。
+        self.deadline = deadline
+        self.page_budget = page_budget
+        self._cancel_scope = rb.CancellationScope()
 
     # ------------------------------------------------------------------
     # P33.R2 — connection reuse
@@ -1068,6 +1077,45 @@ class HttpClient:
         if self.progress is not None:
             self.progress.emit(LoadProgress(phase, fraction, detail))
 
+    # ------------------------------------------------------------------
+    # R7-S04 第 3 点 — deadline / 取消 / 页级预算的门禁
+    # ------------------------------------------------------------------
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        """请求方（GUI / fetch 宿主）在此处取消整个 client 的在途
+        请求。粘性：取消后所有后续请求在门禁处直接抛
+        :class:`rb.RequestCancelled`，连接不再复用。"""
+        self._cancel_scope.cancel(reason)
+
+    def _admit_request(self, raw_bytes: int = 0, decoded_bytes: int = 0) -> None:
+        """一次请求发出**前**的门禁（共同 finally 的入口检查）：
+
+        1. 取消粘性检查（已取消 → 直接抛，连接不动）；
+        2. deadline 过期检查（wall-clock，预算耗尽）；
+        3. 页级聚合预算检查（``page_budget`` 已耗尽 → 拒绝剩余请求；
+           ``would_exceed(raw, decoded)`` 预判这一笔会不会超，也拒）。
+
+        三个检查都**不**做任何 I/O——连接清理由调用方在 except /
+        finally 里做，本方法只是"是否放行"的判定。
+        """
+        self._cancel_scope.check()
+        if self.deadline is not None:
+            import time as _t
+            if self.deadline.expired(_t.monotonic()):
+                self._cancel_scope.cancel("deadline exceeded")
+                self._cancel_scope.check()  # 转为 RequestCancelled
+        if self.page_budget is not None:
+            if self.page_budget.exhausted:
+                raise ResponseTooLarge(
+                    "page aggregate budget exhausted "
+                    f"(raw={self.page_budget.raw_used} "
+                    f"decoded={self.page_budget.decoded_used})")
+
+    def _charge_page_budget(self, raw_bytes: int, decoded_bytes: int) -> None:
+        """一次成功响应之后记账（先成功后记账，失败不计）。"""
+        if self.page_budget is not None:
+            self.page_budget.charge(raw_bytes, decoded_bytes)
+
     def _single_get(self, url: URL,
                     headers: dict | None = None,
                     revalidate_etag: str = "",
@@ -1123,6 +1171,10 @@ class HttpClient:
         for attempt in (0, 1):
             conn = None
             try:
+                # R7-S04 第 3 点 — 共同 finally 的入口门禁：
+                # 取消粘性 / deadline / 页级预算，任一失败则
+                # 连接不动（尚未 acquire）。
+                self._admit_request()
                 # P33.R2 — acquire a (possibly reused) connection; a
                 # first attempt on a stale socket raises
                 # ConnectionResetError / RemoteDisconnected and the
@@ -1144,6 +1196,9 @@ class HttpClient:
                 if resp.status == 304:
                     body = stale_body
                     headers_out = self._headers_from_response(resp)
+                    # R7-S04 第 3 点 — 缓存命中也记账（原始=已存 body，
+                    # 解压=同，因为 304 复用缓存 body）。
+                    self._charge_page_budget(len(body), len(body))
                     # Merge in the cached headers (the 304 body is
                     # the cached one; keep its content-type, etc.).
                     self._release_conn(url, conn, dead=(
@@ -1162,6 +1217,7 @@ class HttpClient:
                 # first — the S04 read_before_cap probe).
                 body = _read_response_bounded(
                     resp, self.max_response_bytes)
+                _raw_bytes = len(body)  # 原始字节（记账用）
                 # R7-S05 — keep every Set-Cookie line (the legacy dict
                 # comprehension dropped all but the last).
                 headers_out = self._headers_from_response(resp)
@@ -1182,6 +1238,9 @@ class HttpClient:
                                    body=body,
                                    final_url=final),
                     self.max_response_bytes)
+                # R7-S04 第 3 点 — 记账：原始字节（已读）+ 解压字节
+                # （maybe_gunzip 输出）。失败（ResponseTooLarge）不记。
+                self._charge_page_budget(_raw_bytes, len(body))
                 self._release_conn(url, conn, dead=("close" in connection_hdr
                                                      or resp.status >= 400
                                                      and resp.status == 401))
@@ -1197,6 +1256,15 @@ class HttpClient:
                 # bounded gunzip rejected a decompression-bomb): the
                 # connection still has unread bytes, so it is closed
                 # and must NOT return to the keep-alive pool.
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                raise
+            except rb.RequestCancelled:
+                # R7-S04 第 3 点 — 取消是粘性终态：连接关闭、不入池，
+                # 且不再重试（直接 re-raise 结束循环）。
                 if conn is not None:
                     try:
                         conn.close()
@@ -1378,6 +1446,8 @@ class HttpClient:
                 # first attempt on a stale socket raises
                 # ConnectionResetError / RemoteDisconnected and the
                 # retry loop opens a fresh one.
+                # R7-S04 第 3 点 — 共同 finally 入口门禁（同 GET）。
+                self._admit_request()
                 conn = self._acquire_conn(url)
                 conn.request(m, path, body=body_bytes,
                              headers=hdrs)
@@ -1388,6 +1458,7 @@ class HttpClient:
                 # 4096-byte body under a 128-byte cap).
                 body = _read_response_bounded(
                     resp, self.max_response_bytes)
+                _raw_bytes = len(body)  # 原始字节（记账用）
                 # R7-S05 — keep every Set-Cookie line (the legacy dict
                 # comprehension dropped all but the last).
                 headers_out = self._headers_from_response(resp)
@@ -1397,6 +1468,7 @@ class HttpClient:
                 if self.cookies is not None:
                     ctx.ingest(self.cookies, headers_out)
                 conn_hdr = (resp.getheader("Connection") or "").lower()
+                self._charge_page_budget(_raw_bytes, len(body))
                 self._release_conn(url, conn, dead=("close" in conn_hdr))
                 return HttpResponse(
                     status=resp.status,
@@ -1408,6 +1480,15 @@ class HttpClient:
             except ResponseTooLarge:
                 # R7-S04 — the POST body exceeded the cap mid-read:
                 # close the connection, keep it out of the pool.
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                raise
+            except rb.RequestCancelled:
+                # R7-S04 第 3 点 — 取消是粘性终态：连接关闭、不入池，
+                # 且不再重试（直接 re-raise 结束循环）。
                 if conn is not None:
                     try:
                         conn.close()
