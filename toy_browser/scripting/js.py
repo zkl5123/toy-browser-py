@@ -7787,7 +7787,19 @@ class Host:
         ``this`` bound to *this_el* (default: *el*).  Used by the
         delegation path where the handler lives on an ancestor but
         ``this`` must still resolve to the event target (the input
-        element that triggered it)."""
+        element that triggered it).
+
+        R7-S02 第 6 点 — 字符串事件处理器（``onclick="…"``）与 ``<script>``
+        内联元素共享同一 ``script-src`` 门：``'none'`` / present-but-empty
+        / 无 nonce 的 nonce-only 策略下拒执行（不"跑了再丢"）。门判定与
+        事件委托路径（:meth:`execute_event_bubbled` 里
+        :meth:`_csp_inline_allowed`）同一来源，幂等（调用方已判过门时
+        重复判不冲突）。"""
+        # 自带 script-src 门（与元素级 inline 门同判，nonce=None）：
+        # 即使某调用路径漏判，on* 字符串处理器也不会"先跑再丢"。
+        if handler and not self._csp_inline_allowed(self.csp_directives, None):
+            self.log(f"CSP blocked inline handler: {attr_name}")
+            return
         program = parse_program(handler)
         interpreter = Interpreter(self)
         interpreter.env = Env(self.globals, None)
