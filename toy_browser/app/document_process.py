@@ -30,6 +30,10 @@ import queue as _queue
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+# R7-S04 第 5 点 — worker 超时后有界终止契约（纯逻辑判定层，无运行时依赖）。
+from toy_browser.app import worker_timeout as _worker_timeout
+from toy_browser.app.worker_timeout import WorkerTerminationState
+
 
 # ---------------------------------------------------------------------------
 # G07 step 4 — 紧凑命令（UI 主线程 → 文档进程）
@@ -762,6 +766,31 @@ class DocProcessServer:
         self._closed_tabs: set = set()
         self._max_seq = 0
         self._on_spawned = False
+        # R7-S04 第 5 点 — worker 超时后有界终止契约（纯逻辑判定层；
+        # 真实 terminate/kill/join 仍由 DocProcessServer.shutdown 执行，
+        # 这里的状态机供调用方查询"能否导航"）。
+        self._termination = WorkerTerminationState()
+
+    # 供外部查询（审计"不允许冒充已终止"——只暴露状态机，不假装终止）
+    @property
+    def termination_state(self) -> WorkerTerminationState:
+        return self._termination
+
+    def begin_terminate(self, now: float, summary: str = "") -> None:
+        """发起有界终止流程（任务超时后调用）。幂等。"""
+        self._termination.begin_terminate(now, summary)
+
+    def complete_termination(self, now: float, natural: bool = True) -> None:
+        """终止完成（join 结束或 forced_kill 后），允许新导航。"""
+        self._termination.complete(now, natural)
+
+    def may_navigate(self) -> bool:
+        """当前是否允许发起新导航（terminated 后 True）。"""
+        return self._termination.may_navigate
+
+    def should_force_kill(self, now: float) -> bool:
+        """join 预算是否已用尽（调用方据此决定强制终止）。"""
+        return self._termination.check_join_budget(now)
 
     # -- 生命周期 -----------------------------------------------------------
 
@@ -800,8 +829,15 @@ class DocProcessServer:
             return False
 
     def shutdown(self) -> None:
-        """终止子进程（置 stop_evt + join，回退态 no-op）。"""
+        """终止子进程（置 stop_evt + join，回退态 no-op）。
+
+        R7-S04 第 5 点 — 终止流程经 ``_termination`` 状态机跟踪：
+        发起 → join 预算内自然结束 → terminated 后才允许新导航。
+        """
+        import time as _time
         if self._on_spawned:
+            t0 = _time.monotonic()
+            self._termination.begin_terminate(t0, "shutdown")
             try:
                 self._stop_evt.set()
                 self._cmd_q.put(None)
@@ -811,12 +847,21 @@ class DocProcessServer:
                 self._proc.join(timeout=1.0)
             except Exception:
                 pass
+            natural = not self._proc.is_alive()
             if self._proc.is_alive():
                 try:
                     self._proc.terminate()
                 except Exception:
                     pass
+                natural = False  # forced_kill
+            self._termination.complete(_time.monotonic(), natural=natural)
             self._on_spawned = False
+        else:
+            # 回退态：无需真正终止，但仍把状态机推到 terminated
+            # （允许后续导航）。
+            t = _time.monotonic()
+            self._termination.begin_terminate(t, "fallback-shutdown")
+            self._termination.complete(t, natural=True)
         for q in (self._cmd_q, self._result_q, self._close_q):
             if q is not None:
                 try:
