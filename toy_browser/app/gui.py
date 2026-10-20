@@ -1492,6 +1492,48 @@ class TabBrowser:
         self.page_frames: dict[int, tk.Frame] = {}
 
     # ------------------------------------------------------------------
+    # R7-A02 第 1 点 — UI 心跳 + task trace helper（scroll / resize
+    # 入口共用；"确认真正调用路径"而非"模块存在"）
+    # ------------------------------------------------------------------
+
+    def _r7_a02_record(self, span_name: str, tab_id: int,
+                       note: str = ""):
+        """R7-A02 第 1 点 — 在 scroll / resize 入口记一次 UI 心跳 +
+        task trace span。
+
+        与 :meth:`_commit_navigation` 的 navigate span 同口径：span
+        名 + tab / navigation 身份 + 起止时间戳 + 成功标记。任一项
+        为 None（document_process 不可用）时退化（不崩、不计数）；
+        返回 span 句柄（None 时返回 None），调用方自行收尾。
+
+        **不冒充通过**：本 helper 只记调用路径与阶段耗时（可测），
+        不宣称"重排在多核侧执行"——真实重排是否经文档进程池仍是
+        :meth:`_r7_a02_doc_mode` 判定的事实（WORKER_FULL / WORKER_IPC
+        / SINGLE_DEBUG），不在 trace 里混淆。
+        """
+        hb = getattr(self, "_r7_a02_heartbeat", None)
+        if hb is not None:
+            hb.beat()
+        tr = getattr(self, "_r7_a02_trace", None)
+        if tr is None:
+            return None
+        # scroll / resize 不新建文档身份：nav_id 取当前 tab 已登记的
+        # navigation_id（与 worker 侧同源），未导航过的 tab 为 0。
+        nav_map = getattr(self, "_r7_a02_nav_id", None)
+        nav_id = nav_map.get(tab_id, 0) if nav_map is not None else 0
+        span = tr.start(span_name, tab_id=tab_id, navigation_id=nav_id)
+        return span
+
+    def _r7_a02_finish(self, span, note: str = "") -> None:
+        """R7-A02 第 1 点 — 收尾一条 span（``_r7_a02_record`` 配对）。
+        span / trace 为 None 时 no-op（不崩）。"""
+        if span is None:
+            return
+        tr = getattr(self, "_r7_a02_trace", None)
+        if tr is not None:
+            tr.end(span, ok=True, note=note)
+
+    # ------------------------------------------------------------------
     # G01/G05 — scroll protocol and wheel routing (extracted for testability)
     # ------------------------------------------------------------------
 
@@ -1515,12 +1557,17 @@ class TabBrowser:
         """
         page = self.tabs[tab_id]
         m = page.scroll_max()
+        # R7-A02 第 1 点 — scroll 入口 task trace + UI 心跳（真正调用
+        # 路径证据：scrollbar command 真实走到这里）。
+        _span = self._r7_a02_record("scroll", tab_id,
+                                     note=f"op={operation}")
         if operation == "moveto":
             # fraction of total content height (NOT of scroll_max).
             if args:
                 try:
                     fraction = float(args[0])
                 except (TypeError, ValueError):
+                    self._r7_a02_finish(_span, "invalid-fraction")
                     return
                 target = int(fraction * page.content_height)
                 page.scroll_to(target)
@@ -1536,6 +1583,7 @@ class TabBrowser:
             page.scroll_by(step)
             self._refresh_canvas(tab_id)
         # "set" and "none" are no-ops (Tk uses them for range updates).
+        self._r7_a02_finish(_span, f"op={operation}")
 
     _LINE_STEP = 40  # pixels per scroll-unit arrow / wheel notch
 
@@ -1557,8 +1605,13 @@ class TabBrowser:
             step = self._LINE_STEP if delta <= -120 else 10
         else:
             return  # delta == 0: no movement
+        # R7-A02 第 1 点 — wheel 入口 task trace + UI 心跳（真正调用
+        # 路径证据：wheel 事件真实走到这里）。
+        _span = self._r7_a02_record("scroll", tab_id,
+                                     note=f"wheel delta={delta} step={step}")
         page.scroll_by(step)
         self._refresh_canvas(tab_id)
+        self._r7_a02_finish(_span, f"wheel delta={delta} step={step}")
 
     # ------------------------------------------------------------------
 
@@ -1724,12 +1777,23 @@ class TabBrowser:
     def _g07_post_resize(self, tab_id: int, w: int, h: int,
                          seq: int = 0) -> bool:
         """G07 批次 46 — 经真实 spawn 池投递 resize 命令（几何重算，
-        多核收益）。"""
+        多核收益）。
+
+        R7-A02 第 1 点 — resize 入口 task trace + UI 心跳（真正调用
+        路径证据）。**不冒充通过**：本 span 只证明"resize 命令从 UI
+        入口真实发出"，**不**证明"重排在多核侧执行"——后者由
+        :meth:`_r7_a02_doc_mode` 依真实接线判定（WORKER_FULL /
+        WORKER_IPC / SINGLE_DEBUG），trace 里不混淆两者。
+        """
         from toy_browser.app.document_process import (
             DocCommand, DOC_CMD_RESIZE)
-        return self._g07_doc_server.post(
+        _span = self._r7_a02_record("resize", tab_id,
+                                     note=f"{w}x{h}")
+        ok = self._g07_doc_server.post(
             DocCommand(tab_id=tab_id, kind=DOC_CMD_RESIZE,
                        payload={"w": w, "h": h}, seq=seq))
+        self._r7_a02_finish(_span, f"{w}x{h} posted={ok}")
+        return ok
 
     def _g07_drain_frames(self) -> list:
         """G07 批次 46 — 非阻塞取回文档进程的紧凑帧结果（多核侧经
