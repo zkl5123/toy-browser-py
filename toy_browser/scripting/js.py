@@ -8001,6 +8001,33 @@ class Host:
             base_url=base_url)
         return _rc_mod.response_type(ctx)
 
+    def _js_cors_response_check(self, target_url: str,
+                                response_headers: dict,
+                                destination: str = ""):
+        """J03 第 2 点 / S02 第 5 点 — 跨源 CORS 响应到达后，按
+        :func:`_rc_mod.validate_preflight_response` 校验 ACAO/ACAC，
+        决定该响应**是否可被脚本读取**。
+
+        * 同源 → 可读（basic）；
+        * 跨源 no-cors → 不可读（opaque，body/头对脚本隐藏）；
+        * 跨源 cors：服务端回了匹配 ACAO（+ credentials 时 ACAC=true）
+          → 可读（cors）；ACAO 缺失 / 不匹配 → 降级为 opaque（不可
+          读，但请求本身合法，不得伪装成网络错误）。
+
+        返回 :class:`PreflightCheckResult`（``allowed`` /
+        ``resolved_type`` / ``visible_headers`` / ``reason``）。纯逻辑，
+        不读时钟、不发请求；真实 OPTIONS 预检**请求**发送留活显示批次
+        （本 helper 只校验已到达的响应，"不冒充通过"）。
+        """
+        base_url = getattr(self, "doc_url", "") or ""
+        doc_origin = _rc_mod._origin_of(base_url) if base_url else ""
+        dest = destination or _rc_mod.DEST_FETCH
+        ctx = _rc_mod.context_for_destination(
+            doc_origin, target_url or base_url, dest,
+            base_url=base_url)
+        return _rc_mod.validate_preflight_response(
+            ctx, dict(response_headers or {}))
+
     def _csp_connect_blocked(self, url: str) -> bool:
         """R7-S02 — True when the document's CSP ``connect-src``
         directive forbids *url* (a fetch() / XMLHttpRequest target).

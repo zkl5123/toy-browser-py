@@ -936,6 +936,166 @@ def test_s02_string_script_gate_present_empty_blocks():
     assert host.eval('1') is None
 
 
+# ---------------------------------------------------------------------------
+# R7-S02 第 5 点 — 跨源 CORS 响应到达后 ACAO/ACAC 校验（纯逻辑层）
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_s02_preflight_same_origin_basic_readable():
+    """同源 fetch 响应无需 ACAO，校验通过（basic，脚本可读）。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://a.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(ctx, {"Content-Type": "text/plain"})
+    assert r.allowed, r.reason
+    assert r.resolved_type == "basic"
+    # 禁止响应头（set-cookie）不可见
+    ctx2 = _rc.context_for_destination(
+        "https://a.test", "https://a.test/api", _rc.DEST_FETCH)
+    r2 = _rc.validate_preflight_response(
+        ctx2, {"Content-Type": "text/plain", "Set-Cookie": "sid=1"})
+    assert r2.allowed
+    assert "set-cookie" not in r2.visible_headers
+
+
+@_reg
+def test_s02_preflight_cross_origin_acao_star_cors():
+    """跨源 cors fetch，服务端回 ACAO=* → 校验通过（cors，可读）。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "*"})
+    assert r.allowed, r.reason
+    assert r.resolved_type == "cors"
+
+
+@_reg
+def test_s02_preflight_cross_origin_acao_match_cors():
+    """跨源 cors fetch，ACAO = 请求 origin（https://a.test）→ 可读。
+    注意：ACAO 必须匹配**发起请求的 origin**（document_origin），
+    不是目标源（https://b.test）。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "https://a.test"})
+    assert r.allowed, r.reason
+    assert r.resolved_type == "cors"
+
+
+@_reg
+def test_s02_preflight_cross_origin_acao_mismatch_opaque():
+    """跨源 cors fetch，ACAO 不匹配请求 origin 且非 * → 降级 opaque
+    （脚本不可读，但请求本身合法）。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "https://c.test"})
+    assert not r.allowed
+    assert r.resolved_type == "opaque"
+    assert r.visible_headers == {}
+
+
+@_reg
+def test_s02_preflight_cross_origin_no_acao_opaque():
+    """跨源 cors fetch，响应缺 ACAO → 降级 opaque。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(
+        ctx, {"Content-Type": "text/plain"})
+    assert not r.allowed
+    assert r.resolved_type == "opaque"
+
+
+@_reg
+def test_s02_preflight_cross_origin_no_cors_opaque():
+    """跨源 no-cors（classic script / image）→ 恒 opaque（不可读）。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/lib.js", _rc.DEST_CLASSIC_SCRIPT)
+    r = _rc.validate_preflight_response(ctx, {})
+    assert not r.allowed
+    assert r.resolved_type == "opaque"
+
+    ctx_img = _rc.context_for_destination(
+        "https://a.test", "https://b.test/x.png", _rc.DEST_IMAGE)
+    r_img = _rc.validate_preflight_response(ctx_img, {})
+    assert not r_img.allowed
+    assert r_img.resolved_type == "opaque"
+
+
+@_reg
+def test_s02_preflight_credentials_include_requires_concrete_acao():
+    """credentials=include 跨源：ACAO 不得是 *，须为具体 origin 且
+    ACAC=true，否则降级 opaque。"""
+    ctx = _rc.RequestContext(
+        url="https://b.test/api", document_origin="https://a.test",
+        destination=_rc.DEST_FETCH, mode=_rc.MODE_CORS,
+        credentials=_rc.CRED_INCLUDE)
+    # ACAO=* → opaque（凭据模式不允许 *）
+    r = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "*"})
+    assert not r.allowed
+    assert r.resolved_type == "opaque"
+    # 具体 origin + 无 ACAC → opaque
+    r2 = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "https://a.test"})
+    assert not r2.allowed
+    assert r2.resolved_type == "opaque"
+    # 具体 origin + ACAC=true → cors（可读）
+    r3 = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "https://a.test",
+              "Access-Control-Allow-Credentials": "true"})
+    assert r3.allowed, r3.reason
+    assert r3.resolved_type == "cors"
+
+
+@_reg
+def test_s02_preflight_expose_headers_controls_visibility():
+    """跨源 cors 校验通过后，脚本可见头 = 基础过滤可见头 ∪
+    Access-Control-Expose-Headers 允许的头。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r = _rc.validate_preflight_response(ctx, {
+        "Access-Control-Allow-Origin": "https://a.test",
+        "Access-Control-Expose-Headers": "x-custom",
+        "X-Custom": "visible",
+        "Set-Cookie": "sid=1",
+    })
+    assert r.allowed, r.reason
+    assert r.resolved_type == "cors"
+    # 经 Expose-Headers 允许的 x-custom 可见
+    assert "x-custom" in r.visible_headers
+    # 禁止响应头 set-cookie 仍不可见
+    assert "set-cookie" not in r.visible_headers
+
+
+@_reg
+def test_s02_preflight_js_helper_delegates_to_validate():
+    """J03 第 2 点 — JS 侧 _js_cors_response_check 委托
+    validate_preflight_response，跨源 ACAO 不匹配时 opaque。"""
+    host = js.Host(dom.parse('<html><body></body></html>'),
+                   lambda s: None)
+    host.doc_url = "https://a.test/"
+    host.doc_origin = "https://a.test"
+    # 跨源 b.test，无 ACAO → opaque
+    r = host._js_cors_response_check(
+        "https://b.test/api", {"Content-Type": "text/plain"},
+        _rc.DEST_FETCH)
+    assert not r.allowed
+    assert r.resolved_type == "opaque"
+    # 跨源 b.test，ACAO 匹配请求 origin → cors
+    r2 = host._js_cors_response_check(
+        "https://b.test/api",
+        {"Access-Control-Allow-Origin": "https://a.test"},
+        _rc.DEST_FETCH)
+    assert r2.allowed, r2.reason
+    assert r2.resolved_type == "cors"
+    # 同源 a.test → basic
+    r3 = host._js_cors_response_check(
+        "https://a.test/api", {"Content-Type": "text/plain"},
+        _rc.DEST_FETCH)
+    assert r3.allowed
+    assert r3.resolved_type == "basic"
+
+
 if __name__ == "__main__":
     passed = 0
     failed = []

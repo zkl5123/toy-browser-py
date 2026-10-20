@@ -45,6 +45,7 @@ __all__ = [
     "default_mode_for", "default_credentials_for",
     "context_for_destination", "evaluate_request",
     "filter_response_headers", "response_type",
+    "validate_preflight_response",
 ]
 
 
@@ -525,3 +526,140 @@ def response_type(ctx: RequestContext) -> str:
         return "cors"
     # 同源请求（evaluate 在此处返回 allowed=True 且无 CORS 标记）。
     return "basic"
+
+
+# ---------------------------------------------------------------------------
+# 响应到达后：跨源 CORS 响应可读性校验（第 5 点）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PreflightCheckResult:
+    """R7-S02 第 5 点 — 跨源 cors 响应到达后，ACAO/ACAC 校验的判定。"""
+    #: 响应是否通过 CORS 校验（脚本可读）。
+    allowed: bool
+    #: 校验未通过 / 不适用时的原因（诊断用）。
+    reason: str = ""
+    #: 校验通过后，脚本可见的响应头（经 :func:`filter_response_headers`
+    #: 过滤的可见头 + ``Access-Control-Expose-Headers`` 允许的头）。
+    visible_headers: dict = None
+    #: 实际生效的响应类型（与 :func:`response_type` 对齐）：
+    #: ``"cors"``（校验通过）/ ``"opaque"``（ACAO 不匹配降级）/
+    #: ``"basic"``（同源）/ ``"error"``（不可判定）。
+    resolved_type: str = "basic"
+
+
+def _header_value_ci(headers: dict, name: str) -> str:
+    """大小写不敏感取单个响应头的值（缺失返回 ``""``）。"""
+    if not headers:
+        return ""
+    low = name.lower()
+    for k, v in headers.items():
+        if str(k).lower() == low:
+            return str(v or "")
+    return ""
+
+
+def validate_preflight_response(ctx: RequestContext,
+                                response_headers: dict,
+                                ) -> PreflightCheckResult:
+    """R7-S02 第 5 点 — 跨源 CORS 响应到达后校验 ACAO/ACAC，决定该
+    响应**是否可被脚本读取**（Fetch 规范 CORS 响应校验）。
+
+    与 :func:`evaluate_request` 的"发送前"判定互补：evaluate 只给
+    "需要 ACAO / opaque"的标记，本函数在**响应头已知**后真正校验
+    服务端回了什么 ACAO/ACAC/Expose-Headers：
+
+    * **同源** → 直接 basic，无 ACAO 校验（脚本可读）；
+    * **跨源 no-cors** → 恒 opaque（规范不可读），``resolved_type``
+      为 ``opaque``，``allowed`` 为 False（脚本读不到 body/头）；
+    * **跨源 cors**：
+      - 响应缺 ``Access-Control-Allow-Origin`` → 不通过（opaque 降级）；
+      - ACAO ≠ 请求 origin 且非 ``*`` → 不通过；
+      - ``credentials=include`` 时 ACAO **必须**是具体 origin（不得是
+        ``*``）且 ``Access-Control-Allow-Credentials`` 须为 ``true``，
+        否则不通过；
+      - 不通过 → 响应降级为 ``opaque``（脚本不可读，但请求本身合法，
+        不得把"读不到"伪装成 error 拒请求）；
+      - 通过 → ``cors``，脚本可读；可见头 = :func:`filter_response_
+        headers` 的可见头 ∪ ``Access-Control-Expose-Headers`` 允许
+        的额外头（CORS 暴露头机制）。
+
+    纯逻辑：不读时钟、不发请求、不 import 运行时；校验的是"拿到
+    响应头后"的判定。真实 OPTIONS 预检**请求**的发送留活显示批次
+    （本层只校验响应，不发请求——"不冒充通过"）。
+    """
+    decision = evaluate_request(ctx)
+    if not decision.allowed:
+        return PreflightCheckResult(
+            False, decision.reason or "blocked before send",
+            visible_headers={}, resolved_type="error")
+
+    # 同源 → basic（脚本可读，无需 ACAO）。
+    if not ctx.is_cross_origin:
+        visible, _ = filter_response_headers(ctx, dict(response_headers or {}))
+        return PreflightCheckResult(
+            True, "same-origin", visible_headers=visible,
+            resolved_type="basic")
+
+    # 跨源 no-cors → opaque（不可读，但请求合法）。
+    if ctx.mode == MODE_NO_CORS:
+        return PreflightCheckResult(
+            False, "cross-origin no-cors response is opaque",
+            visible_headers={}, resolved_type="opaque")
+
+    # 跨源 cors → 校验 ACAO / ACAC。
+    # CORS 规范：服务端回的 ACAO 必须匹配**发起请求的 origin**
+    # （即文档源 ctx.document_origin），不是目标源。
+    origin = ctx.document_origin
+    acao = _header_value_ci(response_headers, "access-control-allow-origin")
+    acac = _header_value_ci(
+        response_headers, "access-control-allow-credentials").lower()
+
+    if not acao:
+        return PreflightCheckResult(
+            False,
+            "CORS response missing Access-Control-Allow-Origin; "
+            "downgraded to opaque",
+            visible_headers={}, resolved_type="opaque")
+
+    wildcard = (acao.strip() == "*")
+    if ctx.credentials == CRED_INCLUDE:
+        # 凭据模式：ACAO 不得是 *，且须 ACAC=true 且 ACAO=请求 origin。
+        if wildcard:
+            return PreflightCheckResult(
+                False,
+                "credentials request: ACAO must be the concrete origin "
+                "(not '*'); downgraded to opaque",
+                visible_headers={}, resolved_type="opaque")
+        if acao.strip().lower() != origin.lower():
+            return PreflightCheckResult(
+                False,
+                "credentials request: ACAO does not match request origin",
+                visible_headers={}, resolved_type="opaque")
+        if acac != "true":
+            return PreflightCheckResult(
+                False,
+                "credentials request: Access-Control-Allow-Credentials "
+                "must be 'true'; downgraded to opaque",
+                visible_headers={}, resolved_type="opaque")
+    else:
+        # 非凭据：ACAO 须匹配请求 origin，或为 *。
+        if not (wildcard or acao.strip().lower() == origin.lower()):
+            return PreflightCheckResult(
+                False,
+                "ACAO does not match request origin (and not '*'); "
+                "downgraded to opaque",
+                visible_headers={}, resolved_type="opaque")
+
+    # 通过 → cors。可见头 = 基础过滤可见头 ∪ Expose-Headers 允许头。
+    visible, _ = filter_response_headers(ctx, dict(response_headers or {}))
+    expose = _header_value_ci(
+        response_headers, "access-control-expose-headers").lower()
+    if expose and expose != "*":
+        allowed_expose = [t.strip() for t in expose.split(",") if t.strip()]
+        for k, v in (response_headers or {}).items():
+            if str(k).lower() in allowed_expose:
+                visible.setdefault(str(k).lower(), v)
+    return PreflightCheckResult(
+        True, "CORS response validated (ACAO match)",
+        visible_headers=visible, resolved_type="cors")

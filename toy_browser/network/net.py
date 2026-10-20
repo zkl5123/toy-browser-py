@@ -2145,6 +2145,31 @@ class FetchTransport:
         self._credentials_mode = (credentials_mode
                                   or _cookie_ctx.CRED_SAME_ORIGIN)
 
+    def _cors_request_context(self, url_str: str, method: str,
+                              headers: dict | None,
+                              ) -> "_rc.RequestContext | None":
+        """R7-S02 第 3/5 点 — in-page fetch/XHR 的发送前判定 context。
+
+        按 destination（fetch / xhr）+ 目标 URL + 文档 origin 构造
+        一个 :class:`_rc.RequestContext`，让 :meth:`HttpClient.get`
+        走 :func:`_rc.evaluate_request`（发送前：scheme / 混合内容 /
+        CSP / 跨源 CORS 标记）。跨源 opaque 响应会被标记
+        ``opaque_response=True``（请求合法但脚本读不到 body/头），
+        跨源 cors 标记 ``requires_acao=True``（响应须带匹配 ACAO，
+        由响应到达时经 :func:`_rc.validate_preflight_response` 复核）。
+        无文档 URL 时返回 None（退化为旧语义，不判定）。
+        """
+        if not self._document_url:
+            return None
+        dest = _rc.DEST_FETCH if method in ("GET", "HEAD") \
+            else _rc.DEST_XHR
+        doc_origin = _rc._origin_of(self._document_url)
+        if not doc_origin:
+            return None
+        return _rc.context_for_destination(
+            doc_origin, url_str, dest,
+            base_url=self._document_url)
+
     def fetch(self, url: str, method: str = "GET",
               body: "str | bytes | None" = None,
               headers: "dict | None" = None) -> "HttpResponse | None":
@@ -2181,10 +2206,17 @@ class FetchTransport:
             # 3xx body).  Network-layer errors → None; HTTP error
             # statuses are returned as real responses (the engine
             # rejects the promise / fires onerror on !ok).
+            # R7-S02 第 3/5 点 — 跨源 fetch 走 evaluate_request 发送前
+            # 判定（scheme / 混合内容 / 跨源 CORS 标记）：opaque 响应
+            # 在决策层已标记，被禁请求不发包。POST 路径的预检留活
+            # 显示批次（本批 GET/HEAD 先接上）。
+            _url_str = url.to_string() if isinstance(url, URL) else str(url)
+            _rc_ctx = self._cors_request_context(_url_str, m, headers)
             if m in ("GET", "HEAD"):
-                return self._client.get(url, headers=dict(headers or {}) or None,
-                                        follow_redirects=True,
-                                        cookie_context=ctx)
+                return self._client.get(
+                    url, headers=dict(headers or {}) or None,
+                    follow_redirects=True,
+                    cookie_context=ctx, request_context=_rc_ctx)
             return self._client.post(
                 url, data=body if body is not None else "",
                 headers=dict(headers or {}),
