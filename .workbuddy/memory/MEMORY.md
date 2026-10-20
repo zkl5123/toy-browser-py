@@ -23,6 +23,20 @@
   例：`ui_a11y_bridge.py`（内部 a11y 树→UIA 控件契约 + name/role/value/state/focus 事件流 +
   地址栏 origin/最终URL/错误类型/TLS 可见，TLS 可信态**严格分离**于 https scheme，不推断）。
 
+## R7-S03 三个新模块（网络/存储语义的唯一来源，别再各写一套）
+- `network/cookie_context.py`：`CookieRequestContext`（不可变）——schemeful
+  same-site、`credentials` 门禁、逐跳 `for_redirect` 重算。**不得**再写
+  `{"is_cross_site": False, "is_top_level": True}` 这种缺省 dict；
+  `unknown_context()` = 没有归属信息就不发 cookie。
+- `network/cache_validity.py`：Vary 匹配 / `is_storable`（RFC 7234 §3.2
+  授权响应）/ `merge_304_headers`（以已存头为底覆盖 304 头）。缓存键含
+  凭据模式；已声明凭据严格不跨桶，未声明（""）才探测已知桶。
+- `scripting/storage_service.py`：`StorageArea`（增量配额 + 失败原子化 +
+  内部 dict 私有）与 `StorageService`（local=profile+origin，
+  session=tab+origin，opaque=每文档一份）。`web_api.Storage` 只是外观。
+  opaque token 用单调递增序号，**不要**用 `id(host)`（CPython 地址复用
+  会让两个文档错误共享分区，表现为偶发串数据）。
+
 ## TLS 契约（ui_a11y_bridge.AddressBarState）
 - `is_secure_display()` 仅当 `scheme_is_https()` **且** `tls_trusted==TLS_TRUSTED` 才显示安全；
   二者是独立字段，http 永不安全。审计 §229 明确禁止"由 URL 是否 https 推断可信"。
