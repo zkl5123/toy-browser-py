@@ -378,8 +378,17 @@ def main() -> int:
                 if _VERBOSE:
                     print(f"  skip[{mod_name}] {name}: {e}")
             except Exception as e:  # noqa: BLENT0
-                results.append((f"{mod_name}::{name}", _FAIL, repr(e),
-                                time.time() - tt))
+                # R7-Q01 第 6 条 — 异常栈全文进 detail（JSON 携带，
+                # JUnit 摘要）。repr(e) 前缀保留单行可读摘要，
+                # 换行后附 traceback.format_exc()，机器可读报告
+                # 里能看到完整栈。
+                import traceback as _tb
+                results.append(
+                    (f"{mod_name}::{name}", _FAIL,
+                     repr(e) + "\n--- traceback ---\n"
+                     + "".join(_tb.format_exception(type(e), e,
+                                                    e.__traceback__)),
+                     time.time() - tt))
                 if _VERBOSE:
                     import traceback
                     print(f"  FAIL [{mod_name}] {name}: {e}")
