@@ -1663,8 +1663,8 @@ def test_p19_kinsoku_latin_brackets():
             if line[0] in ")}]":
                 # Allow only if the whole line is just the bracket
                 # (i.e. it was pulled onto an otherwise-empty line).
-                assert len(line.strip()) == 1 or True, \
-                    f"bracket at line start: {line!r}"
+                assert len(line.strip()) == 1, \
+                    f"bracket at line start (whole line is {line!r})"
 
 
 

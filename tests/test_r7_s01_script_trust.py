@@ -219,7 +219,11 @@ def test_gate_counters_and_trail_bounded():
     for i in range(400):
         g.allow_origin(f"https://o{i}.test", reason="bulk")
     assert len(g.audit_trail()) <= 256, "审计轨迹必须有界"
-    assert "deny" in [e["kind"] for e in g.audit_trail()] or True
+    kinds = [e["kind"] for e in g.audit_trail()]
+    # 有界截断后轨迹非空且条目结构合法（kind 取自固定枚举）。
+    assert len(kinds) > 0, "有界轨迹不得为空"
+    assert all(k in ("init", "policy", "grant", "revoke") for k in kinds), \
+        f"轨迹 kind 必须合法: {set(kinds)}"
 
 
 @_reg
