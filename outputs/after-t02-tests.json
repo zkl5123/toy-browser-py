@@ -1,0 +1,74 @@
+{
+  "mode": "only(test_t02_font_placement)",
+  "environment": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "executable": "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "tkinter": true
+  },
+  "counts": {
+    "PASS": 9,
+    "FAIL": 0,
+    "ERROR": 0,
+    "SKIP": 0,
+    "TIMEOUT": 0
+  },
+  "total": 9,
+  "duration_s": 0.012,
+  "tests": [
+    {
+      "id": "test_t02_font_placement::test_glyphmask_has_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_glyphmask_explicit_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.97
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_zero_offsets_preserve_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.987
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_uses_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_zero_offsets_matches_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_anchors_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.963
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_consistent_across_chars",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.996
+    },
+    {
+      "id": "test_t02_font_placement::test_curve_path_aligned_lsb",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.956
+    }
+  ]
+}

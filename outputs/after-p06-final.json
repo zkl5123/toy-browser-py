@@ -1,0 +1,446 @@
+{
+  "mode": "only(test_gpu_glyph_atlas,test_gpu_rasterize,test_r7_p02_gpu,test_rasterize_cpu,test_t02_font_placement)",
+  "environment": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "executable": "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "tkinter": true
+  },
+  "counts": {
+    "PASS": 70,
+    "FAIL": 1,
+    "ERROR": 0,
+    "SKIP": 0,
+    "TIMEOUT": 0
+  },
+  "total": 71,
+  "duration_s": 44.053,
+  "tests": [
+    {
+      "id": "test_gpu_glyph_atlas::test_create_backend_glyph_atlas_capacity_passthrough",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1833.32
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_capacity_zero_unlimited",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.543
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_describe_diagnostic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_different_keys_distinct",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_hit_dedupe_by_key",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_no_gpu_logical_form",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_prepare_preresolves",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_refcount_prevents_lru_eviction",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_release_removes_entry",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.012
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_uv_query",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_glyph_atlas_property",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 793.433
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_render_prepares_glyph_atlas",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 10043.994
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_render_reuses_glyph_across_frames",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 16722.96
+    },
+    {
+      "id": "test_gpu_rasterize::test_acquire_wgpu_device_returns_device_or_none",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1662.179
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpu_backend_reports_real_gpu_state",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1717.737
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpu_backend_render_uploads_texture",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1119.016
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpu_backend_verify_frame_pixel_parity",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2038.924
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpu_backend_snapshot_reads_back",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 969.019
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpurrasterizer_upload_and_readback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 884.181
+    },
+    {
+      "id": "test_gpu_rasterize::test_create_backend_gpu_returns_real_when_available",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1646.839
+    },
+    {
+      "id": "test_gpu_rasterize::test_create_backend_gpu_injected_device",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 995.113
+    },
+    {
+      "id": "test_gpu_rasterize::test_gpu_backend_describe_diagnostic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 907.179
+    },
+    {
+      "id": "test_r7_p02_gpu::test_img_key_content_hash",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_p02_gpu::test_atlas_rgba_real_pixels",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 43.564
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_distinguishes_codepoint",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 28.216
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_distinguishes_family",
+      "status": "FAIL",
+      "detail": "AssertionError(\"'A' in monospace vs serif must differ\")",
+      "duration_ms": 21.814
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_bold_synthetic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 81.21
+    },
+    {
+      "id": "test_rasterize_cpu::test_canvas_fill_rect_matches_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_canvas_transparent_noop",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_canvas_semi_transparent_blend",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_canvas_bounds_clamp",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_canvas_to_bitmap_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_to_cpu_image_matches_pe",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 23.806
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_to_cpu_image_returns_cpuimage",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.516
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_direct_matches_pe",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 32.933
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_direct_vs_to_cpu_image_agree",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 40.699
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_matches_detects_mismatch",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.04
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_matches_size_mismatch",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_matches_tolerant",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_odd_width",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_custom_stride",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_transparent_img_blit",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpuimage_ppm_bytes_header",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.896
+    },
+    {
+      "id": "test_rasterize_cpu::test_full_page_rasterize_match",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 147.218
+    },
+    {
+      "id": "test_rasterize_cpu::test_clip_viewport_matches_bitmap_clip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.059
+    },
+    {
+      "id": "test_rasterize_cpu::test_clip_viewport_clamp",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_image_ppm_bytes_match_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 73.266
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_image_png_bytes_match_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 322.685
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_image_raw_rows_match_continuous_rows",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 17.882
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_image_nonwhite_count_match_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 15.759
+    },
+    {
+      "id": "test_rasterize_cpu::test_render_document_to_cpu_image_match_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 327.302
+    },
+    {
+      "id": "test_rasterize_cpu::test_render_document_with_event_to_cpu_image",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 68.016
+    },
+    {
+      "id": "test_rasterize_cpu::test_render_document_with_click_to_cpu_image",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 39.071
+    },
+    {
+      "id": "test_rasterize_cpu::test_main_write_image_dispatch",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 31.699
+    },
+    {
+      "id": "test_rasterize_cpu::test_refresh_canvas_prefers_cpuimage_when_dl_cached",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 122.067
+    },
+    {
+      "id": "test_rasterize_cpu::test_refresh_canvas_falls_back_to_bitmap_without_dl",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.005
+    },
+    {
+      "id": "test_rasterize_cpu::test_refresh_canvas_bitmap_none_early_return",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_c02_refresh_canvas_cpu_fallback_to_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_cpu_image_bitmap_view_read_write",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_to_canvas_matches_rasterize",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 165.28
+    },
+    {
+      "id": "test_rasterize_cpu::test_rasterize_to_canvas_odd_width_stride",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 100.655
+    },
+    {
+      "id": "test_rasterize_cpu::test_gui_c02_rasterize_uses_canvas_path",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 214.347
+    },
+    {
+      "id": "test_t02_font_placement::test_glyphmask_has_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_glyphmask_explicit_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 154.632
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_zero_offsets_preserve_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 145.165
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_uses_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_zero_offsets_matches_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_anchors_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 149.029
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_consistent_across_chars",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 175.75
+    },
+    {
+      "id": "test_t02_font_placement::test_curve_path_aligned_lsb",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 154.247
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+{
+  "mode": "only(test_gpu_glyph_atlas,test_p06_glyph_atlas_ttf,test_r7_p02_gpu,test_t02_font_placement)",
+  "environment": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "executable": "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "tkinter": true
+  },
+  "counts": {
+    "PASS": 29,
+    "FAIL": 1,
+    "ERROR": 0,
+    "SKIP": 4,
+    "TIMEOUT": 0
+  },
+  "total": 34,
+  "duration_s": 30.181,
+  "tests": [
+    {
+      "id": "test_gpu_glyph_atlas::test_create_backend_glyph_atlas_capacity_passthrough",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1560.577
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_capacity_zero_unlimited",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.978
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_describe_diagnostic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_different_keys_distinct",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_hit_dedupe_by_key",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_no_gpu_logical_form",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_prepare_preresolves",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_refcount_prevents_lru_eviction",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.975
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_release_removes_entry",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_glyph_atlas_uv_query",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_glyph_atlas_property",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 761.15
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_render_prepares_glyph_atlas",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 9947.218
+    },
+    {
+      "id": "test_gpu_glyph_atlas::test_gpu_backend_render_reuses_glyph_across_frames",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 16572.954
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_bridge_returns_rgba8_square",
+      "status": "SKIP",
+      "detail": "arial not registered",
+      "duration_ms": 137.808
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_bridge_cjk_not_ascii_alias",
+      "status": "SKIP",
+      "detail": "arial not registered",
+      "duration_ms": 138.462
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_bridge_size_distinguishes_16_17",
+      "status": "SKIP",
+      "detail": "arial not registered",
+      "duration_ms": 135.869
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_bridge_missing_face_returns_none",
+      "status": "FAIL",
+      "detail": "AssertionError('None face must yield None rgba')",
+      "duration_ms": 6.931
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_atlas_default_family_uses_built_in_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 11.822
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_atlas_real_family_prefers_ttf",
+      "status": "SKIP",
+      "detail": "arial not registered",
+      "duration_ms": 135.775
+    },
+    {
+      "id": "test_p06_glyph_atlas_ttf::test_atlas_no_ttf_falls_back_to_bitmap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_p02_gpu::test_img_key_content_hash",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_p02_gpu::test_atlas_rgba_real_pixels",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.964
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_distinguishes_codepoint",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_distinguishes_family",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 11.348
+    },
+    {
+      "id": "test_r7_p02_gpu::test_glyph_mask_bold_synthetic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_glyphmask_has_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.976
+    },
+    {
+      "id": "test_t02_font_placement::test_glyphmask_explicit_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 145.845
+    },
+    {
+      "id": "test_t02_font_placement::test_rasterize_mask_zero_offsets_preserve_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 142.885
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_uses_bitmap_offsets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_blit_zero_offsets_matches_legacy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_anchors_lsb_ascent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 145.494
+    },
+    {
+      "id": "test_t02_font_placement::test_get_glyph_mask_consistent_across_chars",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 170.696
+    },
+    {
+      "id": "test_t02_font_placement::test_curve_path_aligned_lsb",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 150.086
+    }
+  ]
+}
