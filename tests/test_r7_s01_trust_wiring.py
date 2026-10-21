@@ -196,6 +196,69 @@ def test_default_gate_is_shared_singleton():
     st.reset_default_script_trust_gate()
 
 
+# ---------------------------------------------------------------------------
+# S01 第 4 点 — 可观测闭环：默认禁用不可信远程脚本的判定能从入口审计
+# ---------------------------------------------------------------------------
+
+@_reg
+def test_render_default_call_without_diagnostics_is_backward_compatible():
+    """不传 *diagnostics* 时 render_document_from_url 仍正常返回 Bitmap。
+
+    S01 第 4 点的可观测旁路是**可选**的，既有调用（未带 diagnostics）
+    的返回契约（Bitmap）不得改变。
+    """
+    from toy_browser.app import browser
+    from test_helpers import _p22_start_server
+
+    html = (b"<html><body><p>x</p></body></html>")
+    srv, port = _p22_start_server({"/": (200, "text/html", html)})
+    try:
+        bm = browser.render_document_from_url(
+            f"http://127.0.0.1:{port}/", width=200, height=150)
+    finally:
+        srv.shutdown()
+    assert bm is not None, "默认调用必须返回 Bitmap（向后兼容）"
+
+
+@_reg
+def test_diagnostics_delivers_loopback_trust_decision():
+    """回环（可信源）经 *diagnostics* 回调投递 allowed=True 判定。"""
+    from toy_browser.app import browser
+    from test_helpers import _p22_start_server
+
+    html = (b"<html><body><p id=out>BEFORE</p>"
+            b"<script>document.getElementById('out').textContent='AFTER';"
+            b"</script></body></html>")
+    srv, port = _p22_start_server({"/": (200, "text/html", html)})
+    events: list = []
+    try:
+        browser.render_document_from_url(
+            f"http://127.0.0.1:{port}/", width=200, height=150,
+            diagnostics=lambda d, kind, url: events.append((kind, d, url)))
+    finally:
+        srv.shutdown()
+    assert events, "diagnostics 回调必须被调用（回环渲染后）"
+    kind, decision, url = events[0]
+    assert kind == "script_trust", f"kind 须为 script_trust：{kind}"
+    assert decision.allowed, f"回环须放行：{decision.describe()}"
+    assert url.startswith("http://127.0.0.1:"), f"须用真实文档 URL：{url}"
+
+
+@_reg
+def test_remote_url_default_denial_is_observable():
+    """S01 第 4 点核心：远程 URL 默认拒收，判定可从入口审计。
+
+    不发起真实远程请求——只验证**默认判定**对远程源返回
+    ``allowed=False``（即"默认禁用不可信远程脚本"这一事实可被调用方
+    观测，不必依赖发请求）。
+    """
+    gate = st.default_script_trust_gate()
+    d = gate.decide("http://example.test/page")
+    assert not d.allowed, f"远程须默认拒收：{d.describe()}"
+    assert d.trust == st.TRUST_REMOTE
+    assert "not trusted by default" in d.reason
+
+
 if __name__ == "__main__":
     passed = failed = skipped = 0
     for name, fn in TESTS:

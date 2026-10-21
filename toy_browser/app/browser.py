@@ -55,6 +55,7 @@ def render_document_from_url(
     use_cache: "str | bool" = False,
     progress: "net.LoadEventSink | None" = None,  # noqa: F821
     max_script_redirects: int = 3,
+    diagnostics=None,
 ) -> Bitmap:
     """P22 — load an http(s) *url* and render it, plus fetch its
     subresources (``<link rel=stylesheet>`` / ``<img src>``) against
@@ -80,6 +81,14 @@ def render_document_from_url(
     * P23.4 — when *progress* is a :class:`net.LoadEventSink`, each
       fetch emits start/document/subresource/done events (drive a GUI
       progress bar).
+    * R7-S01 — *diagnostics* (optional callable) receives the remote
+      script trust decision ``(ScriptDecision, kind="script_trust",
+      url=<doc>)`` right after the gate is consulted.  It lets the
+      caller audit "is the untrusted-remote-script default in
+      effect?" from the render entry point — a remote URL denied by
+      the gate is still rendered (its static markup), but its scripts
+      never run; without this hook that denial is invisible in the
+      returned :class:`Bitmap`.
 
     A top-level network failure raises :class:`net.FetchError`
     (including :class:`net.RedirectLoop`); the caller renders the
@@ -234,6 +243,16 @@ def render_document_from_url(
     _doc_url = resp.final_url or url
     _trust = _trust_mod.default_script_trust_gate().decide(_doc_url)
     host.script_trust_decision = _trust
+    # R7-S01 第 4 点 — 可观测闭环：把"脚本被闸门放行/拒收"这一**决策
+    # 事实**投给 *diagnostics* 回调（可选，None 时不投），让调用方
+    # 从渲染入口就能审计"默认禁用不可信远程脚本"是否生效——否则
+    # 拒收只发生在内部（Bitmap 返回里看不出"脚本没跑是因为被拒"）。
+    if diagnostics is not None:
+        try:
+            diagnostics(_trust, kind="script_trust", url=_doc_url)
+        except Exception:
+            # 诊断回调异常不影响渲染主链（P13 不崩）。
+            pass
     if _trust.allowed:
         host.execute_scripts_in_order(script_cache, csp_directives)
 

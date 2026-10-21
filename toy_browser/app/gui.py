@@ -53,6 +53,13 @@ class PageInstance:
         self.title: str = "New Tab"
         self.bitmap: paint.Bitmap | None = None
         self._full_bitmap: paint.Bitmap | None = None  # P33.R2
+        # R7-S01 第 4 点 — 可观测闭环（与 CLI render_document_from_url 的
+        # *diagnostics* 回调对称）：本次 load_url 的远程脚本信任判定挂在
+        # 页面实例上（ScriptDecision，None = 尚未网络导航）。调用方可
+        # 据此审计"默认禁用不可信远程脚本"是否生效——远程页被拒收时
+        # 静态 markup 仍渲染，但其脚本从未执行，这一事实不再只藏在
+        # host.script_trust_decision 里。
+        self.last_script_trust_decision: object = None
         # R7-S03 第 5 点 — sessionStorage 的分区身份（tab_id）。由
         # BrowserWindow 在标签建立时写入（``_tab_ids[idx]``）；宿主用
         # 它向 StorageService 要"本标签"的 session 分区。
@@ -223,6 +230,11 @@ class PageInstance:
         self.active_form_field = None
         self._form_states = {}
         self._interaction_state = {}
+        # R7-S01 第 4 点 — about / error / 本地页等非网络导航没有
+        # "远程脚本信任判定"，复位为 None（不残留上个文档的判定，
+        # 否则调用方会误读"本页脚本被拒收"而实际本页根本没有脚本闸门
+        # 判定发生）。
+        self.last_script_trust_decision = None
 
     def scroll_to(self, yoffset: int) -> None:
         """P33.R2 — scroll the page to *yoffset* pixels from the top.
@@ -999,6 +1011,11 @@ class PageInstance:
                 from toy_browser.scripting import script_trust as _trust_mod
                 _trust = _trust_mod.default_script_trust_gate().decide(url)
                 _host.script_trust_decision = _trust
+                # R7-S01 第 4 点 — 可观测闭环：把本次判定也投到页面
+                # 实例（与 CLI *diagnostics* 回调对称），调用方可从
+                # ``PageInstance.last_script_trust_decision`` 审计
+                # "默认禁用不可信远程脚本"是否生效。
+                self.last_script_trust_decision = _trust
                 if _trust.allowed:
                     _host.execute_scripts_in_order(_script_cache,
                                                    _csp_directives)
