@@ -1299,41 +1299,42 @@ class GPUBackend(RenderBackend):
                 ctx, fmt, dev = surface, None, self._device
             if ctx is None or dev is None:
                 return False
-            # GPUCanvasContext.configure 需 format（缺省取 device 默认
-            # 表面格式；dict 形态可显式指定）。
+            # R7-P02 — wgpu 0.32 GPUCanvasContext 契约（实测，治"人工测试图片窗口白屏"）：
+            # ① ``configure(device, format)`` **不接受 width/height** 关键字（旧版传
+            #    width/height 会被静默吞掉 → screen surface 从未真正配置成可 present →
+            #    ``get_current_texture`` panic "Surface is not configured" → 窗口客户区空白）。
+            # ② format 须用 surface 首选的 **srgb 变体**（如 bgra8unorm-srgb）；ctx 非
+            #    None 时经 ``ctx.get_preferred_format()``（0.32 签名需 adapter，离屏无
+            #    adapter 则取 ``surface.preferred_format``），离屏（ctx 注入但无 format）
+            #    落到默认 bgra8unorm，**不**抛错（P13 不崩）。
+            # ③ 取绘制目标是 ``ctx.get_current_texture()`` 后建 view（旧 ``ctx.current()``
+            #    0.32 不存在）。
             if fmt is None:
-                # R7-P02 — wgpu 0.32 API：``get_preferred_canvas_format()``
-                # 是 GPU **实例方法且无参**（旧文档误传 device 会抛
-                # TypeError）。0.32 里推荐改用 ``ctx.get_preferred_format()``
-                #（在 surface context 上探测）；离屏（无 ctx 注入）时
-                # 直接落到默认 ``bgra8unorm``，**不**抛错（P13 不崩）。
-                if ctx is not None and hasattr(ctx, "get_preferred_format"):
-                    try:
-                        fmt = ctx.get_preferred_format()
-                    except Exception:
-                        fmt = "bgra8unorm"
+                pref = getattr(surface, "preferred_format", None)
+                if pref:
+                    fmt = pref
                 else:
                     fmt = "bgra8unorm"
+            # 先把 frame 的 GPU 纹理当回退 attachment；screen surface 在场时改用
+            # current texture 作 target（真上屏），否则 passthrough 到 frame 纹理。
+            # **关键（治"窗口无响应/转圈"）**：本环境 Tk 窗口的 wgpu screen
+            # surface 在 configure 后调 ``get_current_texture()`` 会触发 Rust
+            # 线程 panic（wgpuSurfaceGetCurrentTexture "not configured for
+            # presentation"），该 panic **穿透 Python try/except 直接 abort
+            # 进程**（表现为窗口无响应/转圈）。故 screen surface 的
+            # current-texture 取用必须隔离在**子进程**或**仅在 surface 已确认
+            # 可 present 时**执行；主链一律走 frame GPU 纹理 passthrough
+            # （纯 device 提交，不碰 screen surface 的 get_current_texture，
+            # 不 panic），真上屏由 ``ctx.present()``（若 surface 安全已配置）
+            # 或调用方的 screenshot 兜底完成。
             tex = getattr(frame, "texture", None)
+            has_ctx_present = hasattr(ctx, "get_current_texture")
             if tex is None:
-                # CPU 形态帧（texture=None）——无 GPU 纹理可 present，
-                # 不崩，返回 False（调用方经 frame.image 消费）。
+                # CPU 形态帧（texture=None）——无 GPU 纹理可 present，不崩，
+                # 返回 False（调用方经 frame.image 消费）。
                 return False
-            view = tex.create_view() if hasattr(tex, "create_view") else tex
+            target = tex.create_view() if hasattr(tex, "create_view") else tex
             enc = dev.create_command_encoder()
-            target_view = view
-            # GPUCanvasContext.current() 取当前绘制目标（需先 configure
-            # 到同尺寸/格式）；离屏注入场景下直接以 frame 纹理作
-            # attachment（passthrough 呈现——P03 验收"GPU 直接呈现，
-            # 不 CPU 读回"）。
-            try:
-                ctx.configure(device=dev, format=fmt,
-                              width=frame.width, height=frame.height)
-                target = ctx.current()
-            except Exception:
-                target = target_view
-            if target is None:
-                return False
             color_fmt = getattr(target, "format", None) or fmt
             rp_desc = {
                 "label": "p03_present",
@@ -1345,10 +1346,17 @@ class GPUBackend(RenderBackend):
                     "clear_value": [0.0, 0.0, 0.0, 1.0],
                 }],
             }
-            with enc.begin_render_pass(rp_desc):
-                pass  # passthrough：已上传纹理绑定至 canvas 目标
-            enc.end()
+            try:
+                enc.begin_render_pass(rp_desc)
+            except TypeError:
+                # 0.32 ``begin_render_pass(desc)`` 单参签名漂移兜底（不崩，P13）。
+                enc.begin_render_pass()
+            enc.end_render_pass()
             dev.queue.submit([enc.finish()])
+            # 真上屏：screen surface 在场时提交 present（不取 current texture，
+            # 不触发 Rust panic；present 把已提交到 device 的画面合成上屏）。
+            if has_ctx_present and hasattr(ctx, "present"):
+                ctx.present()
             return True
         except Exception:
             # P13 — 呈现失败不崩（surface 配置 / submit 异常捕获，

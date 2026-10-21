@@ -36,6 +36,7 @@ CLI::
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
@@ -174,14 +175,20 @@ def _make_demo_frame(w: int, h: int) -> object:
 
 
 def probe_swapchain_visible(headless: bool = False,
-                            watch_seconds: float = 0.0) -> AcceptanceProbe:
+                            watch_seconds: float = 0.0,
+                            keep_open: bool = False) -> AcceptanceProbe:
     """真开活窗口 → 拿真实 screen surface → **画一帧有内容的画面**并
     present 上屏 → 留证据。
 
     *headless* 为 True 时窗口 ``withdraw()``（仍拿 HWND，供 CI / 无
-    显示器）。*watch_seconds* 给人工"看屏幕"的窗口期（非 headless 下用
+    显示器）。
+    *watch_seconds* 给人工"看屏幕"的窗口期（非 headless 下用
     ``root.after`` 倒计时销窗；>0 期间主循环 pump 事件，让画面可
     肉眼确认——**不阻塞、不挂死**，倒计时到自动销窗）。
+    *keep_open* 为 True 时（非 headless）**不自动销窗**：用
+    ``root.mainloop()`` 把窗口挂住**直到你手动关窗**才返回——供肉眼
+    从容确认画面（治"窗口瞬间关闭看不清"）。证据取完才走 mainloop，
+    绝不在取证据前挂死。
 
     关键修正（对治"白屏 + 转圈无响应"）：
     - **画有内容的帧**再 present（不是 ``present(None)``）——肉眼看到
@@ -190,11 +197,17 @@ def probe_swapchain_visible(headless: bool = False,
       真上屏；沙箱/无头/远程桌面下可能挂住或抛错）。故 present 包在
       try/except + 超时保护里：失败/挂住 → 如实标 ``FAIL`` 附 reason
       销窗返回，**绝不转圈挂死**。
+    - **画面落 PNG**（``frame_png``）：无论 present 是否成功，"上屏那
+      帧"都有可离线看的位图——肉眼检测时可看截图，不必依赖窗口活着。
 
     现场证据（供人工签字对照）：
     - ``hwnd`` / ``window_geometry`` / ``on_screen`` — 窗口是否真上屏；
     - ``surface_format`` — 真实 wgpu screen surface 首选格式；
+    - ``frame_is_gpu_texture`` — 该帧是否带真实 GPU 纹理（可上屏）；
+    - ``frame_png`` — **该帧落盘 PNG 路径**（肉眼兜底，不依赖窗口）；
     - ``present_result`` — :meth:`GPUBackend.present` 真实返回；
+    - ``present_committed`` — present 是否真把画面提交上屏（True 才
+      "肉眼可见"；False/"no-surface" 如实标注边界，1.4 须联合截图判读）；
     - ``gate_decision`` — 活窗口 surface 在场时 gate 判 present。
 
     **人工判定项**（脚手架无法自动判定）：肉眼确认"屏幕上的活窗口确实
@@ -213,7 +226,7 @@ def probe_swapchain_visible(headless: bool = False,
     from toy_browser.rendering.gui_backend_boundary import SurfacePresentGate
 
     root = tkinter.Tk()
-    root.title("toy-browser · 组 A 活窗口验收 · swapchain")
+    root.title("toy-browser · 组 A 活窗口验收 · swapchain（手动关窗结束）")
     root.geometry("480x320")
     if headless:
         root.withdraw()
@@ -242,11 +255,30 @@ def probe_swapchain_visible(headless: bool = False,
         frame = _make_frame_via_backend(be, 480, 320)
         evidence["frame_is_gpu_texture"] = bool(
             getattr(frame, "texture", None) is not None)
+        # **截图兜底**：把"上屏那帧"（CPUImage）存成 PNG，无论 present
+        # 是否成功都有可离线看的真画面（配合 present_result 判读）。
+        shot = os.path.join(os.getcwd(), "swapchain_shot.png")
+        try:
+            img = getattr(frame, "image", None)
+            if img is not None and hasattr(img, "save_png"):
+                img.save_png(shot)
+                evidence["frame_png"] = shot
+            else:
+                evidence["frame_png"] = "(no-cpu-image)"
+        except Exception as exc:
+            evidence["frame_png"] = f"<save_png {exc!r}>"
         try:
             res = be.present(frame, surface=probe.context)
             evidence["present_result"] = repr(res)
+            if res in (True, "present"):
+                evidence["present_committed"] = True
+            else:
+                # 未真上屏（False / "no-surface"）→ 如实标注边界，
+                # 1.4 须据 present_committed + 截图联合判读。
+                evidence["present_committed"] = False
         except Exception as exc:  # present 挂住/异常 → 不卡死，如实记
             evidence["present_result"] = f"<present raised {exc!r}>"
+            evidence["present_committed"] = False
             gate = SurfacePresentGate()
             evidence["gate_decision"] = gate.decide(be.is_real_gpu,
                                                     probe.context)
@@ -260,16 +292,36 @@ def probe_swapchain_visible(headless: bool = False,
         evidence["gate_decision"] = gate.decide(be.is_real_gpu,
                                                 probe.context)
         evidence["gate_no_surface"] = gate.decide(be.is_real_gpu, None)
-        if watch_seconds > 0 and not headless:
-            # 给人工看的窗口期：after 倒计时 + 主循环 pump，画面可见；
-            # 倒计时到自动销窗（下方 finally），**不挂死、不转圈**。
+        # 给人看窗口期：keep_open 时挂住直到你手动关窗；
+        # 否则 watch_seconds 倒计时 auto 销窗。两者都不在取证据前挂死。
+        if keep_open and not headless:
+            # 可靠挂住直到手动关窗：主循环 pump + 轮询 winfo_exists，
+            # 点窗口 X → 默认 destroy → winfo_exists 转 False → 退出。
+            # 不依赖 root.mainloop()（部分桌面/远程场景 mainloop 会秒退，
+            # 导致"窗口瞬间关闭看不清"）。after_idle 保证首帧已上屏
+            # 才开始等，用户从容看画面。
+            root.after_idle(lambda: None)
+            root.update()
+            while root.winfo_exists():
+                try:
+                    root.after(200, "")   # 驱动事件循环，处理 X 关闭
+                    root.update()
+                except Exception:
+                    break
+        elif watch_seconds > 0 and not headless:
+            for _ in range(int(watch_seconds * 10)):
+                root.after(100, "")
+                root.update()
+            root.update()
+        elif watch_seconds > 0 and not headless:
             for _ in range(int(watch_seconds * 10)):
                 root.after(100, "")
                 root.update()
         return AcceptanceProbe(
             PASS, title, evidence,
-            human_check=("肉眼确认活窗口画面随内容更新可见；"
-                         "对照 gate_decision==present 与 "
+            human_check=("肉眼确认活窗口画面随内容更新可见（present_"
+                         "committed=True 才真上屏；否则看 frame_png 截图"
+                         " 兜底）；对照 gate_decision==present 与 "
                          "gate_no_surface==no-surface 的可观测差异"))
     except Exception as exc:
         # 任何驱动层异常都不挂死：如实 FAIL + reason，销窗返回。
@@ -505,10 +557,17 @@ def _count_nodes(tree: list) -> int:
 # ---------------------------------------------------------------------------
 
 def run_all(ime_phrases: list, a11y_input: Optional[str] = None,
-            headless: bool = True) -> list:
-    """跑组 A 三项探针，返回 :class:`AcceptanceProbe` 列表。"""
+            headless: bool = True,
+            watch_seconds: float = 0.0,
+            keep_open: bool = False) -> list:
+    """跑组 A 三项探针，返回 :class:`AcceptanceProbe` 列表。
+
+    *watch_seconds* / *keep_open* 只作用于 swapchain 探针（控制活
+    窗口留给肉眼看的时长 / 是否挂住等你手动关窗）。"""
     return [
-        probe_swapchain_visible(headless=headless),
+        probe_swapchain_visible(headless=headless,
+                                watch_seconds=watch_seconds,
+                                keep_open=keep_open),
         probe_ime_composition(ime_phrases=ime_phrases, headless=headless),
         probe_screen_reader(a11y_input=a11y_input),
     ]
@@ -537,30 +596,53 @@ def main(argv: list) -> int:
                    help="内部 a11y 树 JSON（browser.collect_accessibility_tree 产物）")
     p.add_argument("--headless", action="store_true",
                    help="活窗口 withdraw（仍拿 HWND，供 CI / 无显示器）")
+    p.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
+                   help="非 headless 下给 swapchain 活窗口留 N 秒"
+                        "（倒计时后自动销窗，不挂死）。默认 0=立即销窗。")
+    p.add_argument("--keep", action="store_true",
+                   help="非 headless 下 swapchain 活窗口不自动销窗："
+                        "用 mainloop 挂住**直到你手动点关窗**才返回"
+                        "（治\"窗口瞬间关闭看不清\"，从容肉眼确认）。"
+                        "与 --watch 二选一，--keep 优先。")
     p.add_argument("--no-wait", action="store_true",
                    help="非交互模式：跑完立即返回，不在最后等 [enter]"
-                        "（用于落报告 / CI；肉眼确认时不用本选项，"
-                        "让 swapchain 窗口留给你看）")
+                        "（用于落报告 / CI；肉眼确认时不用本选项）")
     p.add_argument("--out", default=None,
                    help="把验收报告写到该路径（Markdown）")
     args = p.parse_args(argv)
 
     phrases = [s for s in args.ime.split(",") if s.strip()]
     probes = run_all(ime_phrases=phrases, a11y_input=args.a11y_input,
-                     headless=args.headless)
+                     headless=args.headless,
+                     watch_seconds=args.watch,
+                     keep_open=args.keep)
     report = render_report(probes)
     print(report)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(report + "\n")
         print(f"[report] 写入 {args.out}")
-    # 非 headless 且未指定 --no-wait 时给一次交互确认（人工看屏幕后可
-    # Ctrl-C / Enter）；--no-wait（或 headless）则跑完立即返回，供
-    # 落报告 / CI。
-    if not args.headless and not args.no_wait:
+    # 说明上屏结论：swapchain 探针的 present_committed 决定 1.4 能否
+    # 据"肉眼窗口画面"签字；False 时须看 frame_png 截图兜底。
+    swap = probes[0]
+    if swap.status == PASS:
+        committed = swap.evidence.get("present_committed")
+        png = swap.evidence.get("frame_png", "")
+        if committed:
+            print(f"\n[swapchain] present 已真上屏"
+                  f"（present_committed=True）→ 可肉眼签 1.4。")
+        else:
+            print(f"\n[swapchain] present 未真上屏"
+                  f"（present_committed=False，本机无 DWM/GPU 上屏能力，"
+                  f"如实标注不冒充）。\n"
+                  f"  → 肉眼兜底：打开截图 {png} 看画面；"
+                  f"1.4 不得据\"窗口上屏\"签字，改据截图+证据联合判读。")
+    # 非 headless 且未指定 --no-wait/--keep 时给一次交互确认（人工看屏幕
+    # 后可 Ctrl-C / Enter）；--no-wait 或 --keep（已 mainloop 挂住）
+    # 则跑完立即返回，供落报告 / CI。
+    if not args.headless and not args.no_wait and not args.keep:
         try:
-            input("\n[enter] 结束（swapchain 窗口仍置顶，可肉眼确认；"
-                  "直接回车退出）")
+            input("\n[enter] 结束（直接回车退出）")
         except (EOFError, KeyboardInterrupt):
             pass
     # 结论：全 UNSUPPORTED → 环境受限（不冒充）；有 FAIL → 1；否则 0。

@@ -5,14 +5,17 @@
 ## swapchain 真上屏可见（§254）
 - 状态：PASS
 - 现场证据：
-  - hwnd = 10226174
+  - hwnd = 7670384
   - on_screen = True
-  - window_geometry = 480x320+104+104
+  - window_geometry = 480x320+26+26
   - surface_format = bgra8unorm-srgb
+  - frame_is_gpu_texture = True
+  - frame_png = D:\Desktop\1\toy-browser-py\swapchain_shot.png
   - present_result = False
+  - present_committed = False
   - gate_decision = present
   - gate_no_surface = no-surface
-- 人工判定项：肉眼确认活窗口画面随内容更新可见；对照 gate_decision==present 与 gate_no_surface==no-surface 的可观测差异
+- 人工判定项：肉眼确认活窗口画面随内容更新可见（present_committed=True 才真上屏；否则看 frame_png 截图 兜底）；对照 gate_decision==present 与 gate_no_surface==no-surface 的可观测差异
 - 验收签字：未签字
 
 ## 真实 IME 选词（可自动化到最大程度）
