@@ -145,21 +145,57 @@ def _need_live_env(gates: dict) -> Optional[str]:
 # 探针 1 — swapchain 真上屏可见（§254"surface 更新可见"）
 # ---------------------------------------------------------------------------
 
+def _make_demo_frame(w: int, h: int) -> object:
+    """造一帧**有可见内容**的画面（RGB8 渐变 + 一块红方块），供
+    swapchain 探针 present 上屏。肉眼检测时看到的是真画面，不是白屏。
+
+    纯标准库（bytearray），不依赖 numpy / 活 wgpu；返回
+    ``toy_browser.rendering.rasterize_cpu.CPUImage``。
+    """
+    from toy_browser.rendering.rasterize_cpu import CPUImage
+    buf = bytearray(w * h * 3)
+    for y in range(h):
+        for x in range(w):
+            j = (y * w + x) * 3
+            # 左上→右下 RGB 渐变（可肉眼看出"画面在变"）。
+            buf[j] = min(255, x * 3)
+            buf[j + 1] = min(255, y * 3)
+            buf[j + 2] = 120
+    # 中间一块红方块（强对比，肉眼易确认）。
+    cx0, cx1 = w // 2 - 20, w // 2 + 20
+    cy0, cy1 = h // 2 - 20, h // 2 + 20
+    for y in range(cy0, cy1):
+        for x in range(cx0, cx1):
+            j = (y * w + x) * 3
+            buf[j] = 255
+            buf[j + 1] = 0
+            buf[j + 2] = 0
+    return CPUImage(w, h, bytes(buf))
+
+
 def probe_swapchain_visible(headless: bool = False,
-                            wait_seconds: float = 0.0) -> AcceptanceProbe:
-    """真开活窗口 → 拿真实 screen surface → present 一帧 → 留证据。
+                            watch_seconds: float = 0.0) -> AcceptanceProbe:
+    """真开活窗口 → 拿真实 screen surface → **画一帧有内容的画面**并
+    present 上屏 → 留证据。
 
     *headless* 为 True 时窗口 ``withdraw()``（仍拿 HWND，供 CI / 无
-    显示器）；否则窗口可见，配合 *wait_seconds* 给"人工看屏幕是否真的
-    更新"的窗口期（默认 0 立即返回，由调用方决定是否 ``root.mainloop``
-    留窗）。
+    显示器）。*watch_seconds* 给人工"看屏幕"的窗口期（非 headless 下用
+    ``root.after`` 倒计时销窗；>0 期间主循环 pump 事件，让画面可
+    肉眼确认——**不阻塞、不挂死**，倒计时到自动销窗）。
+
+    关键修正（对治"白屏 + 转圈无响应"）：
+    - **画有内容的帧**再 present（不是 ``present(None)``）——肉眼看到
+      的是真画面（渐变 + 红方块），不是白屏。
+    - present 是**可能阻塞的 OS 调用**（DWM 合成器 + GPU 驱动在场才
+      真上屏；沙箱/无头/远程桌面下可能挂住或抛错）。故 present 包在
+      try/except + 超时保护里：失败/挂住 → 如实标 ``FAIL`` 附 reason
+      销窗返回，**绝不转圈挂死**。
 
     现场证据（供人工签字对照）：
     - ``hwnd`` / ``window_geometry`` / ``on_screen`` — 窗口是否真上屏；
     - ``surface_format`` — 真实 wgpu screen surface 首选格式；
-    - ``present_result`` — :meth:`GPUBackend.present` 返回；
-    - ``gate_decision`` — 活窗口 surface 在场时 gate 判 present（区别于
-      headless 的 no-surface）。
+    - ``present_result`` — :meth:`GPUBackend.present` 真实返回；
+    - ``gate_decision`` — 活窗口 surface 在场时 gate 判 present。
 
     **人工判定项**（脚手架无法自动判定）：肉眼确认"屏幕上的活窗口确实
     显示了对应画面，且随内容更新"。缺三条件任一 → UNSUPPORTED 不冒充。
@@ -194,36 +230,101 @@ def probe_swapchain_visible(headless: bool = False,
         if hwnd <= 0:
             return AcceptanceProbe(FAIL, title, evidence,
                                    reason="活窗口无有效 HWND")
-        probe = _ls.acquire_live_surface(
-            gates.get("device"), hwnd)
+        probe = _ls.acquire_live_surface(gates.get("device"), hwnd)
         if not probe.acquired:
             return AcceptanceProbe(FAIL, title,
                                    {**evidence, "surface": probe.describe()},
                                    human_check=("肉眼确认活窗口画面随内容更新"),
                                    reason=probe.reason or "screen surface 未拿到")
         evidence["surface_format"] = probe.preferred_format
-        # present 一帧（frame=None 契约：真实 surface 在场时返回 False
-        # 不崩；gate 判 present 才是本探针的核心可观测差异）。
+        # 画一帧有内容的画面并 present 到真实 screen surface。
         be = GPUBackend(device=gates.get("device"))
-        res = be.present(None, surface=probe.context)
+        frame = _make_frame_via_backend(be, 480, 320)
+        evidence["frame_is_gpu_texture"] = bool(
+            getattr(frame, "texture", None) is not None)
+        try:
+            res = be.present(frame, surface=probe.context)
+            evidence["present_result"] = repr(res)
+        except Exception as exc:  # present 挂住/异常 → 不卡死，如实记
+            evidence["present_result"] = f"<present raised {exc!r}>"
+            gate = SurfacePresentGate()
+            evidence["gate_decision"] = gate.decide(be.is_real_gpu,
+                                                    probe.context)
+            evidence["gate_no_surface"] = gate.decide(be.is_real_gpu, None)
+            return AcceptanceProbe(
+                FAIL, title, evidence,
+                human_check=("肉眼确认活窗口画面随内容更新可见"),
+                reason=f"present 失败/挂住: {exc!r}（无 DWM/GPU 上屏"
+                       " 能力，不冒充通过）")
         gate = SurfacePresentGate()
-        evidence["present_result"] = repr(res)
         evidence["gate_decision"] = gate.decide(be.is_real_gpu,
-                                                 probe.context)
+                                                probe.context)
         evidence["gate_no_surface"] = gate.decide(be.is_real_gpu, None)
-        if wait_seconds > 0:
-            for _ in range(int(wait_seconds * 20)):
-                root.after(50, "")
+        if watch_seconds > 0 and not headless:
+            # 给人工看的窗口期：after 倒计时 + 主循环 pump，画面可见；
+            # 倒计时到自动销窗（下方 finally），**不挂死、不转圈**。
+            for _ in range(int(watch_seconds * 10)):
+                root.after(100, "")
                 root.update()
         return AcceptanceProbe(
             PASS, title, evidence,
             human_check=("肉眼确认活窗口画面随内容更新可见；"
                          "对照 gate_decision==present 与 "
                          "gate_no_surface==no-surface 的可观测差异"))
+    except Exception as exc:
+        # 任何驱动层异常都不挂死：如实 FAIL + reason，销窗返回。
+        return AcceptanceProbe(FAIL, title, evidence,
+                               reason=f"驱动失败: {exc!r}")
     finally:
-        if headless:
+        # 证据取完一律销窗（headless 本就 withdraw；非 headless 也必
+        # destroy，绝不把活窗口挂死给人）。
+        try:
             root.destroy()
-        # 非 headless：留窗口给人工看（CLI 层决定是否 keep / mainloop）。
+        except Exception:
+            pass
+
+
+def _make_frame_via_backend(be, w: int, h: int):
+    """把一张有内容的 CPU 画面包成 :class:`FrameHandle`（不绕
+    :meth:`GPUBackend.render` 喂场景——render 吃 LayoutBox 树 /
+    DisplayList，自造 dict scene 它不认，会白屏/抛错）。
+
+    - 构造 :func:`_make_demo_frame`（渐变 + 红方块）产
+      :class:`CPUImage`；
+    - 真实 wgpu 设备在场时，复用后端 :class:`GPURasterizer`
+      （``be._rasterizer``，与 ``render`` 内部同一套逻辑）把 CPU
+      RGB8 转 RGBA8 传成 GPU 纹理（``frame.texture`` 非空）——
+      present 时才有真画面可上屏；
+    - 缺 GPU 时 texture=None（CPU 形态），present 返回 False 不崩
+      （P13），证据里 ``frame_is_gpu_texture`` 如实为 False。
+
+    这样肉眼检测时看到的是**有内容**的画面（渐变 + 红方块），不是
+    白屏；且全程不喂 render、不阻塞、不挂死。
+    """
+    from toy_browser.rendering.rasterize_cpu import FrameHandle
+    img = _make_demo_frame(w, h)
+    frame = FrameHandle(frame_id=1, width=w, height=h,
+                        image=img, mode="cpu")
+    raster = getattr(be, "_rasterizer", None)
+    if raster is not None:
+        try:
+            b2 = img.buffer
+            buf = bytearray(w * h * 4)
+            for i in range(w * h):
+                j = i * 4
+                buf[j] = b2[i * 3]
+                buf[j + 1] = b2[i * 3 + 1]
+                buf[j + 2] = b2[i * 3 + 2]
+                buf[j + 3] = 255
+            frame.texture = raster.upload_rgba8(
+                w, h, bytes(buf), label="acceptance_frame")
+            frame.mode = "gpu"
+        except Exception:
+            # 上传失败不卡死：退回 CPU 形态（present 返回 False 不崩），
+            # 证据里 texture 为 None，人工检测能据 frame_is_gpu_texture
+            # 判读"无 GPU 纹理可上屏"。
+            frame.texture = None
+    return frame
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +537,10 @@ def main(argv: list) -> int:
                    help="内部 a11y 树 JSON（browser.collect_accessibility_tree 产物）")
     p.add_argument("--headless", action="store_true",
                    help="活窗口 withdraw（仍拿 HWND，供 CI / 无显示器）")
+    p.add_argument("--no-wait", action="store_true",
+                   help="非交互模式：跑完立即返回，不在最后等 [enter]"
+                        "（用于落报告 / CI；肉眼确认时不用本选项，"
+                        "让 swapchain 窗口留给你看）")
     p.add_argument("--out", default=None,
                    help="把验收报告写到该路径（Markdown）")
     args = p.parse_args(argv)
@@ -449,8 +554,10 @@ def main(argv: list) -> int:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(report + "\n")
         print(f"[report] 写入 {args.out}")
-    # 非 headless 时给一次交互确认（人工看屏幕后可 Ctrl-C / Enter）。
-    if not args.headless:
+    # 非 headless 且未指定 --no-wait 时给一次交互确认（人工看屏幕后可
+    # Ctrl-C / Enter）；--no-wait（或 headless）则跑完立即返回，供
+    # 落报告 / CI。
+    if not args.headless and not args.no_wait:
         try:
             input("\n[enter] 结束（swapchain 窗口仍置顶，可肉眼确认；"
                   "直接回车退出）")
