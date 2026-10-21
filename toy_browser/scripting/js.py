@@ -8698,6 +8698,15 @@ class Host:
                 raise _Throw(f"TypeError: {e}") from e
             else:
                 raise _Throw(f"{_name}: {e}") from e
+        else:
+            # R7-J01/J02 — 微任务检查点：同步脚本体跑完后 drain 一次
+            # 微任务队列（V8 契约"微任务在下一个任务前跑"）。
+            # 否则 Promise.then / async 返回值的 then 回调虽排进
+            # _microtasks 却永无机会执行（探针 promise_order /
+            # async_function 缺口：then 回调日志漏输出）。仅在同步
+            # 脚本**成功跑完**（无未捕获异常）后 flush——异常路径
+            # 让微任务留给调用方（GUI 的 load_html / 事件回调）决定。
+            self.flush_microtasks()
 
     def eval(self, code: str):
         """P9.3 — Evaluate a JS expression and return the result value.

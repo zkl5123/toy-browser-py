@@ -141,6 +141,42 @@ def test_no_resident_timers_after_flush():
         f"no microtasks should remain after drain, got {host._microtasks}")
 
 
+@_test
+def test_execute_drains_microtasks_at_script_end():
+    """R7-J01/J02 第 2 点 — 微任务检查点：Host.execute 跑完同步脚本体
+    后须 drain 一次微任务队列（V8"微任务在下一个任务前跑"契约），
+    否则 Promise.then / async 返回值的 then 回调虽排进 _microtasks
+    却永无机会执行（语义探针 promise_order / async_function 缺口）。"""
+    root = dom.parse(b"<!DOCTYPE html><html><body></body></html>")
+    logs = []
+    host = Host(root, log=logs.append)
+    # then 回调是微任务：须等同步 log("s") 之后才输出 "p"。
+    host.execute(
+        "console.log('s'); Promise.resolve().then(function(){ console.log('p'); });",
+        gated=False)
+    assert logs == ["s", "p"], (
+        f"microtask checkpoint at script end: 'p' must land after "
+        f"synchronous 's', got {logs}")
+
+
+@_test
+def test_execute_microtask_drains_to_fixed_point():
+    """微任务 drain 须到**固定点**（V8 契约）：then 回调里再排新
+    微任务，同一次检查点内继续 drain，直到队列清空。"""
+    root = dom.parse(b"<!DOCTYPE html><html><body></body></html>")
+    logs = []
+    host = Host(root, log=logs.append)
+    # 第一个 then 回调里再挂一个 then（嵌套微任务）：固定点 drain
+    # 须把两层都结算，顺序 p1 → p2。
+    host.execute(
+        "Promise.resolve(1).then(function(a){ console.log('p1'); "
+        "  Promise.resolve(a + 1).then(function(b){ console.log('p2'); });"
+        "});", gated=False)
+    assert logs == ["p1", "p2"], (
+        f"microtask drain must reach the fixed point (nested microtask "
+        f"settles in the same checkpoint): got {logs}")
+
+
 def run():
     for name, f in TESTS:
         print(f"  {name}")
