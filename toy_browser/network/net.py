@@ -2762,10 +2762,22 @@ def _follow_redirects(client: "HttpClient",
                 )
                 _denied.redirected = True
                 return _denied
-            # 允许 → 跨源剥敏感头，继续下一跳。
+            # 允许 → 按**本跳**的跨源判定剥敏感头（fetch §4.6），
+            # 继续下一跳。
+            # R7-S02 第 3 点（本批）— 修复"累积剥离"缺陷：旧代码
+            # ``cur_hdrs = strip(cur_hdrs, ...)`` 是累积的——
+            # 同站→跨源→同站跳转时，第 2 跳跨源剥过之后第 3 跳
+            # 同源不剥，第 1 跳显式带的敏感头（Authorization /
+            # Cookie …）会**漏**到同站目标。新逻辑每跳都对照
+            # **原始**调用方 headers 重新判定：本跳跨源 → 剥掉
+            # 敏感头；本跳同源 → 敏感头合法保留（还原回原始头，
+            # 供后续跨源跳再剥）。
             _doc_origin = cur_rc.document_origin or ""
-            cur_hdrs = client._strip_cross_origin_headers(
-                cur_hdrs, _doc_origin, nxt)
+            if cur_rc.is_cross_origin:
+                cur_hdrs = client._strip_cross_origin_headers(
+                    headers, _doc_origin, nxt)
+            else:
+                cur_hdrs = headers
         else:
             # 无 request_context → 保持旧语义（headers 原样透传）。
             cur_hdrs = headers

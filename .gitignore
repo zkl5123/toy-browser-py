@@ -44,3 +44,6 @@ desktop.ini
 
 # Workspace-local temporary directory for test runs
 .test-tmp/
+
+# 临时测试报告（本地 3.11 全量 JSON）
+out/

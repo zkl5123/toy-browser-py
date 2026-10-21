@@ -1302,9 +1302,17 @@ class GPUBackend(RenderBackend):
             # GPUCanvasContext.configure 需 format（缺省取 device 默认
             # 表面格式；dict 形态可显式指定）。
             if fmt is None:
-                try:
-                    fmt = wgpu.gpu.get_preferred_canvas_format(dev)
-                except Exception:
+                # R7-P02 — wgpu 0.32 API：``get_preferred_canvas_format()``
+                # 是 GPU **实例方法且无参**（旧文档误传 device 会抛
+                # TypeError）。0.32 里推荐改用 ``ctx.get_preferred_format()``
+                #（在 surface context 上探测）；离屏（无 ctx 注入）时
+                # 直接落到默认 ``bgra8unorm``，**不**抛错（P13 不崩）。
+                if ctx is not None and hasattr(ctx, "get_preferred_format"):
+                    try:
+                        fmt = ctx.get_preferred_format()
+                    except Exception:
+                        fmt = "bgra8unorm"
+                else:
                     fmt = "bgra8unorm"
             tex = getattr(frame, "texture", None)
             if tex is None:

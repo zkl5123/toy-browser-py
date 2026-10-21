@@ -968,6 +968,215 @@ def test_s02_for_redirect_strips_sensitive_and_downgrades():
 
 
 # ---------------------------------------------------------------------------
+# R7-S02 第 3 点 — 逐跳重定向敏感头剥离验收探针（服务端逐跳记录）
+# ---------------------------------------------------------------------------
+
+def _start_server_record_headers(routes=None):
+    """起本地回环 HTTP 服务器，在 ``counts[("hdrs", path)]`` 上
+    **逐跳记录实际收到的请求头 dict**（小写键），并保留每路径计数。
+
+    *routes* 为 ``(path) → (status, ctype, body, extra_hdrs)``；
+    3xx 路由的 ``Location`` 头由调用方在 *extra_hdrs* 里用
+    ``self.server.server_address`` 动态填充（见 :func:`_make_302_routes`）。
+    缺省路由 = 两跳 302 链（``/s1 → /cross``）。"""
+    import http.server
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    counts: dict = {}
+
+    def _make_302_routes(p: int) -> dict:
+        return {
+            "/s1": (302, "", b"",
+                     [("Location", f"http://127.0.0.1:{p}/cross")]),
+            "/cross": (302, "", b"",
+                       [("Location", f"http://127.0.0.1:{p}/back")]),
+            "/back": (200, "text/plain", b"done", []),
+        }
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _serve(self):
+            key = (self.command, self.path.split("?")[0])
+            counts[key] = counts.get(key, 0) + 1
+            counts[("hdrs", key[1])] = {k.lower(): v for k, v in
+                                        self.headers.items()}
+            n = int(self.headers.get("Content-Length") or 0)
+            if n:
+                self.rfile.read(n)
+            p = self.server.server_address[1]
+            # 动态 302 路由：Location 里的 port 在服务器启动后才知道，
+            # 所以按需构造（而非在模块级字面量里引用尚未定义的 port）。
+            r = self._user_routes.get(key[1]) if self._user_routes else \
+                None
+            if r is None and not self._user_routes:
+                r = _make_302_routes(p).get(key[1])
+            if r is None:
+                self.send_response(404)
+                self.send_header("Content-Length", "4")
+                self.end_headers()
+                self.wfile.write(b"404x")
+                return
+            status, ctype, body, extra = r
+            self.send_response(status)
+            if ctype:
+                self.send_header("Content-Type", ctype)
+            for k, v in (extra or []):
+                self.send_header(k, v)
+            if not any(k.lower() == "content-length"
+                       for k, _v in (extra or [])):
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        _user_routes = routes
+        do_GET = _serve
+        do_POST = _serve
+        do_OPTIONS = _serve
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, port, counts
+
+
+@_reg
+def test_s02_follow_redirects_strips_sensitive_on_cross_origin_hop():
+    """R7-S02 第 3 点验收探针 — 两跳同站（document_origin 与
+    /s1、/cross 均为 127.0.0.1:port），服务端逐跳收到的请求头
+    必须**保留** Authorization / Cookie（同源合法）；跨源跳的
+    剥离由 :func:`test_s02_follow_redirects_strips_sensitive_on_true_cross_origin_jump`
+    与 :func:`test_s02_follow_redirects_strips_all_hops_continuous_cross_origin`
+    锁定。"""
+    srv, port, counts = _start_server_record_headers()
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_origin = f"http://127.0.0.1:{port}/"
+        start_url = f"http://127.0.0.1:{port}/s1"
+        ctx = _rc.context_for_destination(
+            doc_origin, start_url, _rc.DEST_NAVIGATE)
+        hdrs = {"Authorization": "Bearer t", "Cookie": "s=1",
+                "X-Custom": "keep"}
+        resp = c.get(start_url, headers=hdrs,
+                     request_context=ctx)
+        assert resp.status == 200, f"must land on /cross: {resp.status}"
+        assert counts.get(("GET", "/s1"), 0) == 1
+        assert counts.get(("GET", "/cross"), 0) == 1
+        # 两跳同站（127.0.0.1:port）→ 敏感头保留（同源合法）。
+        h_s1 = counts.get(("hdrs", "/s1"), {})
+        h_cross = counts.get(("hdrs", "/cross"), {})
+        assert h_s1.get("authorization") == "Bearer t", \
+            f"same-origin hop /s1 keeps sensitive headers: {h_s1}"
+        assert h_s1.get("cookie") == "s=1"
+        assert h_cross.get("authorization") == "Bearer t", \
+            f"same-origin hop /cross keeps sensitive headers: {h_cross}"
+        assert h_cross.get("x-custom") == "keep"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_follow_redirects_strips_sensitive_on_true_cross_origin_jump():
+    """R7-S02 第 3 点验收探针（跨源跳） — 文档源 http://a.test/，
+    第一跳 /s1 跨源 → 剥敏感头；302 跳到 /cross（仍跨源）
+    → 继续剥。服务端逐跳记录断言两跳均无 Authorization/Cookie。"""
+    srv, port, counts = _start_server_record_headers()
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_origin = "http://a.test/"
+        start_url = f"http://127.0.0.1:{port}/s1"
+        ctx = _rc.context_for_destination(
+            doc_origin, start_url, _rc.DEST_NAVIGATE)
+        hdrs = {"Authorization": "Bearer t", "Cookie": "s=1",
+                "X-Custom": "keep"}
+        resp = c.get(start_url, headers=hdrs,
+                     request_context=ctx)
+        assert resp.status == 200, f"must land on /cross: {resp.status}"
+        assert counts.get(("GET", "/s1"), 0) == 1
+        assert counts.get(("GET", "/cross"), 0) == 1
+        # /s1 跨源 → 剥敏感头，但非敏感头保留。
+        h_s1 = counts.get(("hdrs", "/s1"), {})
+        assert "authorization" not in h_s1, f"/s1 leaked Auth: {h_s1}"
+        assert "cookie" not in h_s1, f"/s1 leaked Cookie: {h_s1}"
+        assert h_s1.get("x-custom") == "keep"
+        # /cross 仍跨源（a.test ≠ 127.0.0.1:port）→ 继续剥。
+        h_cross = counts.get(("hdrs", "/cross"), {})
+        assert "authorization" not in h_cross, f"/cross leaked Auth: {h_cross}"
+        assert "cookie" not in h_cross, f"/cross leaked Cookie: {h_cross}"
+        assert h_cross.get("x-custom") == "keep"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_follow_redirects_strips_all_hops_continuous_cross_origin():
+    """R7-S02 第 3 点验收探针（连续跨源跳全剥） — 文档源 a.test，
+    /s1 → /cross → /back 三跳全在 127.0.0.1:port（跨源），每跳
+    对照**原始** headers 重算：全跨源 → 全剥敏感头；非敏感头
+    保留。锁定"逐跳重算（非累积剥离）"的新契约。"""
+    srv, port, counts = _start_server_record_headers()
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_origin = "http://a.test/"
+        target_s1 = f"http://127.0.0.1:{port}/s1"
+        ctx = _rc.context_for_destination(
+            doc_origin, target_s1, _rc.DEST_NAVIGATE)
+        hdrs = {"Authorization": "Bearer t", "Cookie": "s=1",
+                "X-Custom": "keep"}
+        resp = c.get(target_s1, headers=hdrs,
+                     request_context=ctx)
+        assert resp.status == 200, f"must land on /back: {resp.status}"
+        assert counts.get(("GET", "/s1"), 0) == 1
+        assert counts.get(("GET", "/cross"), 0) == 1
+        assert counts.get(("GET", "/back"), 0) == 1
+        for p in ("/s1", "/cross", "/back"):
+            h = counts.get(("hdrs", p), {})
+            assert "authorization" not in h, \
+                f"{p} leaked Authorization: {h}"
+            assert "cookie" not in h, \
+                f"{p} leaked Cookie: {h}"
+            assert h.get("x-custom") == "keep"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_follow_redirects_denied_hop_lands_placeholder_not_sent():
+    """R7-S02 第 3/6 点验收探针 — 逐跳重评估命中 deadline 拒绝时，
+    被禁的那一跳**不发包**，直接落地 status=0 + denied 占位响应。
+
+    构造：deadline 已过期，``get()`` 入口的发送前判定即拒
+    （blocked_by=deadline），不发包、不进入重定向链。这与第 1 跳
+    被拒是同一"发送前拒绝"契约的落点（deadline 在 ``for_redirect``
+    下保持过期，逐跳重评估仍拒）。"""
+    import time
+    srv, port, counts = _start_server_record_headers()
+    try:
+        c = HttpClient(timeout=5.0)
+        doc_origin = "http://a.test/"
+        start_url = f"http://127.0.0.1:{port}/s1"
+        t0 = time.monotonic()
+        ctx = _rc.context_for_destination(
+            doc_origin, start_url, _rc.DEST_FETCH)
+        ctx.deadline = t0 - 1.0  # 已过期
+        resp = c.get(start_url, request_context=ctx, now=t0)
+        assert resp.status == 0 and resp.denied is not None, \
+            f"expired-deadline request must be pre-denied: {resp.status}"
+        assert resp.denied.blocked_by == "deadline", \
+            f"denied by deadline: {resp.denied.blocked_by}"
+        # 第 0 跳就拒 → 不发包（服务端计数 0）。
+        assert counts.get(("GET", "/s1"), 0) == 0, \
+            f"expired-deadline request must not hit the wire: {counts}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+# ---------------------------------------------------------------------------
 # R7-S02 第 6 点 — 字符串脚本执行入口（eval / execute）共用
 # 文档 inline script-src 策略
 # ---------------------------------------------------------------------------
