@@ -547,6 +547,18 @@ class PreflightCheckResult:
     #: ``"basic"``（同源）/ ``"error"``（不可判定）。
     resolved_type: str = "basic"
 
+    @property
+    def body_readable(self) -> bool:
+        """脚本**能否读到该响应的 body**（与 :attr:`resolved_type` 同源）。
+
+        R7-S02 审计 ``cross_origin_fetch_and_samesite`` 验收：跨源
+        fetch 无 ACAO 时响应**不可读**（不暴露正文）。``basic`` /
+        ``cors`` 可读；``opaque`` / ``error`` 不可读——opaque 响应的
+        body 在 Fetch 规范里对脚本隐藏，调用方须据此**真正屏蔽**
+        body（不得只改 ``type`` 字段仍放行 body_text）。
+        """
+        return self.resolved_type in ("basic", "cors")
+
 
 def _header_value_ci(headers: dict, name: str) -> str:
     """大小写不敏感取单个响应头的值（缺失返回 ``""``）。"""

@@ -6209,6 +6209,26 @@ class Host:
             _hdrs = self._js_filter_response_headers(
                 headers, _rc_mod.DEST_FETCH)
 
+        # R7-S02 审计 cross_origin_fetch_and_samesite 验收 — 跨源
+        # fetch 无 ACAO 时响应降级 **opaque**，body 对脚本**隐藏**
+        # （不得暴露正文）。判定与 visible_headers 严格同源：取
+        # cors_check.body_readable（basic/cors 可读，opaque/error
+        # 不可读）；无 cors_check 时按发送前判定（同源可读）。
+        if cors_check is not None and hasattr(cors_check, "body_readable"):
+            _body_readable = bool(cors_check.body_readable)
+        else:
+            # 无响应侧校验信息：同源（发送前 evaluate 无需 ACAO）可读，
+            # 跨源按保守不可读（Opaque 语义）。
+            _doc_origin = _rc_mod._origin_of(getattr(self, "doc_url", "") or "")
+            _ctx = _rc_mod.context_for_destination(
+                _doc_origin, url, _rc_mod.DEST_FETCH)
+            _body_readable = (not _ctx.is_cross_origin)
+        if not _body_readable:
+            # opaque / error — body 真正屏蔽（读取方法 resolve 空串/
+            # 空 buffer，不得泄漏真实 body_text）。
+            body_text = ""
+            _body_bytes = b""
+
         def _rejected(err_name, message):
             p = self._make_promise()
             p["__reject__"]({"name": err_name, "message": message})
@@ -6397,18 +6417,31 @@ class Host:
                 raise _net.FetchError(url)
             body_text = (resp.body or b"").decode("utf-8", "replace") \
                 if isinstance(resp.body, (bytes, bytearray)) else str(resp.body)
-            # R7-S02 第 5 点（本批）— 响应到达后的真实 CORS 校验结果
-            # （跨源 OPTIONS 预检 + ACAO/ACAC 比对，挂在
-            # resp.cors_check）。提供时 _fetch_response 用校验后的
-            # resolved_type（不通过降级 opaque）与 visible_headers，
-            # 不再按发送前的纯逻辑判定（避免"校验不通过却报 cors"）。
+            # R7-S02 第 5 点 — 响应到达后的真实 CORS 校验。优先用
+            # transport 预挂的 ``resp.cors_check``（跨源 OPTIONS 预检
+            # 场景已做校验）；**缺失时**（普通 fetch 经 transport 拿到的
+            # 跨源响应，如"服务不回 ACAO"——审计 cross_origin_fetch_
+            # and_samesite 点名的缺口）就地按文档 origin + 请求 URL +
+            # 响应头走 S02 决策层 :func:`validate_preflight_response`
+            # 补一次响应侧校验，让跨源无 ACAO 的响应**降级 opaque、
+            # body 不可读**（脚本读不到正文），不得依赖 transport 是否
+            # 预挂 cors_check 而默认放行。
+            _cors_check = getattr(resp, "cors_check", None)
+            if _cors_check is None:
+                _resp_hdrs = getattr(resp, "headers", None) or {}
+                _doc_origin = _rc_mod._origin_of(
+                    getattr(self, "doc_url", "") or "")
+                _cors_check = _rc_mod.validate_preflight_response(
+                    _rc_mod.context_for_destination(
+                        _doc_origin, url, _rc_mod.DEST_FETCH),
+                    dict(_resp_hdrs))
             response = self._fetch_response(
                 resp.status, getattr(resp, "ok", False), body_text,
                 getattr(resp, "final_url", "") or url,
                 getattr(resp, "content_type", ""),
                 headers=getattr(resp, "headers", None) or {},
                 redirected=bool(getattr(resp, "redirected", False)),
-                cors_check=getattr(resp, "cors_check", None))
+                cors_check=_cors_check)
             p["__resolve__"](response)
         except Exception as e:
             # Opaque network error (spec: TypeError with no detail

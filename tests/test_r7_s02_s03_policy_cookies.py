@@ -1455,6 +1455,100 @@ def test_s02_preflight_js_helper_delegates_to_validate():
 
 
 # ---------------------------------------------------------------------------
+# R7-S02 审计 cross_origin_fetch_and_samesite — 跨源 fetch 经真实 _fetch
+# 路径（transport 不预挂 cors_check）时，无 ACAO 响应降级 opaque、
+# body 不可读；同源 / 匹配 ACAO 仍可被脚本读到。
+# ---------------------------------------------------------------------------
+
+def _fetch_body_probe(doc_url: str, fetch_url: str,
+                     resp_headers: dict, body: str = "SECRET_DATA"):
+    """跑一次真实 ``Host._fetch``（经合成 transport 拿响应），返回脚本
+    是否读到了 *body*（即泄漏与否）。只用合成响应，不碰真实网络。"""
+    import toy_browser.scripting.js as _js
+    root = dom.parse(
+        "<html><body><script>"
+        "fetch('%s').then(function(r){return r.text();})"
+        ".then(function(t){console.log('body:' + t);});"
+        .replace("%s", fetch_url)
+        + "</script></body></html>")
+    host = _js.Host(root, lambda m: None)
+    host.doc_url = doc_url
+
+    class _Resp:
+        ok = True
+        status = 200
+        redirected = False
+        content_type = "text/plain"
+        def __init__(self):
+            self._h = dict(resp_headers or {})
+            self._final = fetch_url
+            self._body = body.encode("utf-8")
+        @property
+        def final_url(self):
+            return self._final
+        @property
+        def headers(self):
+            return self._h
+        @property
+        def body(self):
+            return self._body
+
+    class _Transport:
+        def fetch(self, url, method="GET", body_=None, headers=None, **kw):
+            return _Resp()
+
+    host._fetch_transport = _Transport()
+    host.execute_all()
+    return (body in "\n".join(host.logs))
+
+
+@_reg
+def test_s02_fetch_cross_origin_without_acao_body_unreadable():
+    """跨源 fetch（localhost vs 127.0.0.1），响应无 ACAO → 降级 opaque，
+    脚本读不到正文（审计 cross_origin_fetch_and_samesite 验收）。"""
+    leaked = _fetch_body_probe(
+        "http://localhost:1/page", "http://127.0.0.1:1/",
+        resp_headers={"Content-Type": "text/plain"})
+    assert not leaked, "跨源无 ACAO 的 body 必须不可读（opaque 降级须屏蔽正文）"
+
+
+@_reg
+def test_s02_fetch_same_origin_body_readable():
+    """同源 fetch（无 ACAO 也无需）→ 脚本可读（不得误拦同源）。"""
+    leaked = _fetch_body_probe(
+        "http://localhost:1/page", "http://localhost:1/x",
+        resp_headers={"Content-Type": "text/plain"})
+    assert leaked, "同源 fetch 必须可读（opaque 降级不得误拦同源）"
+
+
+@_reg
+def test_s02_fetch_cross_origin_with_matching_acao_body_readable():
+    """跨源 fetch 带匹配 ACAO（= 发起 origin）→ 校验通过 cors，脚本可读。"""
+    leaked = _fetch_body_probe(
+        "http://localhost:1/page", "http://127.0.0.1:1/",
+        resp_headers={"Access-Control-Allow-Origin": "http://localhost:1"})
+    assert leaked, "跨源 + 匹配 ACAO 必须可读（cors 通过）"
+
+
+@_reg
+def test_s02_preflight_body_readable_property_tracks_resolved_type():
+    """``PreflightCheckResult.body_readable`` 与 resolved_type 同源：
+    basic/cors 可读，opaque/error 不可读。"""
+    ctx = _rc.context_for_destination(
+        "https://a.test", "https://b.test/api", _rc.DEST_FETCH)
+    r_opaque = _rc.validate_preflight_response(ctx, {})
+    assert not r_opaque.body_readable, "opaque 响应 body 不可读"
+    r_cors = _rc.validate_preflight_response(
+        ctx, {"Access-Control-Allow-Origin": "https://a.test"})
+    assert r_cors.body_readable, "cors 校验通过 body 可读"
+    r_basic = _rc.validate_preflight_response(
+        _rc.context_for_destination("https://a.test", "https://a.test/x",
+                                    _rc.DEST_FETCH),
+        {"Content-Type": "text/plain"})
+    assert r_basic.body_readable, "同源 basic body 可读"
+
+
+# ---------------------------------------------------------------------------
 # R7-S02 第 5 点 — 真实 OPTIONS 预检往返（跨源非简单请求先发 OPTIONS）
 # ---------------------------------------------------------------------------
 
