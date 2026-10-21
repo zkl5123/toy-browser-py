@@ -1411,6 +1411,14 @@ class TabBrowser:
         self._r7_a02_slow_tabs: set = set()
         self._r7_a02_slow_tab_timeout: float = 0.0
         self._r7_a02_slow_dropped: int = 0
+        # R7-A02 第 4 点 — 连续帧 buffer 呈现层消费计数（诊断 +
+        # "不冒充通过"证据）：applied = 回退态真实像素已应用；
+        # layout_only = 多核态只拿到布局描述（像素跨进程传递留
+        # 活显示批次，不宣称已共享）；rejected = 布局 / 句柄不合法
+        # 被拒（不静默放行）。
+        self._r7_a02_buffer_applied: int = 0
+        self._r7_a02_buffer_layout_only: int = 0
+        self._r7_a02_buffer_rejected: int = 0
         # R7-A02 第 5 点 — 关窗顺序证据（先停任务 / 回收子进程，再
         # 销毁 Tk root；测试断言这个顺序，不靠"看起来对"）。
         self._g07_close_order: list = []
@@ -1773,6 +1781,102 @@ class TabBrowser:
                     self, "_r7_a02_stale_dropped", 0) + 1
         return out
 
+    def _r7_a02_apply_frame_buffer(self, frame):
+        """R7-A02 第 4 点 — 呈现层消费帧的**连续 buffer 布局**。
+
+        方案第 4 点："帧用连续 buffer 或受控共享内存，不序列化整棵
+        Python 对象图；父进程不接触 worker 内部 Host。"本方法是
+        UI 侧消费点：
+
+        1. **布局自洽**：``frame.frame_spec.layout_ok()``（stride /
+           bpp / 几何）不过 → 拒收（计 rejected，不静默放行）；
+        2. **句柄过父进程可见面契约**：payload 的 ``buffer`` 句柄经
+           :class:`FramePayloadContract` 校验（只描述像素引用，不
+          携带数据）；
+        3. **回退态取真实像素**：父进程内置同步 worker 就在本进程，
+           经 :meth:`DocProcessServer.last_bitmap_for` 取该 tab 最近
+           渲染位图 → :class:`CPUImage` 连续 buffer（几何与 spec
+           一致、字节数 ≥ ``spec.total_bytes()``）→ 返回供呈现层
+           应用（计 applied）；
+        4. **多核态仅布局**：子进程存活时位图在子进程里，父进程拿
+           不到像素——返回 None 并计 layout_only。**不冒充通过**：
+           不把"有句柄"当"像素已到父进程"；跨进程共享内存
+           （mmap / posix）留活显示批次。
+
+        返回应用的 :class:`CPUImage` 或 None（无像素帧 / 拒收 /
+        仅布局）。组件缺失（frame 无 frame_spec / server 不可用）
+        时一律 no-op，不崩。
+        """
+        spec = getattr(frame, "frame_spec", None)
+        if spec is None:
+            return None             # 纯身份帧（无像素 buffer）
+        try:
+            if not spec.layout_ok():
+                self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+                return None
+        except Exception:
+            self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+            return None
+        # 句柄过父进程可见面契约（buffer 键 = 布局引用，非像素数据）
+        handle = (getattr(frame, "payload", None) or {}).get("buffer")
+        if handle is not None:
+            try:
+                from toy_browser.app.frame_buffer import (
+                    FramePayloadContract)
+                ok, _reasons = FramePayloadContract().validate(
+                    {"buffer": handle})
+                if not ok:
+                    self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+                    return None
+            except Exception:
+                self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+                return None
+        server = getattr(self, "_g07_doc_server", None)
+        spawned = False
+        try:
+            spawned = bool(server.is_spawned()) if server else False
+        except Exception:
+            spawned = False
+        if server is None or spawned:
+            # 多核态：句柄只描述布局，像素跨进程传递留活显示批次
+            # （共享内存）——如实计 layout_only，不应用、不宣称。
+            self._r7_a02_buffer_layout_only = \
+                    getattr(self, '_r7_a02_buffer_layout_only', 0) + 1
+            return None
+        try:
+            bm = server.last_bitmap_for(frame.tab_id)
+        except Exception:
+            bm = None
+        if bm is None:
+            self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+            return None
+        try:
+            from toy_browser.rendering import cpu_image as _cpuimg
+            img = _cpuimg.CPUImage.from_bitmap(bm)
+        except Exception:
+            self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+            return None
+        # 呈现层只应用"布局描述与实际像素一致"的帧（防句柄 / 位图
+        # 错位——错位即拒收，不把错位的像素画上屏）。
+        if (int(img.width) != int(spec.width)
+                or int(img.height) != int(spec.height)):
+            self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+            return None
+        if len(img.buffer) < int(spec.total_bytes()):
+            self._r7_a02_buffer_rejected = \
+                    getattr(self, '_r7_a02_buffer_rejected', 0) + 1
+            return None
+        self._r7_a02_buffer_applied = \
+                    getattr(self, '_r7_a02_buffer_applied', 0) + 1
+        return img
+
     # ------------------------------------------------------------------
     # G01/G05 — scroll protocol and wheel routing (extracted for testability)
     # ------------------------------------------------------------------
@@ -2057,17 +2161,20 @@ class TabBrowser:
         pipe 收帧；回退态经内置同步）。供 UI 事件循环调用，经 C01
         门控后由呈现层应用。
 
-        R7-A02 第 3 点 — 取回的帧再过两道门：
+        R7-A02 第 3 点 — 取回的帧过三道门；第 5 点慢页隔离先行：
 
+        0. **慢页隔离**：过期未产帧的 tab 的迟到帧在版本门控**之前**
+           就被隔离（其他 tab 不受慢页影响）；
         1. **取消确认**：worker 回的 ``cancelled`` 帧经
            :meth:`_r7_a02_ack_cancels` 确认在途取消（取消必须被确认，
            不是发出即算数）；
         2. **版本门控**：每帧经 :meth:`_r7_a02_gated_frames`——旧
            导航的迟到帧（navigation_id 更小）与同导航内不推进的旧
-           帧一律丢弃（"旧任务不可覆盖新页"）。
-
-        R7-A02 第 5 点 — 慢页隔离先行：过期未产帧的 tab 的迟到帧
-        在版本门控**之前**就被隔离（其他 tab 不受慢页影响）。
+           帧一律丢弃（"旧任务不可覆盖新页"）；
+        3. **连续 buffer 呈现**（R7-A02 第 4 点）：门控后的存活帧
+           逐帧经 :meth:`_r7_a02_apply_frame_buffer` 消费连续 buffer
+           布局——回退态取真实像素（CPUImage 连续 buffer），多核态
+           仅布局（不冒充跨进程已传像素）。
 
         组件为 None 时全部 no-op，返回帧与既有行为一致。
         """
@@ -2082,7 +2189,15 @@ class TabBrowser:
             self._r7_a02_ack_cancels(frames)
         except Exception:
             pass
-        return self._r7_a02_gated_frames(frames)
+        gated = self._r7_a02_gated_frames(frames)
+        # R7-A02 第 4 点 — 只有过门控的存活帧才值得把像素画上屏
+        # （旧任务的帧已被丢弃，不应用其 buffer）。
+        for _f in gated:
+            try:
+                self._r7_a02_apply_frame_buffer(_f)
+            except Exception:
+                pass
+        return gated
 
     def _r7_a02_doc_mode(self):
         """R7-A02 第 6 点 — 探测**当前真实**文档工作模式。
@@ -2188,6 +2303,15 @@ class TabBrowser:
             parts.append(f"cancel={ct.describe()}")
         parts.append(
             f"stale_dropped={getattr(self, '_r7_a02_stale_dropped', 0)}")
+        # R7-A02 第 4 点 — 连续帧 buffer 呈现层消费（applied=回退态
+        # 真实像素已应用；layout_only=多核态仅布局；rejected=布局/
+        # 句柄不合法被拒）。layout_only 非 0 且 applied 恒 0 = 多核
+        # 态尚未跨进程传像素（活显示批次），不宣称"已共享"。
+        parts.append(
+            "buffer="
+            f"applied:{getattr(self, '_r7_a02_buffer_applied', 0)}"
+            f"/layout_only:{getattr(self, '_r7_a02_buffer_layout_only', 0)}"
+            f"/rejected:{getattr(self, '_r7_a02_buffer_rejected', 0)}")
         # R7-A02 第 5 点 — 慢页隔离（0 timeout = 未启用，不误伤）
         parts.append(
             "slow_tabs="

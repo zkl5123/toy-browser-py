@@ -189,6 +189,14 @@ class DocumentProcessWorker:
         # ``_do_doc_work`` 分支）。
         self._doc_states: dict[int, object] = {}
         self._last_bitmap: dict[int, object] = {}
+        # R7-A02 第 4 点 — 连续帧 buffer 句柄：每次成功渲染分配一个
+        # 单调递增的 buffer id（父进程据此区分"哪一块像素"），句柄
+        # 只描述布局（id/size/format/width/height，见
+        # :meth:`buffer_handle_for`），**不**携带像素数据本身——像素
+        # 留在 worker（回退态父进程可经 :meth:`last_bitmap` 取；多核态
+        # 跨进程共享段留活显示批次）。
+        self._buffer_seq: int = 0
+        self._last_buffer_id: dict[int, int] = {}
         # R7-A02 第 5 点 — 每 tab 最近一次文档工作错误摘要（坏脚本 /
         # 渲染失败）：错误**不传播**出 worker（传播会杀死回退态的
         # 父进程或子进程循环 → 整池挂 → 连累其他标签），转成该 tab
@@ -258,6 +266,7 @@ class DocumentProcessWorker:
                         base_url=payload.get("url", ""))
                     self._last_bitmap[tab] = bm
                     self._has_done_doc_work = True
+                    self._note_rendered(tab)
             elif cmd.kind in (DOC_CMD_RESIZE, DOC_CMD_SCROLL):
                 doc = self._doc_states.get(tab)
                 if doc is not None and doc.dom_tree is not None:
@@ -265,6 +274,7 @@ class DocumentProcessWorker:
                         doc, css_text=css, width=width, height=height)
                     self._last_bitmap[tab] = bm
                     self._has_done_doc_work = True
+                    self._note_rendered(tab)
         except Exception as e:
             # 坏脚本 / 渲染失败 → 单 tab 错误摘要（不传播、不杀进程）
             summary = _limited_error_summary(e)
@@ -282,6 +292,43 @@ class DocumentProcessWorker:
         """R7-A02 第 2 点 — 该 tab 最近渲染的 :class:`Bitmap`
         （紧凑像素 / 尺寸，跨进程呈现层消费；未渲染返回 None）。"""
         return self._last_bitmap.get(tab)
+
+    def _note_rendered(self, tab: int) -> None:
+        """R7-A02 第 4 点 — 一次成功渲染：分配单调递增 buffer id。
+
+        父进程经帧 payload 的 ``buffer`` 句柄引用"哪一块像素"；
+        句柄的 size/format/width/height 由 :meth:`buffer_handle_for`
+        按实际渲染几何算出（布局描述，不携带像素数据）。
+        """
+        self._buffer_seq += 1
+        self._last_buffer_id[tab] = self._buffer_seq
+
+    def buffer_handle_for(self, tab: int):
+        """R7-A02 第 4 点 — 该 tab 最近渲染帧的 **buffer 句柄**（布局
+        描述，:class:`FramePayloadContract` 白名单内的有限 dict：
+        ``{id, size, format, width, height}``）。
+
+        * ``size`` = :meth:`FrameBufferSpec.total_bytes`
+          （``width × height × 3``，rgb8）——父进程据此申请 / 校验
+          buffer 大小，**不**逐像素复制；
+        * 句柄**不**携带像素数据本身（像素留 worker；回退态父进程经
+          :meth:`last_bitmap` 取，多核态跨进程共享段留活显示批次）；
+        * 未渲染过返回 None（该 tab 无像素帧）。
+
+        **不冒充通过**：多核态（子进程存活）下父进程拿到句柄也只能
+        描述布局——像素是否已到父进程由呈现层按
+        :meth:`DocProcessServer.is_spawned` 如实区分，不把"有句柄"
+        当"已共享像素"。
+        """
+        bm = self._last_bitmap.get(tab)
+        if bm is None:
+            return None
+        w, h = int(bm.width), int(bm.height)
+        return {"id": int(self._last_buffer_id.get(tab, 0)),
+                "size": w * h * 3,
+                "format": "rgb8",
+                "width": w,
+                "height": h}
 
     def has_done_doc_work(self) -> bool:
         """R7-A02 第 6 点 — 本 worker 是否执行过**真实**文档工作
@@ -341,18 +388,29 @@ class DocumentProcessWorker:
                                         "frame_id": self._frame_id[tab],
                                         "navigation_id": nav_id,
                                         "error_category": _err})
-                # R7-A02 第 2 点 — 真实文档工作帧：payload 只带白名单键
-                # （kind/url/frame_id/doc_id/navigation_id）；几何 w/h
-                # 不入帧 payload（非白名单，会被 FramePayloadContract
-                # 拒收）——父进程侧经 frame_spec_for(命令 payload) 取
-                # 像素布局（与既有 resize/scroll 帧同口径：帧不带几何）。
+                # R7-A02 第 2/4 点 — 真实文档工作帧：payload 带白名单键
+                # （kind/url/frame_id/doc_id/navigation_id）+ **buffer
+                # 句柄**（布局引用，不携带像素数据）；帧挂
+                # :class:`FrameBufferSpec`（连续 buffer 布局描述）——
+                # 父进程据此申请 / 校验 buffer 大小、经句柄引用像素，
+                # **不**逐像素复制、不接触 worker 内部 Host。几何 w/h
+                # 仍不入帧 payload 顶层（非白名单）——布局走
+                # frame_spec / buffer 句柄两个专用通道。
+                _p = {"url": cmd.payload.get("url", ""),
+                      "kind": cmd.kind,
+                      "doc_id": self._doc_id[tab],
+                      "frame_id": self._frame_id[tab],
+                      "navigation_id": nav_id}
+                _spec = None
+                bm = self._last_bitmap.get(tab)
+                if bm is not None:
+                    _spec = FrameBufferSpec(format="rgb8",
+                                            width=int(bm.width),
+                                            height=int(bm.height))
+                    _p["buffer"] = self.buffer_handle_for(tab)
                 return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
                                 navigation_id=nav_id,
-                                payload={"url": cmd.payload.get("url", ""),
-                                         "kind": cmd.kind,
-                                         "doc_id": self._doc_id[tab],
-                                         "frame_id": self._frame_id[tab],
-                                         "navigation_id": nav_id})
+                                frame_spec=_spec, payload=_p)
             return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
                             navigation_id=nav_id,
                             payload={"url": cmd.payload.get("url", ""),
@@ -362,9 +420,14 @@ class DocumentProcessWorker:
         # R7-A02 第 2 点 — 真实文档工作：tab 已有 DocumentState
         # （resize / scroll 重排，不重建 Host、不重跑脚本）时在 worker
         # 内执行。navigate 的 html 路径已在上面处理。
+        _rendered = False
         if tab in self._doc_states and cmd.kind in (DOC_CMD_RESIZE,
                                                     DOC_CMD_SCROLL):
+            # R7-A02 第 4 点 — 用 buffer id 是否推进判定"本次命令
+            # 是否真实产出新像素"（只给本命令渲染出的帧挂布局）。
+            _bid0 = self._last_buffer_id.get(tab, 0)
             _err = self._do_doc_work(tab, cmd, cmd.payload)
+            _rendered = self._last_buffer_id.get(tab, 0) != _bid0
             # R7-A02 第 5 点 — 重排失败同样转该 tab 错误帧（不传播）
             if _err is not None:
                 self._frame_id[tab] += 1
@@ -383,10 +446,22 @@ class DocumentProcessWorker:
                             payload={"frame_id": self._frame_id[tab]})
         # input / resize / scroll：同文档 bump 帧（几何 / 编辑重算）
         self._frame_id[tab] += 1
+        _p = {"kind": cmd.kind,
+              "frame_id": self._frame_id[tab]}
+        # R7-A02 第 4 点 — 本命令真实渲染过 → 帧带连续 buffer 布局
+        # （frame_spec + payload buffer 句柄）；未渲染（input / 无
+        # DocumentState 的 resize）→ 纯身份帧（不挂旧位图的布局）。
+        _spec = None
+        if _rendered:
+            bm = self._last_bitmap.get(tab)
+            if bm is not None:
+                _spec = FrameBufferSpec(format="rgb8",
+                                        width=int(bm.width),
+                                        height=int(bm.height))
+                _p["buffer"] = self.buffer_handle_for(tab)
         return DocFrame(tab_id=tab, seq=cmd.seq, ok=True,
                         navigation_id=cmd.navigation_id or self._nav_id[tab],
-                        payload={"kind": cmd.kind,
-                                 "frame_id": self._frame_id[tab]})
+                        frame_spec=_spec, payload=_p)
 
     # -- 关标签 -------------------------------------------------------------
 
@@ -396,7 +471,7 @@ class DocumentProcessWorker:
         dropped = 0
         for m in (self._doc_id, self._nav_epoch, self._frame_id,
                   self._nav_id, self._doc_states, self._last_bitmap,
-                  self._last_doc_error):
+                  self._last_doc_error, self._last_buffer_id):
             if tab_id in m:
                 del m[tab_id]
                 dropped = 1
@@ -1238,6 +1313,27 @@ class DocProcessServer:
         False），调用点据此判 WORKER_IPC 而非 WORKER_FULL——不据
         "子进程 spawn 了"宣称已多核渲染。"""
         return self._worker.has_done_doc_work()
+
+    def last_bitmap_for(self, tab_id: int):
+        """R7-A02 第 4 点 — 该 tab 最近渲染的位图（呈现层取真实像素）。
+
+        读**父进程内置同步 worker**（回退态真实文档工作发生在此，
+        父进程同进程可直接取像素）。**不冒充通过**：子进程存活
+        （多核态）时位图在子进程里，本方法返回 None——父进程不
+        代子进程"变"出像素；跨进程像素传递（共享内存）留活显示
+        批次，多核态呈现层据此走"仅布局"路径（见
+        :meth:`buffer_handle_for` 与 gui
+        :meth:`_r7_a02_apply_frame_buffer`）。"""
+        return self._worker.last_bitmap(tab_id)
+
+    def buffer_handle_for(self, tab_id: int):
+        """R7-A02 第 4 点 — 该 tab 最近渲染帧的 buffer 句柄（布局描述：
+        ``{id, size, format, width, height}``，不携带像素数据）。
+
+        与 :meth:`last_bitmap_for` 同源（父进程内置同步 worker）；
+        子进程存活时同样返回 None（父进程无子进程侧句柄表——
+        多核态帧自带句柄随 pipe 传回，呈现层直接用帧上的）。"""
+        return self._worker.buffer_handle_for(tab_id)
 
     # -- 命令投递（UI 主线程 → 文档进程，轻量不阻塞） ------------------------
 
