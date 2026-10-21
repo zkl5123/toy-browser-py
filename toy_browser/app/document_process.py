@@ -306,29 +306,37 @@ class DocumentProcessWorker:
     def buffer_handle_for(self, tab: int):
         """R7-A02 第 4 点 — 该 tab 最近渲染帧的 **buffer 句柄**（布局
         描述，:class:`FramePayloadContract` 白名单内的有限 dict：
-        ``{id, size, format, width, height}``）。
+        ``{id, size, format, width, height, shared}``）。
 
         * ``size`` = :meth:`FrameBufferSpec.total_bytes`
           （``width × height × 3``，rgb8）——父进程据此申请 / 校验
           buffer 大小，**不**逐像素复制；
-        * 句柄**不**携带像素数据本身（像素留 worker；回退态父进程经
-          :meth:`last_bitmap` 取，多核态跨进程共享段留活显示批次）；
+        * ``shared`` = 该帧像素的**跨进程共享段名**（
+          :mod:`toy_browser.app.frame_shared` 命名段；worker 把像素
+          写进共享段、父进程经同一句柄名只读 + 逐字节校验）；句柄
+          **不**携带像素数据本身；
         * 未渲染过返回 None（该 tab 无像素帧）。
 
-        **不冒充通过**：多核态（子进程存活）下父进程拿到句柄也只能
-        描述布局——像素是否已到父进程由呈现层按
-        :meth:`DocProcessServer.is_spawned` 如实区分，不把"有句柄"
-        当"已共享像素"。
+        **不冒充通过**：句柄的 ``shared`` 名只是"像素在哪"的引用；
+        像素是否真跨进程到了父进程，由呈现层经
+        :mod:`toy_browser.app.frame_shared` 的
+        :func:`verify_shared_frame` 逐字节校验（多核态不再恒
+        layout_only，但"未校验"仍按 layout_only 如实计——见 gui
+        ``_r7_a02_apply_frame_buffer``）。
         """
         bm = self._last_bitmap.get(tab)
         if bm is None:
             return None
         w, h = int(bm.width), int(bm.height)
+        from toy_browser.app.frame_shared import shared_segment_name
+        shared_name = shared_segment_name(
+            int(self._last_buffer_id.get(tab, 0)))
         return {"id": int(self._last_buffer_id.get(tab, 0)),
                 "size": w * h * 3,
                 "format": "rgb8",
                 "width": w,
-                "height": h}
+                "height": h,
+                "shared": shared_name}
 
     def has_done_doc_work(self) -> bool:
         """R7-A02 第 6 点 — 本 worker 是否执行过**真实**文档工作

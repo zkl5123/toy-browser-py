@@ -37,8 +37,10 @@ _WHITELIST_KEYS = frozenset({
 
 # buffer 句柄 dict 内允许的键（只描述"这块像素在哪 / 多大 / 什么
 # 格式"，不携带像素数据本身——像素留在 worker / 共享段，父进程读
-# 句柄不读像素）。
-_HANDLE_KEYS = frozenset({"id", "size", "format", "width", "height"})
+# 句柄不读像素）。``shared`` 是跨进程共享段名（frame_shared 命名
+# 段；父进程据此定位像素，见 R7-A02 第 4 点活显示批次）。
+_HANDLE_KEYS = frozenset({"id", "size", "format", "width", "height",
+                          "shared"})
 
 # 有限字符串上限（审计第 5 点"日志只记录有限摘要"同口径，防 worker
 # 把大文本 / 对象 repr 塞进 payload）。
@@ -223,6 +225,16 @@ class FramePayloadContract:
                     reasons.append(
                         f"buffer.{key} must be non-negative int, got "
                         f"{val!r}")
+            elif key == "shared":
+                # 跨进程共享段名（frame_shared 命名段；str 或 None 表
+                # 本帧未走共享段）。父进程据此定位像素，仍"不携带像素
+                # 数据本身"。
+                if val is not None and not (
+                        isinstance(val, str)
+                        and len(val) <= _MAX_STR_LEN):
+                    reasons.append(
+                        f"buffer.shared must be str<={_MAX_STR_LEN} or "
+                        f"None, got {type(val).__name__}")
         return reasons
 
 

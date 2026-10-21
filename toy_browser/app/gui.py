@@ -1842,8 +1842,16 @@ class TabBrowser:
         except Exception:
             spawned = False
         if server is None or spawned:
-            # 多核态：句柄只描述布局，像素跨进程传递留活显示批次
-            # （共享内存）——如实计 layout_only，不应用、不宣称。
+            # 多核态：像素在子进程。若句柄带跨进程共享段名（shared），
+            # 经 :mod:`toy_browser.app.frame_shared` 只读 + 逐字节校验
+            # 后应用（像素真跨进程到了父进程，不再恒 layout_only）；
+            # 无共享段名 / 校验失败 → 如实计 layout_only（不冒充已共享）。
+            img = self._r7_a02_read_shared_frame(
+                handle, spec)
+            if img is not None:
+                self._r7_a02_buffer_applied = \
+                        getattr(self, '_r7_a02_buffer_applied', 0) + 1
+                return img
             self._r7_a02_buffer_layout_only = \
                     getattr(self, '_r7_a02_buffer_layout_only', 0) + 1
             return None
@@ -1880,6 +1888,61 @@ class TabBrowser:
     # ------------------------------------------------------------------
     # G01/G05 — scroll protocol and wheel routing (extracted for testability)
     # ------------------------------------------------------------------
+
+    def _r7_a02_read_shared_frame(self, handle, spec):
+        """R7-A02 第 4 点（活显示批次）— 多核态经**跨进程共享段**读
+        取帧像素（worker 已把像素写进命名段，父进程只读 + 逐字节
+        校验）。
+
+        方案第 4 点："帧用连续 buffer 或受控共享内存……父进程不接触
+        worker 内部 Host。"本方法是多核态消费点：
+
+        - 句柄带 ``shared`` 段名 → attach 同名共享段，按
+          :class:`CPUImage` 几何只读出像素，构造 :class:`CPUImage`
+          返回（供呈现层应用）；
+        - 句柄无 ``shared`` / shared_memory 不可用 / 段不存在 /
+          几何越段 → 返回 None（调用方计 layout_only，**不冒充**
+          "像素已共享"）。
+
+        不持有段所有权（段由 worker 侧创建 / 父进程侧 close 清理，
+        见 :mod:`toy_browser.app.frame_shared`）。
+        """
+        if not handle:
+            return None
+        shared_name = handle.get("shared")
+        if not shared_name:
+            return None
+        try:
+            from toy_browser.app import frame_shared as _fs
+            from multiprocessing import shared_memory as _shm_mod
+            from toy_browser.rendering import cpu_image as _cpuimg
+        except Exception:
+            return None
+        w = int(spec.width)
+        h = int(spec.height)
+        try:
+            seg = _shm_mod.SharedMemory(name=shared_name, create=False)
+        except Exception:
+            # 段不存在（worker 尚未写 / 已被清理）→ 不冒充已共享。
+            return None
+        try:
+            probe = _fs.create_shared_segment(
+                shared_name, w * h * 3, width=w, height=h, create=False)
+            segobj = _fs.SharedFrameSegment(
+                probe.handle if probe.acquired else None, seg)
+            raw = _fs.read_frame_from_shared(segobj, w, h)
+            if raw is None:
+                return None
+            img = _cpuimg.CPUImage(width=w, height=h)
+            img.buffer = raw
+            return img
+        except Exception:
+            return None
+        finally:
+            try:
+                seg.close()
+            except Exception:
+                pass
 
     def handle_scroll_command(self, tab_id: int, operation: str, *args) -> None:
         """G01 — Tk scrollbar command handler, extracted for independent
@@ -2303,10 +2366,11 @@ class TabBrowser:
             parts.append(f"cancel={ct.describe()}")
         parts.append(
             f"stale_dropped={getattr(self, '_r7_a02_stale_dropped', 0)}")
-        # R7-A02 第 4 点 — 连续帧 buffer 呈现层消费（applied=回退态
-        # 真实像素已应用；layout_only=多核态仅布局；rejected=布局/
-        # 句柄不合法被拒）。layout_only 非 0 且 applied 恒 0 = 多核
-        # 态尚未跨进程传像素（活显示批次），不宣称"已共享"。
+        # R7-A02 第 4 点 — 连续帧 buffer 呈现层消费（applied=真实像素
+        # 已应用：回退态经 last_bitmap、多核态经跨进程共享段；
+        # layout_only=多核态无共享段/校验失败仅布局；rejected=布局/
+        # 句柄不合法被拒）。多核态句柄带 shared 段名时不再恒
+        # layout_only（活显示批次落地跨进程像素共享判定）。
         parts.append(
             "buffer="
             f"applied:{getattr(self, '_r7_a02_buffer_applied', 0)}"

@@ -85,9 +85,12 @@ def test_whitelist_keys_are_finite():
         "navigation_id", "error_category", "buffer"}), \
         "可见面白名单须封闭（防 worker 偷塞对象图）"
     # buffer 句柄只描述像素引用，不得携带像素数据本身。
+    # R7-A02 第 4 点活显示批次：新增 "shared"（跨进程共享段名，
+    # frame_shared.shared_segment_name 生成；只描述"像素在哪"，不传
+    # 像素数据本身）→ 句柄键集封闭为 6 键。
     assert _HANDLE_KEYS == frozenset({
-        "id", "size", "format", "width", "height"}), \
-        "buffer 句柄键须封闭（只描述位置/大小/格式，不传像素）"
+        "id", "size", "format", "width", "height", "shared"}), \
+        "buffer 句柄键须封闭（只描述位置/大小/格式/共享段引用，不传像素）"
     assert "pixels" not in _HANDLE_KEYS and "data" not in _HANDLE_KEYS
 
 
