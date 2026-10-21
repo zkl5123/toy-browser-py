@@ -1718,6 +1718,38 @@ class HttpClient:
         """
         if not isinstance(url, URL):
             url = parse_url(url)
+        # R7-S02 第 6 点 — 与 GET 同口径的**发送前**判定：提供
+        # request_context 时先判（deadline / 混合内容阻断 / 未知
+        # destination / 不支持的 scheme 或 mode / same-origin-mode
+        # 却跨源 / CSP 拒绝）。被禁的请求**不发包**，返回带原因的
+        # 占位响应（ok=False、status=0、denied=decision）——绝不
+        # "先发再丢"（方案第 6 点"被禁止请求不得先发包再丢响应"）。
+        # 放在 scheme raise **之前**：GET 路径无 scheme raise（由
+        # evaluate_request 统一拒绝），POST 必须同口径——否则带
+        # request_context 的 POST 对 ftp:// 抛异常而 GET 返回
+        # denied 占位，两边行为不一致。无 request_context 的旧
+        # 调用方保持 UnsupportedScheme 抛出（legacy 契约不变）。
+        # 旧缺陷：POST 路径只把 decision 用于预检标记，从不检查
+        # ``decision.allowed``——CSP / scheme / 混合内容拒绝的 POST
+        # 照样发出（GET 路径早已拦截，两边行为不一致）。
+        if request_context is not None:
+            decision = self._admit_request_context(request_context,
+                                                    now=now)
+            if not decision.allowed:
+                _doc_origin = request_context.document_origin or ""
+                _stripped = self._strip_cross_origin_headers(
+                    headers, _doc_origin, url)
+                return HttpResponse(
+                    status=0, status_text="denied",
+                    headers={}, body=b"",
+                    final_url=url.to_string(),
+                    denied=decision,
+                    denied_headers=_stripped,
+                )
+            # 允许 → 跨源剥敏感头（fetch §4.6），与 GET 一致。
+            _doc_origin = request_context.document_origin or ""
+            headers = self._strip_cross_origin_headers(
+                headers, _doc_origin, url)
         if url.scheme not in ("http", "https"):
             raise UnsupportedScheme(url.scheme)
         m = (method or "POST").upper()

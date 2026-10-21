@@ -814,6 +814,96 @@ def test_s02_fetch_resource_csp_denied_returns_none():
 
 
 @_reg
+def test_s02_post_denied_csp_does_not_hit_wire():
+    """R7-S02 第 6 点 — CSP 拒绝的 POST 在发送前被拒，**不发包**
+    （服务端 POST 计数为 0），落地 status=0 + denied。
+
+    回归锁定：旧缺陷——POST 路径只把 request_context 的 decision
+    用于预检标记，从不检查 ``decision.allowed``，导致 CSP 拒绝的
+    POST 照样发出（GET 路径早已拦截，两边行为不一致）。
+    """
+    srv, port, counts = _start_server({
+        ("POST", "/api"): (200, "application/json", b"{}", []),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        target = f"http://127.0.0.1:{port}/api"
+        # 文档源用 http://（若用 https://，混合内容判定会先于 CSP
+        # 命中——那是第 3 点的正确行为，但本测试要锁定的是 CSP
+        # 拒绝路径本身）。
+        policy = DocumentPolicy(
+            doc_origin="http://a.test/",
+            csp_directives=parse_csp_directives("connect-src 'none'"))
+        ctx = _rc.context_for_destination(
+            "http://a.test/", target, _rc.DEST_XHR, policy=policy)
+        ctx.method = "POST"
+        resp = c.post(target, data="a=1", request_context=ctx)
+        assert resp.status == 0 and resp.denied is not None, \
+            f"CSP-forbidden POST must be pre-denied: {resp.status}"
+        assert resp.denied.blocked_by == "csp", \
+            f"denied reason must be csp: {resp.denied.blocked_by}"
+        assert counts.get(("POST", "/api"), 0) == 0, \
+            f"CSP-forbidden POST must not hit the wire: {counts}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_s02_post_denied_unknown_scheme_does_not_hit_wire():
+    """R7-S02 第 6 点 — 不支持的 scheme 的 POST 同样发送前被拒
+    （与 GET 同口径，不发包）。"""
+    c = HttpClient()
+    ctx = _rc.context_for_destination(
+        "https://a.test/", "ftp://a.test/x", _rc.DEST_XHR)
+    ctx.method = "POST"
+    resp = c.post("ftp://a.test/x", data="a=1", request_context=ctx)
+    assert resp.status == 0 and resp.denied is not None, \
+        f"unsupported scheme POST must be pre-denied: {resp.status}"
+    assert resp.denied.blocked_by == "scheme"
+    c.close_pool()
+
+
+@_reg
+def test_s02_post_denied_mixed_content_blockable():
+    """R7-S02 第 3/6 点 — https 文档里的 http XHR（可阻断混合
+    内容）POST 在发送前被拒，不发包。"""
+    c = HttpClient()
+    ctx = _rc.context_for_destination(
+        "https://a.test/", "http://a.test/api", _rc.DEST_XHR)
+    ctx.method = "POST"
+    resp = c.post("http://a.test/api", data="a=1", request_context=ctx)
+    assert resp.status == 0 and resp.denied is not None, \
+        "blockable mixed content POST must be pre-denied"
+    assert resp.denied.blocked_by == "mixed-content"
+    c.close_pool()
+
+
+@_reg
+def test_s02_post_allowed_still_hits_wire():
+    """R7-S02 第 6 点 — 反向断言：无 CSP 拒绝的 POST 正常发出
+    （status=200），确认发送前判定没有把合法请求误拦。"""
+    srv, port, counts = _start_server({
+        ("POST", "/api"): (200, "application/json", b"{}", []),
+    })
+    try:
+        c = HttpClient(timeout=5.0)
+        target = f"http://127.0.0.1:{port}/api"
+        ctx = _rc.context_for_destination(
+            f"http://127.0.0.1:{port}/", target, _rc.DEST_XHR)
+        ctx.method = "POST"
+        resp = c.post(target, data="a=1", request_context=ctx)
+        assert resp.status == 200, \
+            f"same-origin POST must still be sent: {resp.status}"
+        assert resp.denied is None
+        assert counts.get(("POST", "/api"), 0) == 1, \
+            f"allowed POST must hit the wire: {counts}"
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
 def test_s02_subresource_context_derives_mode_credentials():
     """R7-S02 第 4 点 — 子资源 spec 派生 context：classic script
     （无 crossorigin）默认 no-cors + omit；module / crossorigin
