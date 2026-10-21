@@ -1054,6 +1054,12 @@ class PageInstance:
                 self._maybe_record_history(record_history)
             except net.FetchError as e:
                 # P32.5 — per-kind error-page copy.
+                # R7-A01 第 5 点 — error 页是合成页（非文档导航），必须
+                # 原子清空旧文档状态（DOM/Host/hit tree/timer），避免
+                # 残留上个文档的已卸载元素仍可被 hit-test 命中、旧
+                # 脚本宿主继续执行（审计验收"about/error 后旧元素不可
+                # 点击、旧脚本不执行"）。与 about: 路径 877 行同口径。
+                self._clear_document_state()
                 cat = net.categorize_fetch_error(e)
                 err_html = net.error_page_html(
                     f"HTTP {e.status}" if e.status else "Request failed",
@@ -1067,6 +1073,7 @@ class PageInstance:
                     "Connection error", f"Loading {url} failed: {e}",
                     category=cat,
                 )
+                self._clear_document_state()
                 self.load_html(err_html, "", w, h)
             return
         # last resort — show the not-supported stub.
