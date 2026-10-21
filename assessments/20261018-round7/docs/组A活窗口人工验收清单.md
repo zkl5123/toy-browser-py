@@ -8,9 +8,14 @@
 > **使用方法**：
 > 1. 在完整环境（3.11.9，RTX 3050 + Tk + rendercanvas）运行脚手架：
 >    ```bash
->    python -m toy_browser.app.live_acceptance --ime ni,hao --a11y-input <a11y.json>
+>    python -m toy_browser.app.live_acceptance --ime ni,hao \
+>      --a11y-input assessments/20261018-round7/a11y_sample.json
 >    ```
->    （不加 `--headless` 让 swapchain 窗口可见；`--out 报告.md` 落可签字报告）
+>    （`--a11y-input` 喂的 a11y 树文件可为**节点 list** 或**单根 dict**，
+>    样例 `assessments/20261018-round7/a11y_sample.json` 即单根 dict 形态；
+>    不加 `--headless` 让 swapchain 窗口可见；`--out 报告.md` 落可签字报告；
+>    `--keep` 让活窗口挂住直到你手动关窗、`--watch N` 倒计时自动销窗、
+>    `--no-wait` 非交互直接出报告）
 > 2. 对照下表的**人工判定项**，逐项确认现场证据；
 > 3. 在每条"签字"位填写判定人 + 日期；
 > 4. 有 FAIL 或证据缺失的项，**不得签字**，回到脚手架 / 代码修。
@@ -33,6 +38,13 @@ surface → `GPUBackend.present` 通路 + `SurfacePresentGate` 可观测差异�
 > 判定**的 OS 行为（屏幕可见性），必须由人在窗口可见时确认。缺
 > tkinter / wgpu / rendercanvas 任一 → 探针报 `UNSUPPORTED`，本行
 > 整项不得签字。
+>
+> **本机 DWM 边界（不冒充）**：在沙箱 / 远程桌面环境下，Tk 窗口的
+> wgpu screen surface 常**无法 present 到 DWM**（`present_committed=False`，
+> 画面提交不出去 → 窗口客户区空白）。此时 1.4 **不得据"窗口上屏"签字**，
+> 改据 `present_committed=False` + `frame_png` 截图**联合判读**；须
+> **真实桌面 GPU 环境**跑 `--keep` 肉眼看画面（渐变 + 红方块）才
+> 签 1.4。
 
 ---
 

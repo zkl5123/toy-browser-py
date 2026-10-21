@@ -487,14 +487,26 @@ def probe_screen_reader(a11y_input: Optional[str] = None,
     )
 
     # 取内部 a11y 树（文件 → 示例树 → 内置示例）。
+    # *a11y_input* 文件既可放**节点 list**（``[{"role":...}, ...]``），
+    # 也可放**单根 dict**（``{"role":..., "children":[...]}``）——两种都
+    # 归一化成 list 再往下走（否则 ``_count_nodes`` 对 dict 迭代会拿到
+    # key（str）→ 崩）。
     tree: list = []
     if a11y_input:
         try:
             with open(a11y_input, encoding="utf-8") as f:
-                tree = json.load(f)
+                loaded = json.load(f)
         except Exception as exc:
             return AcceptanceProbe(FAIL, title,
                                    reason=f"读 a11y 树失败: {exc!r}")
+        # 归一化：dict（单根）→ [dict]；list 原样；空/非法 → []。
+        if isinstance(loaded, dict):
+            tree = [loaded]
+        elif isinstance(loaded, list):
+            tree = loaded
+        else:
+            return AcceptanceProbe(FAIL, title,
+                                   reason="a11y 树须为节点 list 或单根 dict")
     elif sample_node:
         tree = [sample_node]
     else:
@@ -543,10 +555,20 @@ def probe_screen_reader(a11y_input: Optional[str] = None,
 
 
 def _count_nodes(tree: list) -> int:
-    """递归数 a11y 树节点数（证据用）。"""
+    """递归数 a11y 树节点数（证据用）。
+
+    入参应为节点 list（单根 dict 须先归一化为 ``[dict]``——
+    :func:`probe_screen_reader` 已做）。这里再对 dict 单根做一层
+    防御（dict → [dict]），避免误用崩溃。
+    """
+    if isinstance(tree, dict):
+        tree = [tree]
+
     def _c(ns):
         n = 0
         for x in ns or []:
+            if not isinstance(x, dict):
+                continue
             n += 1 + _c(x.get("children"))
         return n
     return _c(tree)

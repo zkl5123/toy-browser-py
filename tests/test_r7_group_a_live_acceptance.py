@@ -164,6 +164,68 @@ def test_screader_from_file_bad_path_is_fail():
     assert p.reason, "FAIL 必须带 reason（不冒充）"
 
 
+@_test
+def test_screader_from_file_single_root_dict_is_pass():
+    """--a11y-input 喂**单根 dict**（非 list）须归一化后正常驱动 → PASS。
+
+    回归缺陷：旧 ``_count_nodes`` 假定树是 list，文件喂单根 dict 时
+    ``_c(tree)`` 对 dict 迭代拿到 key（str）→ ``x.get`` 崩（AttributeError）。
+    修后 dict→[dict] 归一化，产 UIA 契约 + 事件流，恒可驱动 PASS。
+    """
+    import json
+    root_dir = os.path.dirname(__file__)
+    pth = os.path.join(root_dir, "_tmp_a11y_single_root.json")
+    with open(pth, "w", encoding="utf-8") as f:
+        json.dump({"role": "document", "name": "page", "children": [
+            {"role": "textbox", "name": "地址栏", "children": []},
+            {"role": "button", "name": "提交", "children": []},
+        ]}, f)
+    try:
+        p = _la.probe_screen_reader(a11y_input=pth)
+        assert p.status == _la.PASS, f"{p.status}: {p.reason}"
+        # 单根 dict 须被计数为节点（树里 1 根 + 2 子 = 3，加外层 root=1 →
+        # 探针把 a11y_input 作为 root.children，tree_size 至少覆盖到子节点）。
+        assert p.evidence.get("tree_size", 0) >= 3, p.evidence.get("tree_size")
+        assert p.evidence.get("uia_contract"), "PASS 必带 UIA 契约"
+        assert p.evidence.get("event_stream"), "PASS 必带事件流"
+        assert p.human_check, "PASS 必带人工判定项（读屏器读到留签字）"
+        assert not p.signed, "默认未签字"
+    finally:
+        if os.path.exists(pth):
+            os.remove(pth)
+
+
+@_test
+def test_screader_from_file_single_root_dict_is_pass():
+    """--a11y-input 喂**单根 dict**（非 list）须归一化后正常驱动 → PASS。
+
+    回归缺陷：旧 ``_count_nodes`` 假定树是 list，文件喂单根 dict 时
+    ``_c(tree)`` 对 dict 迭代拿到 key（str）→ ``x.get`` 崩（AttributeError）。
+    修后 dict→[dict] 归一化，产 UIA 契约 + 事件流，恒可驱动 PASS。
+    """
+    import json
+    root_dir = os.path.dirname(__file__)
+    pth = os.path.join(root_dir, "_tmp_a11y_single_root.json")
+    with open(pth, "w", encoding="utf-8") as f:
+        json.dump({"role": "document", "name": "page", "children": [
+            {"role": "textbox", "name": "地址栏", "children": []},
+            {"role": "button", "name": "提交", "children": []},
+        ]}, f)
+    try:
+        p = _la.probe_screen_reader(a11y_input=pth)
+        assert p.status == _la.PASS, f"{p.status}: {p.reason}"
+        # 单根 dict 须被计数为节点（树里 1 根 + 2 子 = 3，加外层 root=1 →
+        # 探针把 a11y_input 作为 root.children，tree_size 至少覆盖到子节点）。
+        assert p.evidence.get("tree_size", 0) >= 3, p.evidence.get("tree_size")
+        assert p.evidence.get("uia_contract"), "PASS 必带 UIA 契约"
+        assert p.evidence.get("event_stream"), "PASS 必带事件流"
+        assert p.human_check, "PASS 必带人工判定项（读屏器读到留签字）"
+        assert not p.signed, "默认未签字"
+    finally:
+        if os.path.exists(pth):
+            os.remove(pth)
+
+
 # ----------------------------------------------------------------------
 # 报告 / run_all
 # ----------------------------------------------------------------------

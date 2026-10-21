@@ -1,0 +1,43 @@
+{
+  "role": "document",
+  "name": "toy-browser 验收页",
+  "children": [
+    {
+      "role": "textbox",
+      "name": "地址栏",
+      "children": [
+        {
+          "role": "button",
+          "name": "前往",
+          "children": []
+        }
+      ]
+    },
+    {
+      "role": "textbox",
+      "name": "正文编辑框",
+      "children": []
+    },
+    {
+      "role": "button",
+      "name": "提交",
+      "children": []
+    },
+    {
+      "role": "dialog",
+      "name": "确认框",
+      "children": [
+        {
+          "role": "button",
+          "name": "确定",
+          "children": []
+        },
+        {
+          "role": "button",
+          "name": "取消",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
