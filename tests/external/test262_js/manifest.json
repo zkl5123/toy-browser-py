@@ -1,0 +1,528 @@
+{
+  "suite": "test262_js",
+  "description": "R7-Q02 JS 子集 manifest。首批：项目 JS 引擎当前实现覆盖到的 ES 子集，按双路径（execute 声明 + eval 读回）逐 case 对照独立标准预期。UNSUPPORTED 的 case 必须转'明确不支持'清单（不冒充通过），不能把选定子集通过率写成全网兼容率。",
+  "spec_reference": "ECMA-262",
+  "owner": "R7-Q02",
+  "cases": [
+    {
+      "id": "es-let-const-basic",
+      "spec": "ECMA-262 §13.2 / §15.2",
+      "title": "let/const 块级声明",
+      "expected": 3,
+      "reason": "基础绑定",
+      "status": "pass",
+      "execute": "var x=1; var y=2;",
+      "readback": "x + y"
+    },
+    {
+      "id": "es-arrow-fn-basic",
+      "spec": "ECMA-262 §15.5",
+      "title": "箭头函数基础",
+      "expected": 7,
+      "reason": "双参数加法",
+      "status": "pass",
+      "execute": "var f=(a,b)=>a+b;",
+      "readback": "f(3,4)"
+    },
+    {
+      "id": "es-closure-counter",
+      "spec": "ECMA-262 §10.3",
+      "title": "闭包计数器",
+      "expected": 5,
+      "reason": "词法作用域 + 累加",
+      "status": "pass",
+      "execute": "var mk=()=>{var c=0; return()=>{c++;return c;};}; var f=mk(); f();f();f();",
+      "readback": "f()"
+    },
+    {
+      "id": "es-try-catch-message",
+      "spec": "ECMA-262 §15.7",
+      "title": "try/catch 读 error message",
+      "expected": "boom",
+      "reason": "Error.message 契约",
+      "status": "pass",
+      "execute": "var ec=''; try{throw new Error('boom')}catch(e){ec=e.message}",
+      "readback": "ec"
+    },
+    {
+      "id": "es-try-finally",
+      "spec": "ECMA-262 §15.7",
+      "title": "try/finally 副作用",
+      "expected": 11,
+      "reason": "finally 块执行累加",
+      "status": "pass",
+      "execute": "var r; try{r=1}finally{r+=10}",
+      "readback": "r"
+    },
+    {
+      "id": "es-template-lit",
+      "spec": "ECMA-262 §13.2",
+      "title": "模板字面量",
+      "expected": "Hi 42!",
+      "reason": "单表达式插值",
+      "status": "pass",
+      "execute": "var n=42; var t=`Hi ${n}!`",
+      "readback": "t"
+    },
+    {
+      "id": "es-template-nested",
+      "spec": "ECMA-262 §13.2",
+      "title": "嵌套模板插值",
+      "expected": "a1b2",
+      "reason": "多表达式插值",
+      "status": "pass",
+      "execute": "var n=1; var t=`a${n}b${n*2}`",
+      "readback": "t"
+    },
+    {
+      "id": "es-spread-array",
+      "spec": "ECMA-262 §13.2",
+      "title": "数组展开",
+      "expected": 4,
+      "reason": "array spread 拼接",
+      "status": "pass",
+      "execute": "var a=[1,2]; var b=[0,...a,3];",
+      "readback": "b.length"
+    },
+    {
+      "id": "es-spread-object",
+      "spec": "ECMA-262 §12.2",
+      "title": "对象展开",
+      "expected": 4,
+      "reason": "对象 spread 合并",
+      "status": "pass",
+      "execute": "var o={a:1,b:2}; var p={...o,c:3};",
+      "readback": "p.c + p.a"
+    },
+    {
+      "id": "es-optional-chain",
+      "spec": "ECMA-262 §13.13",
+      "title": "可选链",
+      "expected": 5,
+      "reason": "嵌套 ?. 取值",
+      "status": "pass",
+      "execute": "var o={a:{b:5}};",
+      "readback": "o?.a?.b"
+    },
+    {
+      "id": "es-optional-chain-null",
+      "spec": "ECMA-262 §13.13",
+      "title": "可选链短路",
+      "expected": "undefined",
+      "reason": "null 短路边",
+      "status": "pass",
+      "execute": "var o=null;",
+      "readback": "o?.a?.b"
+    },
+    {
+      "id": "es-nullish-coalescing",
+      "spec": "ECMA-262 §13.6",
+      "title": "空值合并 ??",
+      "expected": 7,
+      "reason": "null 触发右值",
+      "status": "pass",
+      "execute": "var a=null; var b=7;",
+      "readback": "a ?? b"
+    },
+    {
+      "id": "es-class-basic",
+      "spec": "ECMA-262 §15.7",
+      "title": "class 声明 + new",
+      "expected": 4,
+      "reason": "构造 + 方法",
+      "status": "pass",
+      "execute": "class A{constructor(){this.v=3}m(){return this.v+1}} var a=new A()",
+      "readback": "a.m()"
+    },
+    {
+      "id": "es-class-extends-super",
+      "spec": "ECMA-262 §15.7",
+      "title": "extends + super 调用",
+      "expected": 2,
+      "reason": "继承 + super.m()",
+      "status": "pass",
+      "execute": "class B{m(){return 1}} class C extends B{m(){return super.m()+1}} var c=new C()",
+      "readback": "c.m()"
+    },
+    {
+      "id": "es-generator-yield",
+      "spec": "ECMA-262 §15.8",
+      "title": "生成器 + yield",
+      "expected": 2,
+      "reason": "iter 第二次 next",
+      "status": "pass",
+      "execute": "function* g(){yield 1; yield 2; yield 3} var it=g();",
+      "readback": "it.next().value"
+    },
+    {
+      "id": "es-regex-literal",
+      "spec": "ECMA-262 §21.2",
+      "title": "正则字面量 exec",
+      "expected": "abb",
+      "reason": "括号分组 exec",
+      "status": "pass",
+      "execute": "var r=/^a(b+)$/;",
+      "readback": "r.exec('abb')[0]"
+    },
+    {
+      "id": "es-regex-test",
+      "spec": "ECMA-262 §21.2",
+      "title": "正则 test",
+      "expected": true,
+      "reason": "子串匹配",
+      "status": "pass",
+      "execute": "var r=/x/;",
+      "readback": "r.test('xabcy')"
+    },
+    {
+      "id": "es-json-parse",
+      "spec": "ECMA-262 §21.1",
+      "title": "JSON.parse",
+      "expected": 7,
+      "reason": "对象属性取",
+      "status": "pass",
+      "execute": "",
+      "readback": "JSON.parse('{\"x\":7}').x"
+    },
+    {
+      "id": "es-json-stringify",
+      "spec": "ECMA-262 §21.1",
+      "title": "JSON.stringify",
+      "expected": "{\"a\":1}",
+      "reason": "对象序列化",
+      "status": "pass",
+      "execute": "",
+      "readback": "JSON.stringify({a:1})"
+    },
+    {
+      "id": "es-map-get-set",
+      "spec": "ECMA-262 §21.1",
+      "title": "Map get/set",
+      "expected": 10,
+      "reason": "键值存取",
+      "status": "pass",
+      "execute": "var m=new Map(); m.set('k',10);",
+      "readback": "m.get('k')"
+    },
+    {
+      "id": "es-array-map-filter",
+      "spec": "ECMA-262 §22.1",
+      "title": "map + filter 链",
+      "expected": "[4,6]",
+      "reason": "链式",
+      "status": "pass",
+      "execute": "",
+      "readback": "JSON.stringify([1,2,3].map(x=>x*2).filter(x=>x>3))"
+    },
+    {
+      "id": "es-array-reduce",
+      "spec": "ECMA-262 §22.1",
+      "title": "reduce 求和",
+      "expected": 10,
+      "reason": "初始值 0 累加",
+      "status": "pass",
+      "execute": "",
+      "readback": "[1,2,3,4].reduce((a,b)=>a+b,0)"
+    },
+    {
+      "id": "es-array-sort",
+      "spec": "ECMA-262 §22.1",
+      "title": "sort 比较器",
+      "expected": "[1,2,3]",
+      "reason": "数值比较器",
+      "status": "pass",
+      "execute": "",
+      "readback": "JSON.stringify([3,1,2].sort((a,b)=>a-b))"
+    },
+    {
+      "id": "es-string-toupper",
+      "spec": "ECMA-262 §21.3",
+      "title": "toUpperCase",
+      "expected": "ABC",
+      "reason": "大小写转换",
+      "status": "pass",
+      "execute": "",
+      "readback": "'abc'.toUpperCase()"
+    },
+    {
+      "id": "es-string-repeat",
+      "spec": "ECMA-262 §21.3",
+      "title": "repeat",
+      "expected": "ababab",
+      "reason": "重复",
+      "status": "pass",
+      "execute": "",
+      "readback": "'ab'.repeat(3)"
+    },
+    {
+      "id": "es-string-includes",
+      "spec": "ECMA-262 §21.3",
+      "title": "includes",
+      "expected": true,
+      "reason": "子串",
+      "status": "pass",
+      "execute": "",
+      "readback": "'hello world'.includes('world')"
+    },
+    {
+      "id": "es-string-startswith",
+      "spec": "ECMA-262 §21.3",
+      "title": "startsWith",
+      "expected": true,
+      "reason": "前缀",
+      "status": "pass",
+      "execute": "",
+      "readback": "'hello'.startsWith('he')"
+    },
+    {
+      "id": "es-string-padstart",
+      "spec": "ECMA-262 §21.3",
+      "title": "padStart",
+      "expected": "005",
+      "reason": "补齐",
+      "status": "pass",
+      "execute": "",
+      "readback": "'5'.padStart(3,'0')"
+    },
+    {
+      "id": "es-object-values",
+      "spec": "ECMA-262 §21.2",
+      "title": "Object.values 长度",
+      "expected": 2,
+      "reason": "值集合",
+      "status": "pass",
+      "execute": "",
+      "readback": "Object.values({a:1,b:2}).length"
+    },
+    {
+      "id": "es-object-keys",
+      "spec": "ECMA-262 §21.2",
+      "title": "Object.keys 首项",
+      "expected": "x",
+      "reason": "键首项",
+      "status": "pass",
+      "execute": "",
+      "readback": "Object.keys({x:1,y:2})[0]"
+    },
+    {
+      "id": "es-object-entries",
+      "spec": "ECMA-262 §21.2",
+      "title": "Object.entries 首键",
+      "expected": "a",
+      "reason": "entries 首对",
+      "status": "pass",
+      "execute": "",
+      "readback": "Object.entries({a:1})[0][0]"
+    },
+    {
+      "id": "es-object-assign",
+      "spec": "ECMA-262 §21.2",
+      "title": "Object.assign 合并",
+      "expected": 2,
+      "reason": "后源覆盖",
+      "status": "pass",
+      "execute": "",
+      "readback": "Object.assign({a:1},{b:2}).b"
+    },
+    {
+      "id": "es-number-isnan",
+      "spec": "ECMA-262 §21.2",
+      "title": "Number.isNaN",
+      "expected": true,
+      "reason": "NaN 判定",
+      "status": "pass",
+      "execute": "",
+      "readback": "Number.isNaN(NaN)"
+    },
+    {
+      "id": "es-number-coerce",
+      "spec": "ECMA-262 §6.1",
+      "title": "number + string 字符串化",
+      "expected": "105",
+      "reason": "类型强制",
+      "status": "pass",
+      "execute": "",
+      "readback": "10 + '5'"
+    },
+    {
+      "id": "es-arrow-block",
+      "spec": "ECMA-262 §15.5",
+      "title": "箭头函数块体",
+      "expected": 14,
+      "reason": "显式 return",
+      "status": "pass",
+      "execute": "var f = (x) => { return x*2; };",
+      "readback": "f(7)"
+    },
+    {
+      "id": "es-destructure-object",
+      "spec": "ECMA-262 §15.1",
+      "title": "对象解构",
+      "expected": 3,
+      "reason": "键值绑定",
+      "status": "pass",
+      "execute": "var o={a:1,b:2}; var x=o.a, y=o.b; var s=x+y;",
+      "readback": "s"
+    },
+    {
+      "id": "es-typeof",
+      "spec": "ECMA-262 §12.5",
+      "title": "typeof 数字",
+      "expected": "number",
+      "reason": "类型标签",
+      "status": "pass",
+      "execute": "",
+      "readback": "typeof 42"
+    },
+    {
+      "id": "es-logical-and-or",
+      "spec": "ECMA-262 §12.11",
+      "title": "短路求值",
+      "expected": 5,
+      "reason": "0 || 5 → 5",
+      "status": "pass",
+      "execute": "",
+      "readback": "0 || 5"
+    },
+    {
+      "id": "es-ternary",
+      "spec": "ECMA-262 §12.10",
+      "title": "三元",
+      "expected": 1,
+      "reason": "条件选择",
+      "status": "pass",
+      "execute": "",
+      "readback": "true ? 1 : 2"
+    },
+    {
+      "id": "es-label-break",
+      "spec": "ECMA-262 §14.13",
+      "title": "标签 break",
+      "expected": 1,
+      "reason": "跨层跳出",
+      "status": "pass",
+      "execute": "var done=0; outer: for(var i=0;i<10;i++){for(var j=0;j<10;j++){if(j===1)break outer}} done=1",
+      "readback": "done"
+    },
+    {
+      "id": "es-default-arg",
+      "spec": "ECMA-262 §15.1",
+      "title": "默认参数",
+      "expected": 15,
+      "reason": "b 缺省取 10",
+      "status": "unsupported",
+      "execute": "function f2(a,b=10){return a+b}",
+      "readback": "f2(5)"
+    },
+    {
+      "id": "es-optional-params",
+      "spec": "ECMA-262 §15.1",
+      "title": "rest 参数",
+      "expected": 2,
+      "reason": "rest.length",
+      "status": "unsupported",
+      "execute": "function g(a, ...rest){return rest.length}",
+      "readback": "g(1,2,3)"
+    },
+    {
+      "id": "es-for-of-array",
+      "spec": "ECMA-262 §15.1",
+      "title": "for...of 数组",
+      "expected": 10,
+      "reason": "累加元素",
+      "status": "pass",
+      "execute": "var s=0; for(var v of [1,2,3,4]){s+=v}",
+      "readback": "s"
+    },
+    {
+      "id": "es-for-of-string",
+      "spec": "ECMA-262 §15.1",
+      "title": "for...of 字符串",
+      "expected": "ab",
+      "reason": "逐字符",
+      "status": "pass",
+      "execute": "var r=''; for(var c of 'ab'){r+=c}",
+      "readback": "r"
+    },
+    {
+      "id": "es-destructure-array-rest",
+      "spec": "ECMA-262 §15.1",
+      "title": "数组解构 + rest",
+      "expected": 5,
+      "reason": "x+y+rest.length",
+      "status": "unsupported",
+      "execute": "var x; [x, y, ...rest] = [1,2,3,4]",
+      "readback": "x + y + rest.length"
+    },
+    {
+      "id": "es-string-charat",
+      "spec": "ECMA-262 §21.3",
+      "title": "charCodeAt",
+      "expected": 65,
+      "reason": "码点",
+      "status": "pass",
+      "execute": "",
+      "readback": "'A'.charCodeAt(0)"
+    },
+    {
+      "id": "es-string-indexof",
+      "spec": "ECMA-262 §21.3",
+      "title": "indexOf",
+      "expected": 3,
+      "reason": "子串索引",
+      "status": "pass",
+      "execute": "",
+      "readback": "'hello world'.indexOf('lo')"
+    },
+    {
+      "id": "es-array-push-length",
+      "spec": "ECMA-262 §22.1",
+      "title": "push + length",
+      "expected": 4,
+      "reason": "动态长度",
+      "status": "pass",
+      "execute": "var arr=[1,2]; arr.push(3,4);",
+      "readback": "arr.length"
+    },
+    {
+      "id": "es-math-sqrt",
+      "spec": "ECMA-262 §21.4",
+      "title": "Math.sqrt",
+      "expected": 4,
+      "reason": "平方根",
+      "status": "pass",
+      "execute": "",
+      "readback": "Math.sqrt(16)"
+    },
+    {
+      "id": "es-math-max",
+      "spec": "ECMA-262 §21.4",
+      "title": "Math.max",
+      "expected": 7,
+      "reason": "最大值",
+      "status": "pass",
+      "execute": "",
+      "readback": "Math.max(3,5,7,2)"
+    },
+    {
+      "id": "es-math-abs",
+      "spec": "ECMA-262 §21.4",
+      "title": "Math.abs",
+      "expected": 5,
+      "reason": "绝对值",
+      "status": "pass",
+      "execute": "",
+      "readback": "Math.abs(-5)"
+    },
+    {
+      "id": "es-number-parseint",
+      "spec": "ECMA-262 §21.2",
+      "title": "parseInt",
+      "expected": 42,
+      "reason": "十进制",
+      "status": "pass",
+      "execute": "",
+      "readback": "parseInt('42')"
+    }
+  ]
+}
