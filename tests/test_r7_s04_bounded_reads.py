@@ -37,6 +37,7 @@ from toy_browser.network.net import (
     fetch_resource,
     gunzip_bounded,
     maybe_gunzip,
+    parse_url,
 )
 
 TESTS = []
@@ -361,6 +362,89 @@ def test_over_limit_connection_not_pooled_and_client_recovers():
             f"over-limit connection must not be pooled: {c._conn_pool}"
         resp = c.get(f"http://127.0.0.1:{port}/after")
         assert resp.status == 200 and resp.body == b"ok", resp
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_loopback_post_129_rejected_128_ok():
+    """S04 验收原文 — "128 字节限额拒绝 129 字节 POST"：129-byte
+    POST 响应在 128-byte 实例上限下被拒，128-byte 边界放行。
+
+    （既有 ``test_loopback_post_over_cap_rejected`` 用的是 4096 字节；
+    本测试锁定验收条款点名的 129/128 边界。）"""
+    srv, port = _start_server({
+        ("POST", "/big"): (200, "text/plain", b"P" * 129, {}),
+        ("POST", "/ok"): (200, "text/plain", b"P" * 128, {}),
+    })
+    try:
+        c = HttpClient(timeout=5.0, max_response_bytes=128)
+        try:
+            c.post(f"http://127.0.0.1:{port}/big", data={"a": "b"})
+            raise AssertionError("129-byte POST body must be rejected")
+        except ResponseTooLarge:
+            pass
+        resp = c.post(f"http://127.0.0.1:{port}/ok", data={"a": "b"})
+        assert resp.body == b"P" * 128, len(resp.body)
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_post_released_back_to_pool_after_success():
+    """R7-S04 第 3 点 — "取消后连接与任务计数收敛"：成功 POST 的
+    keep-alive 连接必须**归回**可复用池（与 GET 同口径），而
+    超限 / 取消路径的连接不进池。"""
+    srv, port = _start_server({
+        ("POST", "/ok"): (200, "text/plain", b"ok", {}),
+    })
+    try:
+        c = HttpClient(timeout=5.0, max_response_bytes=1024)
+        key = c._pool_key(parse_url(f"http://127.0.0.1:{port}/ok"))
+        resp = c.post(f"http://127.0.0.1:{port}/ok", data={"a": "b"})
+        assert resp.status == 200, resp.status
+        assert key in c._conn_pool, \
+            ("successful keep-alive POST must be returned to the pool "
+             f"(pool keys: {list(c._conn_pool)})")
+        c.close_pool()
+    finally:
+        srv.shutdown()
+
+
+@_reg
+def test_post_cancelled_connection_removed_from_pool():
+    """R7-S04 第 3 点 — "取消后连接与任务计数收敛"：取消的 POST
+    连接被**剔除**出池（``except RequestCancelled`` 分支），且
+    取消是**粘性终态**——后续请求在门禁处直接拒绝，不发包。"""
+    from toy_browser.network.request_budget import RequestCancelled
+    srv, port = _start_server({
+        ("POST", "/ok"): (200, "text/plain", b"ok", {}),
+        ("GET", "/after"): (200, "text/plain", b"ok", {}),
+    })
+    try:
+        c = HttpClient(timeout=5.0, max_response_bytes=1024)
+        key = c._pool_key(parse_url(f"http://127.0.0.1:{port}/ok"))
+        # 1) 未取消：POST 成功，连接归池。
+        resp = c.post(f"http://127.0.0.1:{port}/ok", data={"a": "b"})
+        assert resp.status == 200 and key in c._conn_pool
+        # 2) 取消：后续 GET 在门禁处被拒（不发包）；连接池收敛。
+        c.cancel("user aborted")
+        try:
+            c.get(f"http://127.0.0.1:{port}/after")
+            raise AssertionError("cancelled client must not send")
+        except RequestCancelled:
+            pass
+        # 3) 粘性终态：再次 get 仍然直接拒绝（不发包、不触碰连接）。
+        try:
+            c.get(f"http://127.0.0.1:{port}/after")
+            raise AssertionError("cancelled client is sticky")
+        except RequestCancelled:
+            pass
+        assert key not in c._conn_pool, \
+            ("cancelled client must not leave reusable connections "
+             f"(pool keys: {list(c._conn_pool)})")
         c.close_pool()
     finally:
         srv.shutdown()

@@ -1491,11 +1491,17 @@ class HttpClient:
             except rb.RequestCancelled:
                 # R7-S04 第 3 点 — 取消是粘性终态：连接关闭、不入池，
                 # 且不再重试（直接 re-raise 结束循环）。
+                # R7-S04 第 3 点（本批）— 同 POST 路径：取消后把该
+                # key 从池里剔除（池收敛；POST 的对应分支早已 pop，
+                # GET 侧此前漏了——池里会留下已关闭的连接，下次取用
+                # 才暴露）。
                 if conn is not None:
                     try:
                         conn.close()
                     except OSError:
                         pass
+                key = self._pool_key(url)
+                self._conn_pool.pop(key, None)
                 raise
             except (socket.timeout, socket.error,
                     http.client.HTTPException, OSError,
