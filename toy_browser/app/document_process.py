@@ -129,6 +129,26 @@ class DocFrame:
 # G07 step 4 — 文档进程 worker（进程内长期持有文档身份）
 # ---------------------------------------------------------------------------
 
+#: R7-A02 第 5 点 — 错误摘要最大长度（与 ``FramePayloadContract`` 的
+#: ``_MAX_STR_LEN`` 同口径：父进程只接收有限摘要，防 worker 把大
+#: 文本 / 对象 repr 塞进帧）。
+_MAX_ERROR_SUMMARY = 128
+
+
+def _limited_error_summary(exc: BaseException) -> str:
+    """R7-A02 第 5 点 — 把异常转成**有限摘要**（类别 + 截断消息）。
+
+    坏脚本 / 渲染失败的诊断只以有限摘要跨进程/跨层传递（审计
+    "日志只记录有限摘要"同口径）；不把 traceback / 宿主对象图带出
+    worker。
+    """
+    name = type(exc).__name__ or "Error"
+    msg = str(exc).strip() or "(no message)"
+    if len(msg) > 64:
+        msg = msg[:64] + "..."
+    return f"script:{name}:{msg}"[:_MAX_ERROR_SUMMARY]
+
+
 class DocumentProcessWorker:
     """G07 step 4 — 文档进程内的 worker（纯逻辑，可跨进程复用）。
 
@@ -169,16 +189,27 @@ class DocumentProcessWorker:
         # ``_do_doc_work`` 分支）。
         self._doc_states: dict[int, object] = {}
         self._last_bitmap: dict[int, object] = {}
+        # R7-A02 第 5 点 — 每 tab 最近一次文档工作错误摘要（坏脚本 /
+        # 渲染失败）：错误**不传播**出 worker（传播会杀死回退态的
+        # 父进程或子进程循环 → 整池挂 → 连累其他标签），转成该 tab
+        # 的错误帧（ok=False + error_category），其他 tab 不受影响。
+        self._last_doc_error: dict[int, str] = {}
         # R7-A02 第 6 点 — 标记本 worker 是否执行过**真实**文档工作
         # （解析 / 样式 / 布局 / 绘制）。:func:`detect_doc_work_mode`
         # 据此把模式判为 WORKER_FULL（而非据名称误判）；未执行过
         # 真实文档工作时保持 WORKER_IPC。
         self._has_done_doc_work: bool = False
 
-    # -- R7-A02 第 2 点 — 真实文档工作路径 ---------------------------------
+    # -- R7-A02 第 5 点 — 坏脚本隔离（单 tab 失败不连累其他标签） -------
+
+    def doc_error_for(self, tab: int):
+        """该 tab 最近一次文档工作错误摘要（有限长字符串；无错误
+        返回 None）。**不冒充通过**：只记录"这个 tab 失败了"，
+        不宣称错误原因已被完整诊断。"""
+        return self._last_doc_error.get(tab)
 
     def _do_doc_work(self, tab: int, cmd: "DocCommand",
-                     payload: dict) -> None:
+                     payload: dict):
         """R7-A02 第 2 点 — 在 worker 内执行真实文档工作（解析 / JS /
         样式 / 布局 / 绘制），复用 :func:`document_renderer.render_
         document_state` 管线（不重复造轮子，C01 唯一修改入口）。
@@ -199,6 +230,11 @@ class DocumentProcessWorker:
         :meth:`frame_spec_for` 描述布局，真实共享段执行留活显示
         批次；本批只落地"文档工作在 worker 进程执行"的判定与
         可测子集，不把"已共享像素"当通过。
+
+        R7-A02 第 5 点 — 坏脚本 / 渲染失败**不传播**：异常在本方法
+        内兜住，转成有限摘要（截断 + 类别）返回（None = 成功）。
+        传播会杀死回退态的父进程或子进程循环（→ 整池挂 → 连累
+        其他标签），那是审计点名的"坏脚本影响其他标签"。
         """
         from toy_browser.app import document_renderer as _rend
         html = payload.get("html", "")
@@ -206,28 +242,36 @@ class DocumentProcessWorker:
         width = int(payload.get("w", payload.get("width", 800)) or 800)
         height = int(payload.get("h", payload.get("height", 600)) or 600)
 
-        if cmd.kind == DOC_CMD_NAVIGATE:
-            doc = self._doc_states.get(tab)
-            if doc is None:
-                from toy_browser.app.document_state_full import DocumentState
-                doc = DocumentState()
-                self._doc_states[tab] = doc
-            # 网络等待（真实 navigate 时由调用方先 fetch 再经 payload
-            # 传 html；本层只做"拿到 html 后的解析 / 样式 / 布局 /
-            # 绘制"——网络等待在活显示批次接，本批标注"未实现"）。
-            if html:
-                bm = _rend.render_document_state(
-                    doc, html, css_text=css, width=width, height=height,
-                    base_url=payload.get("url", ""))
-                self._last_bitmap[tab] = bm
-                self._has_done_doc_work = True
-        elif cmd.kind in (DOC_CMD_RESIZE, DOC_CMD_SCROLL):
-            doc = self._doc_states.get(tab)
-            if doc is not None and doc.dom_tree is not None:
-                bm = _rend.render_document_state_restate(
-                    doc, css_text=css, width=width, height=height)
-                self._last_bitmap[tab] = bm
-                self._has_done_doc_work = True
+        try:
+            if cmd.kind == DOC_CMD_NAVIGATE:
+                doc = self._doc_states.get(tab)
+                if doc is None:
+                    from toy_browser.app.document_state_full import DocumentState
+                    doc = DocumentState()
+                    self._doc_states[tab] = doc
+                # 网络等待（真实 navigate 时由调用方先 fetch 再经 payload
+                # 传 html；本层只做"拿到 html 后的解析 / 样式 / 布局 /
+                # 绘制"——网络等待在活显示批次接，本批标注"未实现"）。
+                if html:
+                    bm = _rend.render_document_state(
+                        doc, html, css_text=css, width=width, height=height,
+                        base_url=payload.get("url", ""))
+                    self._last_bitmap[tab] = bm
+                    self._has_done_doc_work = True
+            elif cmd.kind in (DOC_CMD_RESIZE, DOC_CMD_SCROLL):
+                doc = self._doc_states.get(tab)
+                if doc is not None and doc.dom_tree is not None:
+                    bm = _rend.render_document_state_restate(
+                        doc, css_text=css, width=width, height=height)
+                    self._last_bitmap[tab] = bm
+                    self._has_done_doc_work = True
+        except Exception as e:
+            # 坏脚本 / 渲染失败 → 单 tab 错误摘要（不传播、不杀进程）
+            summary = _limited_error_summary(e)
+            self._last_doc_error[tab] = summary
+            return summary
+        self._last_doc_error.pop(tab, None)
+        return None
 
     def doc_state_for(self, tab: int):
         """R7-A02 第 2 点 — 该 tab 持有的 :class:`DocumentState`
@@ -280,7 +324,23 @@ class DocumentProcessWorker:
             # 取像素布局。无 html（网络等待留活显示批次）时只做
             # 身份 bump，不发渲染帧。
             if cmd.payload.get("html"):
-                self._do_doc_work(tab, cmd, cmd.payload)
+                _err = self._do_doc_work(tab, cmd, cmd.payload)
+                # R7-A02 第 5 点 — 坏脚本隔离：渲染失败 → 该 tab 的
+                # 错误帧（ok=False + error_category=script + 有限
+                # 摘要），**不**传播（传播会杀回退态父进程 / 子进程
+                # 循环，连累其他标签）。payload 只带白名单键 +
+                # error_category 摘要（<=128，过父进程可见面校验）。
+                if _err is not None:
+                    return DocFrame(tab_id=tab, seq=cmd.seq, ok=False,
+                                    error_category="script",
+                                    navigation_id=nav_id,
+                                    payload={
+                                        "url": cmd.payload.get("url", ""),
+                                        "kind": cmd.kind,
+                                        "doc_id": self._doc_id[tab],
+                                        "frame_id": self._frame_id[tab],
+                                        "navigation_id": nav_id,
+                                        "error_category": _err})
                 # R7-A02 第 2 点 — 真实文档工作帧：payload 只带白名单键
                 # （kind/url/frame_id/doc_id/navigation_id）；几何 w/h
                 # 不入帧 payload（非白名单，会被 FramePayloadContract
@@ -304,7 +364,16 @@ class DocumentProcessWorker:
         # 内执行。navigate 的 html 路径已在上面处理。
         if tab in self._doc_states and cmd.kind in (DOC_CMD_RESIZE,
                                                     DOC_CMD_SCROLL):
-            self._do_doc_work(tab, cmd, cmd.payload)
+            _err = self._do_doc_work(tab, cmd, cmd.payload)
+            # R7-A02 第 5 点 — 重排失败同样转该 tab 错误帧（不传播）
+            if _err is not None:
+                self._frame_id[tab] += 1
+                return DocFrame(tab_id=tab, seq=cmd.seq, ok=False,
+                                error_category="script",
+                                navigation_id=cmd.navigation_id
+                                or self._nav_id[tab],
+                                payload={"frame_id": self._frame_id[tab],
+                                         "error_category": _err})
         if cmd.kind == DOC_CMD_STOP:
             # 取消收尾：在途帧标 cancelled（G08 step 3 不强杀）
             self._frame_id[tab] += 1
@@ -326,7 +395,8 @@ class DocumentProcessWorker:
         返回被丢弃的 tab 计数（存在则 1，否则 0）。"""
         dropped = 0
         for m in (self._doc_id, self._nav_epoch, self._frame_id,
-                  self._nav_id, self._doc_states, self._last_bitmap):
+                  self._nav_id, self._doc_states, self._last_bitmap,
+                  self._last_doc_error):
             if tab_id in m:
                 del m[tab_id]
                 dropped = 1
@@ -946,8 +1016,21 @@ def _doc_process_child(cmd_q, result_q, stop_evt, close_q):
                 frame = worker.handle(cmd)
                 result_q.put(frame)
             except Exception as e:
-                result_q.put({"error": repr(e)})
-                break
+                # R7-A02 第 5 点 — 单条命令的意外异常**不得杀死子进程**：
+                # 旧行为是回 {"error": ...} 后 break（子进程退出 → 整池
+                # 挂 → 连累其他标签）。现在转成该 tab 的错误帧继续循环
+                # （坏脚本 / 坏命令只影响自己那个标签）。
+                try:
+                    result_q.put(DocFrame(
+                        tab_id=cmd.tab_id, seq=cmd.seq, ok=False,
+                        error_category="script",
+                        navigation_id=cmd.navigation_id,
+                        payload={"error_category":
+                                 _limited_error_summary(e)}))
+                except Exception:
+                    # 帧都构造不出（极端情况）才回退错误摘要，仍不退出。
+                    result_q.put({"error": repr(e)})
+                continue
             # 关标签队列：非阻塞取（G09 step 4 丢弃在途身份）
             try:
                 while True:
@@ -1095,6 +1178,14 @@ class DocProcessServer:
                 except Exception:
                     pass
                 natural = False  # forced_kill
+                # R7-A02 第 5 点 — terminate 是**异步**发信号：发完立即
+                # 查 is_alive() 可能仍为 True（进程还没死透），"关闭后
+                # 无遗留子进程"就不可测。补一次有界 join，让回收有界
+                # 且可断言。
+                try:
+                    self._proc.join(timeout=0.5)
+                except Exception:
+                    pass
             self._termination.complete(_time.monotonic(), natural=natural)
             self._on_spawned = False
         else:

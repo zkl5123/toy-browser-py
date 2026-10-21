@@ -1402,6 +1402,18 @@ class TabBrowser:
         # R7-A02 第 3 点 — 命令序号 + 被版本门控丢弃的旧帧计数。
         self._r7_a02_seq = 0
         self._r7_a02_stale_dropped = 0
+        # R7-A02 第 5 点 — 慢页隔离：按 (tab, navigation_id) 记录命令
+        # 提交时刻（单调值，由 :func:`time.monotonic` 取），过期未产
+        # 帧的 tab 标记慢页并丢弃其迟到帧（其他 tab 不受影响）。
+        # ``_r7_a02_slow_tab_timeout`` 默认 0 = **不启用**（不误伤真实
+        # spawn 的异步帧延迟）；启用后按预算隔离。
+        self._r7_a02_tasks: dict = {}
+        self._r7_a02_slow_tabs: set = set()
+        self._r7_a02_slow_tab_timeout: float = 0.0
+        self._r7_a02_slow_dropped: int = 0
+        # R7-A02 第 5 点 — 关窗顺序证据（先停任务 / 回收子进程，再
+        # 销毁 Tk root；测试断言这个顺序，不靠"看起来对"）。
+        self._g07_close_order: list = []
         # R7-A02 第 6 点 — 文档工作模式 + 能力声明校验（不靠名字
         # 宣称"已多核渲染"）+ 显式单进程调试模式。
         try:
@@ -1585,9 +1597,76 @@ class TabBrowser:
         if coalescer is not None:
             coalescer.push(cmd)
             if not flush:
+                self._r7_a02_note_task(cmd)
                 return True             # 攒批：被接纳，待 flush
-            return self._r7_a02_flush_commands() > 0
-        return bool(server.post(cmd))
+            ok = self._r7_a02_flush_commands() > 0
+        else:
+            ok = bool(server.post(cmd))
+        if ok:
+            self._r7_a02_note_task(cmd)
+        return ok
+
+    def _r7_a02_note_task(self, cmd) -> None:
+        """R7-A02 第 5 点 — 记录命令提交时刻（慢页隔离的计时起点）。
+
+        时钟由 :func:`time.monotonic` 注入（不读墙钟）；任务以
+        ``(tab_id, navigation_id)`` 为键——新导航自动解除该 tab 的
+        慢页隔离标记（旧任务的隔离不连累新页）。
+        """
+        import time as _time
+        from toy_browser.app.document_process import DOC_CMD_NAVIGATE
+        tasks = getattr(self, "_r7_a02_tasks", None)
+        if tasks is None:
+            tasks = {}
+            self._r7_a02_tasks = tasks
+        tasks[(cmd.tab_id, int(cmd.navigation_id or 0))] = _time.monotonic()
+        if cmd.kind == DOC_CMD_NAVIGATE:
+            slow = getattr(self, "_r7_a02_slow_tabs", None)
+            if slow is not None:
+                slow.discard(cmd.tab_id)
+
+    def _r7_a02_isolate_slow_tabs(self, frames, now: float) -> list:
+        """R7-A02 第 5 点 — 慢页隔离：过期未产帧的 tab 标记慢页，其
+        **迟到帧**不再进呈现层；其他 tab 的帧原样放行（慢页不连累
+        其他标签）。
+
+        * 帧到达（同 tab + navigation_id）→ 任务完成，移除计时；
+        * ``now`` 由调用方注入（:func:`time.monotonic`），本方法不
+          读时钟（纯判定）；
+        * ``_r7_a02_slow_tab_timeout <= 0``（默认）→ **不隔离**，
+          原样返回——不误伤真实 spawn 的异步帧延迟（不冒充通过：
+          隔离收益需活显示实测，本批只做可测判定层）。
+
+        **不冒充通过**：本方法不宣称"慢页期间 UI 心跳持续"（那需要
+        事件循环 tick + 非阻塞 worker，活显示批次）；它只保证"被
+        标记为慢的 tab 的迟到帧不覆盖新页、其他 tab 不受它影响"。
+        """
+        frames = list(frames or [])
+        timeout = float(getattr(self, "_r7_a02_slow_tab_timeout", 0.0) or 0.0)
+        if timeout <= 0:
+            return frames
+        tasks = getattr(self, "_r7_a02_tasks", None)
+        if tasks is None:
+            return frames
+        slow = getattr(self, "_r7_a02_slow_tabs", None)
+        if slow is None:
+            slow = set()
+            self._r7_a02_slow_tabs = slow
+        # 帧到达 = 任务完成（慢页的帧来了，就不再算它慢）
+        done = {(f.tab_id, int(f.navigation_id or 0)) for f in frames}
+        for key in list(tasks):
+            if key in done:
+                tasks.pop(key, None)
+        # 过期未产帧 → 该 tab 标记慢页（其迟到帧下面丢弃）
+        for key in list(tasks):
+            if now >= tasks[key] + timeout:
+                slow.add(key[0])
+                tasks.pop(key, None)
+                self._r7_a02_slow_dropped = getattr(
+                    self, "_r7_a02_slow_dropped", 0) + 1
+        if not slow:
+            return frames
+        return [f for f in frames if f.tab_id not in slow]
 
     def _r7_a02_flush_commands(self) -> int:
         """投递合并器里攒下的命令（按 seq 升序），返回成功投递条数。
@@ -1987,9 +2066,18 @@ class TabBrowser:
            导航的迟到帧（navigation_id 更小）与同导航内不推进的旧
            帧一律丢弃（"旧任务不可覆盖新页"）。
 
-        组件为 None 时两者 no-op，返回帧与既有行为一致。
+        R7-A02 第 5 点 — 慢页隔离先行：过期未产帧的 tab 的迟到帧
+        在版本门控**之前**就被隔离（其他 tab 不受慢页影响）。
+
+        组件为 None 时全部 no-op，返回帧与既有行为一致。
         """
+        import time as _time
         frames = self._g07_doc_server.drain()
+        try:
+            frames = self._r7_a02_isolate_slow_tabs(
+                frames, _time.monotonic())
+        except Exception:
+            pass
         try:
             self._r7_a02_ack_cancels(frames)
         except Exception:
@@ -2100,6 +2188,12 @@ class TabBrowser:
             parts.append(f"cancel={ct.describe()}")
         parts.append(
             f"stale_dropped={getattr(self, '_r7_a02_stale_dropped', 0)}")
+        # R7-A02 第 5 点 — 慢页隔离（0 timeout = 未启用，不误伤）
+        parts.append(
+            "slow_tabs="
+            f"{sorted(getattr(self, '_r7_a02_slow_tabs', ()) or ())}"
+            f" slow_dropped={getattr(self, '_r7_a02_slow_dropped', 0)}"
+            f" timeout={getattr(self, '_r7_a02_slow_tab_timeout', 0.0)}")
         return "r7_a02: " + " ".join(parts)
 
     def _g07_doc_server_shutdown(self) -> None:
@@ -2111,15 +2205,27 @@ class TabBrowser:
 
         R7-A02 第 3 点 — 进程退出回收：终止子进程**前**先丢弃合并
         器里待投命令（不再向即将终止的进程投命令，避免"投递到已死
-        进程"的无意义工作）。"""
+        进程"的无意义工作）。
+
+        R7-A02 第 5 点 — 关窗顺序**先停任务、再回收子进程**（方案
+        原文："关闭窗口先停止任务/回收子进程，再销毁 Tk root"）。
+        顺序记入 :attr:`_g07_close_order`（可测证据，不靠"看起来
+        对"）：``stop_tasks`` → ``server_shutdown``。
+        """
+        order = getattr(self, "_g07_close_order", None)
+        if order is None:
+            order = []
+            self._g07_close_order = order
         try:
             self._r7_a02_discard_pending()
         except Exception:
             pass
+        order.append("stop_tasks")
         try:
             self._g07_doc_server.shutdown()
         except Exception:
             pass
+        order.append("server_shutdown")
 
     def _on_window_close(self, _event=None) -> None:
         """R7-U01 — WM_DELETE_WINDOW 统一销毁入口。
@@ -2136,6 +2242,11 @@ class TabBrowser:
            shutdown / 清理异常也不留窗口；
         4. ``root.quit()`` 在 destroy 后调用，让 ``mainloop`` 退出（
            destroy 已断开 mainloop 的事件源，quit 是双保险）。
+
+        R7-A02 第 5 点 — 顺序证据记入 :attr:`_g07_close_order`：
+        ``stop_tasks`` → ``server_shutdown`` → ``destroy_images`` →
+        ``root_destroy`` → ``root_quit``——**先停任务 / 回收子进程，
+        再销毁 Tk root**（测试锁定，不靠读代码"感觉对"）。
         """
         if not self._g07_ui_closing:
             self._g07_ui_closing = True
@@ -2149,13 +2260,21 @@ class TabBrowser:
                 self._destroy_named_images()
             except Exception:
                 pass
+            order = getattr(self, "_g07_close_order", None)
+            if order is not None:
+                order.append("destroy_images")
         # 无论首次还是重复关闭，都要销毁 root（幂等：Tk 的 destroy 可
         # 在已销毁对象上调用而不崩——tkinter 内部会静默处理）。
+        order = getattr(self, "_g07_close_order", None)
+        if order is not None:
+            order.append("root_destroy")
         try:
             self.root.destroy()
         except Exception:
             pass
         # destroy 后 mainloop 事件源已断；quit 双保险让 mainloop 返回。
+        if order is not None:
+            order.append("root_quit")
         try:
             self.root.quit()
         except Exception:
