@@ -169,6 +169,33 @@ def _import_group(path: Path) -> tuple[str, list]:
 _TCL_ISOLATED: set[str] = {"test_tk_keyboard_binding"}
 
 
+def _tcl_subprocess_env() -> dict:
+    """R7-Q01 — 子进程环境变量：Windows 用 CREATE_NEW_PROCESS_GROUP
+    让父可整组 kill（含挂起的 Tk 孙进程）；POSIX 用 start_new_session
+    让子进程自成进程组，超时后 killpg 一次清掉整组。"""
+    import platform
+    return {"new_process_group": platform.system() != "Windows",
+            "windows_flags": 0x00000200}  # CREATE_NEW_PROCESS_GROUP
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """R7-Q01 — 杀整个进程组（父 + 挂起的孙进程，如未退出的 Tk）。
+    subprocess.run 的 timeout 只 kill 直接子进程，孙进程（后台 Tk
+    主循环）会逃过，下次全量仍卡死。这里整组 kill，不留尾巴。"""
+    import signal
+    import platform
+    try:
+        if platform.system() == "Windows":
+            # 父已带 CREATE_NEW_PROCESS_GROUP；taskkill /T 递归杀整树。
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True)
+        else:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def _run_tcl_isolated(mod_names: list[str]) -> dict:
     """Run Tcl-sensitive modules in a clean subprocess.
 
@@ -216,7 +243,8 @@ def _run_tcl_isolated(mod_names: list[str]) -> dict:
         tempfile.gettempdir(),
         f"toy_browser_tcl_isolated_{int(time.time())}.stderr.log")
     timed_out = False
-    proc = None
+    import platform
+    use_pgroup = platform.system() != "Windows"
     try:
         proc = subprocess.run(
             [py, "-c", boot],
@@ -224,8 +252,23 @@ def _run_tcl_isolated(mod_names: list[str]) -> dict:
             text=True,
             encoding="utf-8",
             timeout=_TCL_TIMEOUT_S,
+            # R7-Q01：让子进程自成进程组（POSIX）/ 带新进程组标志
+            # （Windows），超时后能整组 kill（含挂起的 Tk 孙进程）。
+            start_new_session=use_pgroup,
+            **( {"creationflags": 0x00000200} if not use_pgroup else {}),
         )
     except subprocess.TimeoutExpired as e:
+        # R7-Q01：子进程超时 → 整组 kill（父 + 孙，清掉挂起的 Tk），
+        # 否则孙进程残留会让下次全量继续卡 _TCL_TIMEOUT_S 秒。
+        try:
+            e.proc.kill()
+        except Exception:
+            pass
+        _kill_process_tree(e.proc)
+        try:
+            e.proc.wait(timeout=5)
+        except Exception:
+            pass
         timed_out = True
         out = (e.stdout or "") if isinstance(e.stdout, str) else ""
         err = (e.stderr or "") if isinstance(e.stderr, str) else ""
@@ -259,7 +302,14 @@ def _run_tcl_isolated(mod_names: list[str]) -> dict:
         if rec.get("summary"):
             summary = rec
         elif "st" in rec:
-            statuses.append((f"{rec['m']}::{rec['n']}", rec["st"], rec.get("d", "")))
+            # R7-Q01：子进程用单字符 P/F/S 上报，须映射回父进程的状态
+            # 常量（_PASS/_FAIL/_SKIP），否则 iso_pass 的
+            # ``st == _PASS`` 比较（'P' != 'PASS'）会恒假 → 把全 PASS 的
+            # 子进程组虚记成 0 过 / 全是 problems（假红），且 'P' 会落进
+            # counts 变第六个状态键。
+            _st_map = {"P": _PASS, "F": _FAIL, "S": _SKIP}
+            st = _st_map.get(rec["st"], _ERROR)
+            statuses.append((f"{rec['m']}::{rec['n']}", st, rec.get("d", "")))
 
     group_error = None
     if proc.returncode != 0:

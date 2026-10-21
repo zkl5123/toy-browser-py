@@ -98,6 +98,33 @@ def test_skip_is_counted_not_passed():
 # ---------------------------------------------------------------------------
 
 @_reg
+def test_tcl_isolated_subprocess_status_maps_to_full_state_names():
+    """R7-Q01 第 6 条（不得虚记）：Tcl 隔离子进程用单字符 P/F/S 上报，
+    run.py 须映射回父进程的完整状态常量（PASS/FAIL/SKIP），否则
+    ``st == _PASS``（'P' != 'PASS'）恒假 → 把全 PASS 的子进程组虚记成
+    0 过 / 全是 problems（假红），且 'P' 会落进 counts 变第六个状态键。"""
+    src = Path("tests", "run.py").read_text(encoding="utf-8")
+    assert '"P": _PASS' in src, "子进程 P 须映射回完整状态常量 PASS"
+    assert '"F": _FAIL' in src, "子进程 F 须映射回完整状态常量 FAIL"
+    assert '"S": _SKIP' in src, "子进程 S 须映射回完整状态常量 SKIP"
+    # 映射须用 get(...) 带 _ERROR 兜底（未知 st 不得静默 PASS）。
+    assert "_ERROR" in src
+
+
+@_reg
+def test_tcl_isolated_subprocess_kill_handles_grandchild():
+    """R7-Q01 第 6 条（有界 timeout + 整组清理）：子进程 Tk 主循环
+    挂起时，父进程须整组 kill（POSIX start_new_session + killpg；
+    Windows CREATE_NEW_PROCESS_GROUP + taskkill /T），否则孙进程
+    残留会让下次全量继续卡满 _TCL_TIMEOUT_S。"""
+    src = Path("tests", "run.py").read_text(encoding="utf-8")
+    assert "start_new_session" in src, "子进程须自成会话组（POSIX killpg 前提）"
+    assert "kill_process_tree" in src or "taskkill" in src, \
+        "超时须整组清理（清掉挂起的 Tk 孙进程）"
+    assert "TimeoutExpired" in src, "须捕获子进程超时并清理"
+
+
+@_reg
 def test_unknown_only_module_exits_2():
     """审计第 3 条：未知 --only 模块 → 硬错误（exit 2），不静默成功。"""
     rc, out = _run_cli(["--only", "test_definitely_not_exist_xyz"])
