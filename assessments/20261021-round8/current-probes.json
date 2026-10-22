@@ -1,0 +1,85 @@
+[
+  {
+    "id": "cors_response_contract",
+    "actual": {
+      "denied_type": "opaque",
+      "denied_allowed": false,
+      "allowed_visible_headers": {
+        "x-private": "synthetic"
+      }
+    }
+  },
+  {
+    "id": "fetch_missing_acao",
+    "actual": {
+      "logs": [
+        "resolved:opaque:200"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "kwargs": "{'headers': None, 'follow_redirects': True, 'cookie_context': CookieRequestContext(url='http://b.example.test/x', document_site='http://example.test', document_origin='http://a.example.test', destination='fetch', method='GET', credentials_mode='same-origin', redirect_chain=()), 'request_context': RequestContext(url='http://b.example.test/x', document_origin='http://a.example.test', base_url='http://a.example.test/', site_for_cookies='http://a.example.test', destination='fetch', mode='cors', credentials='same-origin', method='GET', body=None, headers={}, policy=None, redirect_chain=[], deadline=None, navigation_generation=0, origin_source='response')}"
+        }
+      ]
+    }
+  },
+  {
+    "id": "xhr_boundary",
+    "actual": {
+      "status": 200,
+      "text": "synthetic",
+      "calls": [
+        {
+          "method": "POST",
+          "kwargs": "{'data': 'body', 'headers': {}, 'follow_redirects': True, 'method': 'POST', 'cookie_context': CookieRequestContext(url='http://b.example.test/x', document_site='http://example.test', document_origin='http://a.example.test', destination='xhr', method='POST', credentials_mode='same-origin', redirect_chain=()), 'request_context': RequestContext(url='http://b.example.test/x', document_origin='http://a.example.test', base_url='http://a.example.test/', site_for_cookies='http://a.example.test', destination='xhr', mode='cors', credentials='same-origin', method='POST', body=None, headers={}, policy=None, redirect_chain=[], deadline=None, navigation_generation=0, origin_source='response')}"
+        }
+      ],
+      "note": "Python WebAPI boundary with injected raw-response client, not full HttpClient network test"
+    }
+  },
+  {
+    "id": "storage_registration_lifecycle",
+    "actual": {
+      "assigned_origin_only": null,
+      "after_reinstall": "bound"
+    }
+  },
+  {
+    "id": "runner_timeout_path",
+    "actual": {
+      "exception": "AttributeError",
+      "message": "'TimeoutExpired' object has no attribute 'proc'"
+    }
+  },
+  {
+    "id": "parse_modes",
+    "actual": {
+      "None": [
+        "p"
+      ],
+      "True": [
+        "html"
+      ],
+      "False": [
+        "p"
+      ]
+    }
+  },
+  {
+    "id": "gui_history_reload_policy",
+    "actual": {
+      "text": "after",
+      "host_url": "",
+      "trust": "None"
+    }
+  },
+  {
+    "id": "legacy_history_failure",
+    "actual": {
+      "initial": "demo.html",
+      "back": "about:blank",
+      "forward": "about:blank",
+      "note": "Replay of legacy test that manually mutates history projection"
+    }
+  }
+]

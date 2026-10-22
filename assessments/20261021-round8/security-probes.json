@@ -1,0 +1,234 @@
+{
+  "commit": "551da74",
+  "safety": "仅回环 HTTP、4KiB 以下响应、宿主仅无害属性读取，无个人数据与破坏载荷",
+  "results": [
+    {
+      "id": "host_private_attributes",
+      "expected": "页面不能读 Python 宿主私有属性或类型元数据",
+      "actual": [
+        "undefined",
+        "undefined",
+        "undefined"
+      ]
+    },
+    {
+      "id": "cross_origin_fetch_and_samesite",
+      "expected": "无 ACAO 的跨源 fetch 不可读取响应，跨站子请求不发送 Strict Cookie",
+      "actual": {
+        "logs": [
+          "200",
+          "",
+          "text-ok:"
+        ],
+        "request": {
+          "method": "GET",
+          "path": "/data",
+          "cookie": null,
+          "origin": null
+        }
+      }
+    },
+    {
+      "id": "cross_origin_xhr_method",
+      "expected": "页面不能读取缺失 ACAO 的跨源 XHR，POST 不得变 GET；回环例外不用于论证混合内容",
+      "actual": {
+        "logs": [
+          ""
+        ],
+        "request": {
+          "method": "GET",
+          "path": "/data",
+          "cookie": null,
+          "origin": null
+        }
+      }
+    },
+    {
+      "id": "csp_connect_none",
+      "expected": "connect-src none 必须在发请求前阻止连接",
+      "actual": {
+        "logs": [
+          "fetch blocked by CSP connect-src: http://127.0.0.1:51252/connect-none"
+        ],
+        "request": {
+          "method": "GET",
+          "path": "/data",
+          "cookie": null,
+          "origin": null
+        }
+      }
+    },
+    {
+      "id": "csp_denied_still_requested",
+      "expected": "img-src none 不发起资源请求",
+      "actual": {
+        "requests": [],
+        "allowed": {
+          "image": {
+            "https://b.example.test/pixel": false
+          }
+        }
+      }
+    },
+    {
+      "id": "csp_self_same_origin_script",
+      "expected": "同源 classic script 在 script-src self 下无需 ACAO",
+      "actual": {
+        "requests": [
+          "https://a.example.test/a.js"
+        ],
+        "allowed": {
+          "script": {
+            "https://a.example.test/a.js": true
+          }
+        }
+      }
+    },
+    {
+      "id": "classic_cross_origin_script",
+      "expected": "无 crossorigin 的 classic script 默认 no-cors，可执行跨源脚本",
+      "actual": {
+        "requests": [
+          "https://b.example.test/a.js"
+        ],
+        "allowed": {
+          "script": {
+            "https://b.example.test/a.js": false
+          }
+        }
+      }
+    },
+    {
+      "id": "base_changes_self_origin",
+      "expected": "base URL 只能改变解析基址，不能改变 CSP self 的文档来源",
+      "actual": {
+        "requests": [],
+        "allowed": {
+          "image": {
+            "https://b.example.test/x": false
+          }
+        }
+      }
+    },
+    {
+      "id": "csp_empty_directive",
+      "expected": "显式空 script-src 应禁止所有脚本",
+      "actual": false
+    },
+    {
+      "id": "csp_duplicate_directive",
+      "expected": "重复指令应保留首次指令",
+      "actual": {
+        "script-src": [
+          "'none'"
+        ]
+      }
+    },
+    {
+      "id": "csp_inline_event",
+      "expected": "script-src none 也应阻止 HTML 内联事件处理器",
+      "actual": [
+        "CSP blocked inline handler: onclick"
+      ]
+    },
+    {
+      "id": "cookie_scope_validation",
+      "expected": "host-only 不下发子域；公共后缀拒绝；for_url 尊重 Path；无效 SameSite 默认 Lax；HTTP 不可设置 Secure",
+      "actual": {
+        "subdomain": "",
+        "sibling": "",
+        "cross_post": "",
+        "for_url_public": [],
+        "http_secure_accepted": false
+      }
+    },
+    {
+      "id": "response_limits_and_cookie_ingest",
+      "expected": "解压及 POST 响应遵守 128 字节上限；POST 与多个 Set-Cookie 都应入库",
+      "probe_exception": "ResponseTooLarge",
+      "message": "gzip-decompressed body exceeds cap 128 bytes"
+    },
+    {
+      "id": "read_before_cap",
+      "expected": "读取时应传剩余额度，不能先 read 全部再判断",
+      "probe_exception": "AttributeError",
+      "message": "'Conn' object has no attribute 'close'"
+    },
+    {
+      "id": "storage_lifecycle_and_quota",
+      "expected": "同源文档应共享 localStorage；setItem 超额应抛 QuotaExceededError",
+      "actual": {
+        "same_origin_new_host_value": null,
+        "quota_error": "not blocked"
+      }
+    },
+    {
+      "id": "event_loop_order",
+      "expected": "脚本间有微任务检查点；同步脚本后微任务先于 timer",
+      "actual": [
+        "sync",
+        "micro",
+        "next-script",
+        "timer"
+      ]
+    },
+    {
+      "id": "b03_parse_boundary",
+      "expected": "语法错误隔离，后续脚本继续执行并结构化记录错误",
+      "actual": {
+        "logs": [
+          "[inline script] SyntaxError: unexpected token ',' at pos 11",
+          "later-runs"
+        ],
+        "script_errors": [
+          {
+            "source": "var broken=,;",
+            "kind": "inline",
+            "error": "SyntaxError: unexpected token ',' at pos 11"
+          }
+        ]
+      }
+    },
+    {
+      "id": "b03_runtime_observability",
+      "expected": "运行时失败也应进入结构化 script_errors，后续脚本继续执行",
+      "actual": {
+        "logs": [
+          "[inline script] Error: synthetic",
+          "uncaught throw (inline): <toy_browser.scripting.js.Host._error_ctor.<locals>.ToyError object at 0x000001B1D586BE80>",
+          "later-runs"
+        ],
+        "script_errors": [
+          {
+            "source": "throw new Error(\"synthetic\");",
+            "kind": "inline",
+            "error": "Error: synthetic"
+          }
+        ]
+      }
+    },
+    {
+      "id": "disable_subresources_disables_inline_csp",
+      "expected": "关闭子资源下载不得关闭文档的内联 CSP",
+      "actual": []
+    },
+    {
+      "id": "b05_location_queue",
+      "expected": "location.replace 生成真实导航请求而非仅修改 dict",
+      "actual": [
+        {
+          "target": "https://a.example.test/next",
+          "replace": true,
+          "kind": "web"
+        }
+      ]
+    },
+    {
+      "id": "bounded_js_budget",
+      "expected": "有限循环在低预算下被取消，不阻塞宿主",
+      "actual": [
+        "JS budget exceeded: JS execution budget exhausted (100 steps)"
+      ]
+    }
+  ]
+}

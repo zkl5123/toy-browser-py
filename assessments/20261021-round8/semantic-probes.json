@@ -1,0 +1,418 @@
+{
+  "scope": "24 selected pure ECMAScript probes, fresh Node/V8 vs project; not WPT/Test262 or browser compatibility percentage",
+  "node_version": "v22.22.2",
+  "cases": [
+    {
+      "id": "null_undefined",
+      "code": "console.log(null === undefined);",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "strict_bool_number",
+      "code": "console.log(true === 1);",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "object_identity",
+      "code": "console.log(({}) === ({}));",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "array_identity",
+      "code": "console.log([] === []);",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "nan_equality",
+      "code": "console.log(NaN === NaN);",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "negative_zero",
+      "code": "console.log(Object.is(-0,0));",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "utf16_length",
+      "code": "console.log(\"😀\".length);",
+      "reference": {
+        "logs": [
+          "2"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "2"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "utf16_charcode",
+      "code": "console.log(\"😀\".charCodeAt(0));",
+      "reference": {
+        "logs": [
+          "55357"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "55357"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "default_sort",
+      "code": "console.log([2,10,1].sort().join(\",\"));",
+      "reference": {
+        "logs": [
+          "1,10,2"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "1,10,2"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "number_null",
+      "code": "console.log(Number(null));",
+      "reference": {
+        "logs": [
+          "0"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "0"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "number_undefined",
+      "code": "console.log(Number(undefined));",
+      "reference": {
+        "logs": [
+          "NaN"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "NaN"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "parseint_radix",
+      "code": "console.log(parseInt(\"10\",16));",
+      "reference": {
+        "logs": [
+          "16"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "16"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "truthy_array",
+      "code": "console.log(Boolean([]));",
+      "reference": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "truthy_object",
+      "code": "console.log(Boolean({}));",
+      "reference": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "nullish",
+      "code": "console.log(0 ?? 7);",
+      "reference": {
+        "logs": [
+          "0"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "0"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "optional_chain",
+      "code": "var x=null; console.log(x?.a);",
+      "reference": {
+        "logs": [
+          "undefined"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "undefined"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "multi_declaration",
+      "code": "var a=1,b=2; console.log(a+b);",
+      "reference": {
+        "logs": [
+          "3"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "3"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "object_keys_numeric",
+      "code": "console.log(Object.keys({\"10\":\"a\",\"2\":\"b\",\"x\":\"c\"}).join(\",\"));",
+      "reference": {
+        "logs": [
+          "2,10,x"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "2,10,x"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "array_hole",
+      "code": "console.log(0 in [,]);",
+      "reference": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "false"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "property_absence",
+      "code": "console.log(\"x\" in {x:undefined});",
+      "reference": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "true"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "try_finally",
+      "code": "function f(){try{return 1;}finally{return 2;}} console.log(f());",
+      "reference": {
+        "logs": [
+          "2"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "2"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "template_literal",
+      "code": "var n=3; console.log(`v${n}`);",
+      "reference": {
+        "logs": [
+          "v3"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "v3"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "promise_order",
+      "code": "Promise.resolve().then(function(){console.log(\"p\");}); console.log(\"s\");",
+      "reference": {
+        "logs": [
+          "s",
+          "p"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "s",
+          "p"
+        ],
+        "error": null
+      },
+      "match": true
+    },
+    {
+      "id": "async_function",
+      "code": "async function f(){return 3;} f().then(function(x){console.log(x);});",
+      "reference": {
+        "logs": [
+          "3"
+        ],
+        "error": null
+      },
+      "actual": {
+        "logs": [
+          "3"
+        ],
+        "error": null
+      },
+      "match": true
+    }
+  ],
+  "matched": 24,
+  "total": 24
+}

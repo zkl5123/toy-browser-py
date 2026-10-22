@@ -1950,13 +1950,19 @@ def test_gui_inline_html():
 
 TESTS.append(("test_gui_inline_html", test_gui_inline_html))
 def test_gui_back_forward():
-    """P31 — 后退/前进栈（调用方管理历史）。"""
+    """P31 — 后退/前进栈（调用方管理历史）。
+
+    R8-Q01 — use the page's public history commit entry instead of
+    mutating ``back_stack`` / ``fwd_stack``.  Those lists are read-only
+    projections of the cursor-based :class:`HistoryCommitter`; direct
+    appends no longer match the R7-A01 history model.
+    """
     from toy_browser.app import gui
     p = gui.PageInstance()
     p.load_file("demo.html", 200, 150)
-    p.back_stack.append(p.url)
-    p.fwd_stack.clear()
+    p._commit_history(p.url, source="file")
     p.load_url("about:blank", 200, 150)
+    p._commit_history("about:blank", source="address")
     p.go_back()
     assert p.url == "demo.html"
     p.go_forward()
@@ -3720,7 +3726,13 @@ def test_p24_stray_close_ignored():
 TESTS.append(("test_p24_stray_close_ignored", test_p24_stray_close_ignored))
 def test_p24_comment_doctype_dropped():
     """P24.3 — <!DOCTYPE> and <!-- comments --> do not appear in the
-    DOM (the toy drops them; renderer stays clean)."""
+    DOM (the toy drops them; renderer stays clean).
+
+    R8-Q01 — allow the correct structural ``head`` node.  The parser's
+    document construction inserts ``<html>``, ``<head>`` and ``<body>``;
+    the assertion guards against doctype/comment node types leaking,
+    not against a complete document skeleton.
+    """
     from toy_browser.document import dom
     root = dom.parse("<!DOCTYPE html><html><!-- top comment --><body><!-- x --><p>ok</p></body></html>")
     def walk_tags(n, acc):
@@ -3731,8 +3743,10 @@ def test_p24_comment_doctype_dropped():
         return acc
     tags = walk_tags(root, [])
     assert "html" in tags and "body" in tags and "p" in tags
+    assert "head" in tags
     # No comment/doctype node type leaks into the tree.
-    assert all(t in ("document", "html", "body", "p") for t in tags), tags
+    allowed = {"document", "html", "head", "body", "p"}
+    assert all(t in allowed for t in tags), tags
 
 
 

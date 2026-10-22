@@ -1,0 +1,1417 @@
+[
+  {
+    "path": "toy_browser/__init__.py",
+    "lines": 1,
+    "sha256": "e4c97d5b0d663acc97061e6964fd02a6eaa7533bcee8dc2294c581bfe163710e"
+  },
+  {
+    "path": "toy_browser/app/__init__.py",
+    "lines": 1,
+    "sha256": "b241f34ad5fbe0e946f77cdb89fbb91faf17695d598158ceb0d12bc1c38c6d5c"
+  },
+  {
+    "path": "toy_browser/app/accessibility.py",
+    "lines": 270,
+    "sha256": "3fcec586b270992793ac24854eebafac1e17156740b1a66e004e5459420b32d7"
+  },
+  {
+    "path": "toy_browser/app/activation.py",
+    "lines": 387,
+    "sha256": "5db57eff497f47a557ed314cab90badc71471103d3582fb3515d5f7a1377d046"
+  },
+  {
+    "path": "toy_browser/app/b_series_wiring.py",
+    "lines": 466,
+    "sha256": "ff864f3a53cc7b4879d600173bfd5f8acc71095885129c0a113ed6b0139655d5"
+  },
+  {
+    "path": "toy_browser/app/browser.py",
+    "lines": 1932,
+    "sha256": "a89eb39d4b7647e0897e9d0e9f25f2eece51912b091fc0cefd17ccfd3b779167"
+  },
+  {
+    "path": "toy_browser/app/caret_explain.py",
+    "lines": 228,
+    "sha256": "0c630c4f7d4b3473d0b5a87903a78d75ffb8d9ef0bee14109ecdadcd6b40b31e"
+  },
+  {
+    "path": "toy_browser/app/diag_panel.py",
+    "lines": 140,
+    "sha256": "5978715d6c90fd556a5882c11bf4d89537229e9938829e0105409d3ad96678aa"
+  },
+  {
+    "path": "toy_browser/app/diagnostics.py",
+    "lines": 276,
+    "sha256": "1842852952c170fbf07bf594bac0e4820ecb1d9c2198eeff44f183e7fc027e98"
+  },
+  {
+    "path": "toy_browser/app/dirty_region.py",
+    "lines": 364,
+    "sha256": "7cb836bf8f04bcad3ecd3a32e67fe16d480e1c43d1578165f06b3eefdcdd9e89"
+  },
+  {
+    "path": "toy_browser/app/display_list.py",
+    "lines": 282,
+    "sha256": "59e7208bb74de6c13d0d0c7d868e113c62c2d31d5b9c647f39dfeb2bfccda484"
+  },
+  {
+    "path": "toy_browser/app/doc_process_mode.py",
+    "lines": 342,
+    "sha256": "54f07a750efd50d1bece8c08c6e8fd3264ecc80efb0a048512790d32f04455f7"
+  },
+  {
+    "path": "toy_browser/app/document_context.py",
+    "lines": 389,
+    "sha256": "22a29f43c54cde2400de8ebb3468647f264b4dce566472cb5cb08441d1396812"
+  },
+  {
+    "path": "toy_browser/app/document_controller.py",
+    "lines": 416,
+    "sha256": "1d8c1774778f8de1ae6304f7bda1aa120922b3e031c47df027054c43cf65a231"
+  },
+  {
+    "path": "toy_browser/app/document_process.py",
+    "lines": 1566,
+    "sha256": "ce13160036bf3c62e73879f1e573aef6fac600a4191811f5bcb4e4ead7af8f02"
+  },
+  {
+    "path": "toy_browser/app/document_renderer.py",
+    "lines": 136,
+    "sha256": "db11996bd55177eabddfef74506685d0b182a0c828b8e6eba7130ba2dd964fea"
+  },
+  {
+    "path": "toy_browser/app/document_state.py",
+    "lines": 148,
+    "sha256": "1717cacba86cfc9f432b8f715314a6c48ce8470222b4fbb01a0f2bf01ca0589f"
+  },
+  {
+    "path": "toy_browser/app/document_state_full.py",
+    "lines": 267,
+    "sha256": "a7554667d2b05a1e3fca30b48887f6c96409f2f1d6cfc1cdc6ef7ca45474658c"
+  },
+  {
+    "path": "toy_browser/app/editor.py",
+    "lines": 348,
+    "sha256": "cbce6cf7db6f5770829d117176ee5434bb49d17ba384db81cc0a86571b5cc620"
+  },
+  {
+    "path": "toy_browser/app/editor_overlay.py",
+    "lines": 332,
+    "sha256": "da1425fceec280533b83b8d66beeae7679dadc1da77a6ba8aaf5436017ba3cf5"
+  },
+  {
+    "path": "toy_browser/app/field_editing.py",
+    "lines": 200,
+    "sha256": "030ad85ba069cec5b50257d79998fa9aa77fdf9769072ca8dc41978310642f38"
+  },
+  {
+    "path": "toy_browser/app/first_screen.py",
+    "lines": 328,
+    "sha256": "abf8f0e36f298b77786157fb4fe40a090c707c10ce8cbccdc5bf8906a8affa48"
+  },
+  {
+    "path": "toy_browser/app/foci.py",
+    "lines": 104,
+    "sha256": "d9b46ed388ff0fe88faddabb12eea3faa2174f1296bfc1f2f73b516913ca8f1f"
+  },
+  {
+    "path": "toy_browser/app/form_control.py",
+    "lines": 354,
+    "sha256": "45b0e7b57afba816a466034c8c131f63d7ed4e23321db027dfb7591204ed953c"
+  },
+  {
+    "path": "toy_browser/app/form_task.py",
+    "lines": 298,
+    "sha256": "b07a73dac5cdd19d7e5d5de59fe82e7ba1faa04dd85555967134f67b709bffc4"
+  },
+  {
+    "path": "toy_browser/app/frame_buffer.py",
+    "lines": 244,
+    "sha256": "27e2b0b4a64cf10b34263a83a71e41215a42e797adea2ed9c5cec9f91a2f4f3b"
+  },
+  {
+    "path": "toy_browser/app/frame_ownership.py",
+    "lines": 288,
+    "sha256": "e8baaa4fd2d60783a6c3506db34701afa20b31e180349ebae9efbda86856940e"
+  },
+  {
+    "path": "toy_browser/app/frame_shared.py",
+    "lines": 300,
+    "sha256": "6e988e6d67238e5597ee183478448d15b0ee0c4c9ddc466f68928453dc7b86ca"
+  },
+  {
+    "path": "toy_browser/app/geometry_freeze.py",
+    "lines": 391,
+    "sha256": "720d86bd1b5c12a1b6903a58e42965b1174ca5e4ba36f7d8e08655834d114737"
+  },
+  {
+    "path": "toy_browser/app/gui.py",
+    "lines": 3420,
+    "sha256": "08ca8a03acf4ca0c749b1d49798b716893ae2ec2d7673766605b5850aa60486f"
+  },
+  {
+    "path": "toy_browser/app/gui_document_bridge.py",
+    "lines": 332,
+    "sha256": "c36fb27a30eea6e1db8c13a1c5be5c9ea73f1ef43cca1d9710c979d684b1c65e"
+  },
+  {
+    "path": "toy_browser/app/history_entry.py",
+    "lines": 163,
+    "sha256": "1adfa1ead72f0f96ddd96a7dc96717be7fbe028eb73959c17751847dbe4ece6d"
+  },
+  {
+    "path": "toy_browser/app/keyboard_router.py",
+    "lines": 228,
+    "sha256": "82841a39d4d43e49d271d9fd5782c096ee4e89d08b8787d7394a1582e9124314"
+  },
+  {
+    "path": "toy_browser/app/layout_diff.py",
+    "lines": 251,
+    "sha256": "03ce131faf8a347cd055bf3b3efe17e88c85484b478453364a49e6938cf52dbd"
+  },
+  {
+    "path": "toy_browser/app/layout_incremental.py",
+    "lines": 248,
+    "sha256": "c59a365e297fb11af00ce7f15c348e3b3cd43877cb2e1af0121cf6cd93b104cf"
+  },
+  {
+    "path": "toy_browser/app/live_acceptance.py",
+    "lines": 680,
+    "sha256": "bb5c11362852b65b01395a923dc10c88573d20ee1e39a4447d361bca28cc0e73"
+  },
+  {
+    "path": "toy_browser/app/live_editing.py",
+    "lines": 493,
+    "sha256": "e4b58907aaa071dbdeadba480f59b37c3c2a11d6e5d6e249d0f28470cfd415e6"
+  },
+  {
+    "path": "toy_browser/app/load_phases.py",
+    "lines": 425,
+    "sha256": "d03607bce9a29ddaf35f41367694261f67472af067db1c4be142541edefa84d8"
+  },
+  {
+    "path": "toy_browser/app/main.py",
+    "lines": 259,
+    "sha256": "2d8438b8274dd9ac0316532c7492bd828df6a32ce4ac7f946a890d9b62ddb6e7"
+  },
+  {
+    "path": "toy_browser/app/native_overlay.py",
+    "lines": 287,
+    "sha256": "90702b9f5a29067fc29dc50172eeb5037d96c63c9e35c8062b2d109046ff7c83"
+  },
+  {
+    "path": "toy_browser/app/navigation.py",
+    "lines": 505,
+    "sha256": "138c6eedee1683f0fa447b66f951ecac5101027e8bde073441377347dfe071a6"
+  },
+  {
+    "path": "toy_browser/app/navigation_state.py",
+    "lines": 209,
+    "sha256": "5643d5afd17062d9e96f23dc776ec5651dac1f68eef7e9a4ebf7ae6ec417b8ab"
+  },
+  {
+    "path": "toy_browser/app/overlay_protocol.py",
+    "lines": 382,
+    "sha256": "0369fe282d8d4fd9529f34cb89d69dee1f5e66235c711ba1f3f0fe59e6f2a420"
+  },
+  {
+    "path": "toy_browser/app/png_export.py",
+    "lines": 334,
+    "sha256": "28b5bfd5ca80d558bb5539ed176319b82b321881b4e3448d3d2d73a5964b1b76"
+  },
+  {
+    "path": "toy_browser/app/policy_regression.py",
+    "lines": 478,
+    "sha256": "17bbaa6cabeb95a4bae7b81f18afb3902e47daca7233b214418dfe2c86e1f5ec"
+  },
+  {
+    "path": "toy_browser/app/request_config.py",
+    "lines": 234,
+    "sha256": "781778a4c384fe1b728b0a4fefdb9cf971facac5d7fddbf1f7baba67e6a3084c"
+  },
+  {
+    "path": "toy_browser/app/session.py",
+    "lines": 209,
+    "sha256": "e6798604f7fbef6c84acdadeab1c4619b6f2b84fa0d56b0c17c422258185edb4"
+  },
+  {
+    "path": "toy_browser/app/session_recovery.py",
+    "lines": 482,
+    "sha256": "d1310691e497fd785ae56e2a5dba74cea57fee9f389fb7bfa56979cfc892bebc"
+  },
+  {
+    "path": "toy_browser/app/session_store.py",
+    "lines": 162,
+    "sha256": "0b1ba9b036413fd9f346bdf96a942ec814c41783f26f1ba6cda16e1d3bb25d85"
+  },
+  {
+    "path": "toy_browser/app/shell_state.py",
+    "lines": 401,
+    "sha256": "29287a0566b163f3f306ae4887146bb1939efc64ed15cd2cf96d3fd0bcf3d084"
+  },
+  {
+    "path": "toy_browser/app/style_cache.py",
+    "lines": 223,
+    "sha256": "f50f18756ea2f68c0ea6bc336f26cde46cab2065aae0336fd4555e9f07b5b9d3"
+  },
+  {
+    "path": "toy_browser/app/style_cache_lru.py",
+    "lines": 287,
+    "sha256": "582b388b9ef01c397b2008977871b0d2716f0a62689a8525e8cec96ca945b83e"
+  },
+  {
+    "path": "toy_browser/app/tab_document_orchestrator.py",
+    "lines": 303,
+    "sha256": "2a5af8c27287c2a1c92c4a943bb9dfa4a297f9d2a5bc43c49743f485dae77c3a"
+  },
+  {
+    "path": "toy_browser/app/tab_identity.py",
+    "lines": 218,
+    "sha256": "e42e38b800fb5e9d436d154b133508aa210043be6bbf7599c264ca053a3c2097"
+  },
+  {
+    "path": "toy_browser/app/tab_lifecycle.py",
+    "lines": 322,
+    "sha256": "f25bf677f78359b64677ae66c3e297d9a3b411ddd901f024782fdc1e9f2bd39f"
+  },
+  {
+    "path": "toy_browser/app/tab_session.py",
+    "lines": 276,
+    "sha256": "1ee16416157e4fa137a6be5e53fa48f3030bc364f63e94ab737a61618a39688a"
+  },
+  {
+    "path": "toy_browser/app/tk_keyboard_binding.py",
+    "lines": 229,
+    "sha256": "efcf47d9c6c1a15556bc750db662aa4b111dcbc0b5996bb0f67002596dd37ff4"
+  },
+  {
+    "path": "toy_browser/app/transport.py",
+    "lines": 222,
+    "sha256": "03ef090076b2be8abcfcfc478529099bce3e9bdbca36d768f5869c6a1f3d4bbb"
+  },
+  {
+    "path": "toy_browser/app/ui_a11y_bridge.py",
+    "lines": 406,
+    "sha256": "3b326398364926ca7b03124f0ccc842b12f38f1c1adfb3e186f0933a8d0cb05d"
+  },
+  {
+    "path": "toy_browser/app/viewport.py",
+    "lines": 142,
+    "sha256": "881d349f9e9a2ac0664795e8ccf0bc4ef4c021e4c94f25f9a973c0a4586d78df"
+  },
+  {
+    "path": "toy_browser/app/worker_timeout.py",
+    "lines": 112,
+    "sha256": "f2cbb7c6e5af706f11e77ea711ec8acabadf47ff0e11a88e06cb4becf3b34b12"
+  },
+  {
+    "path": "toy_browser/common/__init__.py",
+    "lines": 1,
+    "sha256": "709e360b99e916c6d8348d4714d13efbfe5e79d1017dc5bb989e41a67abb8afc"
+  },
+  {
+    "path": "toy_browser/common/mem_guard.py",
+    "lines": 123,
+    "sha256": "233a936c464da77aa17d075cbe77d171e66de0ee89ddb485f37e0ae2c676fa9d"
+  },
+  {
+    "path": "toy_browser/document/__init__.py",
+    "lines": 1,
+    "sha256": "d8fef075db75e603ba8007194e7fb911d52390cb131305117c599fa91bfe721b"
+  },
+  {
+    "path": "toy_browser/document/dom.py",
+    "lines": 55,
+    "sha256": "faa8a0e7f340311a9fd716c5166e627ca025737530ccf2e163a71d4110ba6f07"
+  },
+  {
+    "path": "toy_browser/document/html_pkg/__init__.py",
+    "lines": 70,
+    "sha256": "f1a457a78fdac2c0621a5ffbd3f2a84098a2343e13dcad9fcf563ed5c0df9631"
+  },
+  {
+    "path": "toy_browser/document/html_pkg/build.py",
+    "lines": 973,
+    "sha256": "2e8f5d78b338936a5d2db297a9affa31640d1f0799e540c20bba5042b161c399"
+  },
+  {
+    "path": "toy_browser/document/html_pkg/entities.py",
+    "lines": 159,
+    "sha256": "9b2424e9505a6ab9535179bfe704a95ec02e1e3e6ccc0a640488f29b046e66e4"
+  },
+  {
+    "path": "toy_browser/document/html_pkg/node.py",
+    "lines": 228,
+    "sha256": "e9a063d58ba880e7a89dbf45d5c39075141e270b153b9d2eb9db44c49252f57a"
+  },
+  {
+    "path": "toy_browser/document/html_pkg/tokenize.py",
+    "lines": 457,
+    "sha256": "cfe8beb480577fe7e178027c34caee5ad0256aecb423d772b970db92bbc55f6c"
+  },
+  {
+    "path": "toy_browser/layout/__init__.py",
+    "lines": 1,
+    "sha256": "752a994b5343ed10371b4c4f4ec83188ac263c3431c4698928ee26fec904c783"
+  },
+  {
+    "path": "toy_browser/layout/layout.py",
+    "lines": 4376,
+    "sha256": "f395b7ceeddcc4067708dab2fdaa59d0e8db1727859fb28c365cac821af3ceff"
+  },
+  {
+    "path": "toy_browser/network/__init__.py",
+    "lines": 1,
+    "sha256": "169503e65438b765bb818a7bda1acf874b8ba012b93c95e81fb2d66069724a1d"
+  },
+  {
+    "path": "toy_browser/network/cache_validity.py",
+    "lines": 311,
+    "sha256": "f419af99e6db34013d87bdacbfd3f1f0772490eb097896bcbd767b1dd60b179c"
+  },
+  {
+    "path": "toy_browser/network/cookie_context.py",
+    "lines": 394,
+    "sha256": "32bb8b03b7ce878f992f735f42f1e3fbda5ca2fb11f164696fb352f23d16d8c1"
+  },
+  {
+    "path": "toy_browser/network/cookie_store.py",
+    "lines": 608,
+    "sha256": "1aebdf05f4f7a74a842e9d7b84c29c22fdbf981afc6e47e21e49febf4fd71b78"
+  },
+  {
+    "path": "toy_browser/network/net.py",
+    "lines": 3504,
+    "sha256": "11941647a6f3d3d89b9b73d2952d87f4fea8187a38492a6e85ba008d03a187a6"
+  },
+  {
+    "path": "toy_browser/network/page_limits.py",
+    "lines": 200,
+    "sha256": "636559c2b50d3206446e7f85a1b4b16782e32c72d82d12ed09c2bf0005c9205c"
+  },
+  {
+    "path": "toy_browser/network/release_gate.py",
+    "lines": 543,
+    "sha256": "47b452ade047884700412081b54acf523e4e477ec56a7e4b5af5726627bcb4f8"
+  },
+  {
+    "path": "toy_browser/network/request_budget.py",
+    "lines": 107,
+    "sha256": "30fb5e5021c9190127461a337830ea98178838f2513db84106ed1155937bed8b"
+  },
+  {
+    "path": "toy_browser/network/request_context.py",
+    "lines": 677,
+    "sha256": "051f8f6012c3043ea1abea6ec535bd1b2ef92a38c51efe91147645a0652d70a8"
+  },
+  {
+    "path": "toy_browser/rendering/__init__.py",
+    "lines": 1,
+    "sha256": "c6c3a0c5777db0f185e9a44685f58a841589a4bd7aeb6d5df500399da349f92b"
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image.py",
+    "lines": 398,
+    "sha256": "1aa9d137ebf5bfa3077d1c6989fcff720aec170c453f14a2196de188063736e8"
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_fill.py",
+    "lines": 303,
+    "sha256": "68a20599283b3490e6ba888f92ea2c8b61c5647dd62bebe61a19b2130e819c59"
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_formats.py",
+    "lines": 246,
+    "sha256": "73f6fd4372d9189a1458f30bbb4ef447b721c32ed7be38318158cf5830e2534c"
+  },
+  {
+    "path": "toy_browser/rendering/cpu_image_glyph.py",
+    "lines": 312,
+    "sha256": "5b0e8747fcb5d007c2cb677c4977572b9e10862742daec6d13f3d1a56c28f93a"
+  },
+  {
+    "path": "toy_browser/rendering/gpu.py",
+    "lines": 1463,
+    "sha256": "68e64701d90893631f5921e77b0a8e6822f4b3fba4a13001da8ea24a4cc8f785"
+  },
+  {
+    "path": "toy_browser/rendering/gui_backend_boundary.py",
+    "lines": 210,
+    "sha256": "2d7abec0fd6e62ad127e78b724ba12b775416955338d78d6ee6702f91ee24269"
+  },
+  {
+    "path": "toy_browser/rendering/inline_layout.py",
+    "lines": 485,
+    "sha256": "e4bb27229b88002d032f0d0d70a066996bccba1719880026e698d77b28024535"
+  },
+  {
+    "path": "toy_browser/rendering/live_surface.py",
+    "lines": 166,
+    "sha256": "e83c92de6702eb1a0a496615331e3d39e78d0e638f76129455c030a47b5ef32f"
+  },
+  {
+    "path": "toy_browser/rendering/paint.py",
+    "lines": 120,
+    "sha256": "69769f4719b92a3ddc2d06961398bff58fdce6880383f18a546f694879b872f8"
+  },
+  {
+    "path": "toy_browser/rendering/paint_engine.py",
+    "lines": 1417,
+    "sha256": "cf8185784b30d7c887cc7d5c761d9b83881560447573776736934f38313c7a7e"
+  },
+  {
+    "path": "toy_browser/rendering/rasterize_cpu.py",
+    "lines": 391,
+    "sha256": "de2e5670af21e4591d16107c15661c1615264fd832320725a0185c11ddc68021"
+  },
+  {
+    "path": "toy_browser/rendering/render_pass.py",
+    "lines": 238,
+    "sha256": "c9f7e6e81b1d087192d3fe997a73e4de8d451771d8bf7643d13d45d362161ee6"
+  },
+  {
+    "path": "toy_browser/rendering/renderer/__init__.py",
+    "lines": 35,
+    "sha256": "8b49cd25ebb407493710eedd8a2fb53ab678e61efadd28d02d8e8dcfe1abc1f0"
+  },
+  {
+    "path": "toy_browser/rendering/renderer/contracts.py",
+    "lines": 261,
+    "sha256": "b00d1bb531b733eda961a28e9769b0b507457df55d0a728f001d2354437093c5"
+  },
+  {
+    "path": "toy_browser/rendering/renderer/cpu_backend.py",
+    "lines": 102,
+    "sha256": "b5a1723a06181867903553bae0a00211059010391ff78b7ce471460d2a20313d"
+  },
+  {
+    "path": "toy_browser/rendering/stacking_context.py",
+    "lines": 379,
+    "sha256": "4f988cba25a5fe8cfb8e12f59d427c7dfa2b10edc88c9233024e6cc908365861"
+  },
+  {
+    "path": "toy_browser/scripting/__init__.py",
+    "lines": 1,
+    "sha256": "c5af2512912684b21e78865dae9f3505c3dfc8632562ae43cfa66541b46a113c"
+  },
+  {
+    "path": "toy_browser/scripting/js.py",
+    "lines": 8939,
+    "sha256": "57f2e4be24170b07efb2f8d33d49c9ed3e20fd2263aa755cf10dc73945a954ea"
+  },
+  {
+    "path": "toy_browser/scripting/script_error.py",
+    "lines": 189,
+    "sha256": "07047bff176302aecb2567c1d656b17f612fc9836360a7bb8ada0f8e4cca8449"
+  },
+  {
+    "path": "toy_browser/scripting/script_ipc.py",
+    "lines": 189,
+    "sha256": "45c0393d8892b380ea3c16962476b6fc7e4169511cff1c8d5df84526f5d91f09"
+  },
+  {
+    "path": "toy_browser/scripting/script_trust.py",
+    "lines": 464,
+    "sha256": "f1f49020c8adc9f4f8f321ae3d58dbd7cdbf78e8fcbf0a8f2b29fbd648701f3d"
+  },
+  {
+    "path": "toy_browser/scripting/storage_service.py",
+    "lines": 429,
+    "sha256": "924c0a81f22f7dab17f3c3886228389d2c242299f3cac0ad5d0509cf9e674c2b"
+  },
+  {
+    "path": "toy_browser/scripting/web_api.py",
+    "lines": 607,
+    "sha256": "248684a98d2d9ed2323c76f2de86928846a06e1bd574f243b224886c4fa7961a"
+  },
+  {
+    "path": "toy_browser/style/__init__.py",
+    "lines": 1,
+    "sha256": "2659be596b489d6eccee8fd28120208c9331182a309c3dd033f6f01e6afdfc80"
+  },
+  {
+    "path": "toy_browser/style/css.py",
+    "lines": 2956,
+    "sha256": "7bd95f8ac7c62f42ebf2bb85e8abc103539735bd70093ddc13ab3eeeb5a71a2c"
+  },
+  {
+    "path": "toy_browser/style/transition.py",
+    "lines": 238,
+    "sha256": "d51dc2b2a1b323c92c4a5eb2c788ce0ea919087738cdbce2e0ca4b636606b11c"
+  },
+  {
+    "path": "toy_browser/typography/__init__.py",
+    "lines": 1,
+    "sha256": "bc8393cc398e0ed4ffb5a25843f359757da3898feebb7d00392c76ac44b9afc1"
+  },
+  {
+    "path": "toy_browser/typography/bidi.py",
+    "lines": 272,
+    "sha256": "a403508361ef4fded99093c83bfec83318ad04463c17f16f3278b056dd085120"
+  },
+  {
+    "path": "toy_browser/typography/font.py",
+    "lines": 426,
+    "sha256": "611b79747f1635b18c9e14df5638b95949dc1c6063a65c6661aeccd2b9c68dad"
+  },
+  {
+    "path": "toy_browser/typography/grapheme.py",
+    "lines": 356,
+    "sha256": "e2fdbfe5ea091eb2c8c317d5b8ee706cd90cf49023c174d57139e1e2385f116d"
+  },
+  {
+    "path": "toy_browser/typography/rasterize.py",
+    "lines": 939,
+    "sha256": "b952c2cf46c7b76ee2845f7430abc35a54f12780c5e61e2c0a1b93580cd94680"
+  },
+  {
+    "path": "toy_browser/typography/text.py",
+    "lines": 1086,
+    "sha256": "9c6b672a7c06c970e4cda54fade2e16a11e86a5d7d275f635a066eb7f9b2e7ab"
+  },
+  {
+    "path": "toy_browser/typography/ttf_font.py",
+    "lines": 1633,
+    "sha256": "cbd967a54d7a0b43fb646fcabb8efa2e42c5a0630b97b58e9050d3b4eb8aaf54"
+  },
+  {
+    "path": "tests/gpu_smoke_wgpu.py",
+    "lines": 98,
+    "sha256": "9d3f4985f66e42cbeca7fdb4ba0f7d49778a006a7603e3a2a7ba7f261bb1c71b"
+  },
+  {
+    "path": "tests/run.py",
+    "lines": 620,
+    "sha256": "133f7fae35e5b81c456dc8092d8db68091257453d88d9f23b10634508e3c39e0"
+  },
+  {
+    "path": "tests/skip_support.py",
+    "lines": 58,
+    "sha256": "bb0f02d826bb9141dbb2732e3997ebb4f3d08c923324dfaa2e43a62b18de63c8"
+  },
+  {
+    "path": "tests/test_accessibility.py",
+    "lines": 279,
+    "sha256": "49e4828fd47016767b31577a7160c67cda649da2795f09973e0b2a32a9909c40"
+  },
+  {
+    "path": "tests/test_activation.py",
+    "lines": 222,
+    "sha256": "f18807255e34ff720abaa8be12353de832a2f15f51824334f85b74c9fb9986b8"
+  },
+  {
+    "path": "tests/test_b_series_gui_wiring.py",
+    "lines": 437,
+    "sha256": "13315db236923db90d4e4dd820f5872b6aae9091d153c8d6c72c25479d8a22da"
+  },
+  {
+    "path": "tests/test_bidi.py",
+    "lines": 210,
+    "sha256": "f428b15fc63051bec5a33bb7b0569e8112c90072c9fec1c37e0c97821a057684"
+  },
+  {
+    "path": "tests/test_browser.py",
+    "lines": 6261,
+    "sha256": "ac309fc324ce32a363fec0d9f54a13466701896b184ffb161c15d4cba05258df"
+  },
+  {
+    "path": "tests/test_caret_explain.py",
+    "lines": 207,
+    "sha256": "0476c7fa0663cd0d5b3c70122fb79b5ea43deb227be7fad39ea1e43f9df00690"
+  },
+  {
+    "path": "tests/test_cpu_image.py",
+    "lines": 110,
+    "sha256": "b4194a7b8eb48af7636d88f61aaf8b2682856a969d884e71ddc683cc892c784f"
+  },
+  {
+    "path": "tests/test_cpu_image_fill.py",
+    "lines": 283,
+    "sha256": "dcc7f2a3cb2180ff4eac5041d8acc35a158f4851482ee5d9929949e0217118f8"
+  },
+  {
+    "path": "tests/test_cpu_image_formats.py",
+    "lines": 205,
+    "sha256": "f7f8ca4d239659edc8458eec153a2c8bfd54c697b71bd2536276601e4a6e36ca"
+  },
+  {
+    "path": "tests/test_cpu_image_glyph.py",
+    "lines": 277,
+    "sha256": "fad5d78e0e8ee1512ec67cb652dc4658ab1d463062ddaf9812f7c9c41b77afd8"
+  },
+  {
+    "path": "tests/test_css.py",
+    "lines": 944,
+    "sha256": "c72a796947f2e40b9e4d4a022f777bf784e435a8c9df23e2279bf3cb46b34a40"
+  },
+  {
+    "path": "tests/test_diag_panel.py",
+    "lines": 130,
+    "sha256": "fae18ffbbce2368ad173a8b7a8e2978660a75cfc3d17a748462e38b343a145e8"
+  },
+  {
+    "path": "tests/test_diagnostics.py",
+    "lines": 258,
+    "sha256": "0f8c0087ce3d29481b6e8b3748ae77d0aa267433f9a3d900b61b670a22ac6ae2"
+  },
+  {
+    "path": "tests/test_dirty_region.py",
+    "lines": 260,
+    "sha256": "cde9fc461decde83436d37f23a2a0d32692e9577b7cb90f0740a39621c950b22"
+  },
+  {
+    "path": "tests/test_display_list.py",
+    "lines": 226,
+    "sha256": "dc5a5c74ed69ab7b7247ada7f771bc377cae23db351b20307103e2b56f819872"
+  },
+  {
+    "path": "tests/test_document_context.py",
+    "lines": 226,
+    "sha256": "fd5f33c2ee9c5c265e1c81c13aa63ee54da45c4be7237df5e8cff03dcd82014e"
+  },
+  {
+    "path": "tests/test_document_controller.py",
+    "lines": 254,
+    "sha256": "0d454573934dd669ed9d668ccc022b28e4766452558051c7e2e1e948c4ba18f0"
+  },
+  {
+    "path": "tests/test_document_process.py",
+    "lines": 215,
+    "sha256": "9395e0a1f1de18bda229de0d16829f31fe4933c295bf8f5d2b349804bdebebab"
+  },
+  {
+    "path": "tests/test_document_process_spawn.py",
+    "lines": 520,
+    "sha256": "331e6f3b8720d0967a8a55c23c138f36082cab49bfdb812d89f13dd1995691e5"
+  },
+  {
+    "path": "tests/test_document_renderer.py",
+    "lines": 135,
+    "sha256": "d1da5a703352783375a1161e6a216ba2d22b2e43e092544a934c6a91dbe9c85a"
+  },
+  {
+    "path": "tests/test_document_state_full.py",
+    "lines": 211,
+    "sha256": "f38c87097c7edf041c7a2331f93417135bf8e6086be3dc213efd8dd5d12389ab"
+  },
+  {
+    "path": "tests/test_dom.py",
+    "lines": 87,
+    "sha256": "5605446a60c76cbcbcb4151a1589596159baca5307ae3e7e27883515b1d42e20"
+  },
+  {
+    "path": "tests/test_editor.py",
+    "lines": 240,
+    "sha256": "59fc2443534c6c94033e16480b3c76f1989c741efd4b6d0d612991d60dce9ae5"
+  },
+  {
+    "path": "tests/test_editor_overlay.py",
+    "lines": 390,
+    "sha256": "4880ee43a6bacd8631d91ad2076ad9a52c766d52e3a90b48f60e4a117f6a72e9"
+  },
+  {
+    "path": "tests/test_field_editing.py",
+    "lines": 153,
+    "sha256": "3e5d9e5f55127a3d9d47f7fac44141f7e38a65c92b2977e404956a4212078884"
+  },
+  {
+    "path": "tests/test_first_screen.py",
+    "lines": 206,
+    "sha256": "3a3a3ed36ca609b5101b2c9cc99048585d7af271c1e8615bd6cb4a6a16e39855"
+  },
+  {
+    "path": "tests/test_focus_routing.py",
+    "lines": 207,
+    "sha256": "e2826d24bd213bda1d1bcd1fcd6db81ffa4824b78b76efc3b083d2eb910ccd70"
+  },
+  {
+    "path": "tests/test_form_control.py",
+    "lines": 276,
+    "sha256": "1c2a61858f7515a1f85b9c101a053f4e067e066c53a36347cd9e53ef69f8b653"
+  },
+  {
+    "path": "tests/test_form_task.py",
+    "lines": 264,
+    "sha256": "73f2a00e08173a35e4427dc46b0316310ce5bf4d35bc2468d9fe19be167916f6"
+  },
+  {
+    "path": "tests/test_frame_ownership.py",
+    "lines": 212,
+    "sha256": "9b387b4571d5b0b00944b22b2332d8fb33cd571512c69bed21a1b12b0928da88"
+  },
+  {
+    "path": "tests/test_g09_gui_wiring.py",
+    "lines": 238,
+    "sha256": "8c23330c527e11fb0d9a1edcc5d5313ec94c3dafd555f1498e4a6579ee9d8e30"
+  },
+  {
+    "path": "tests/test_g11_gui_wiring.py",
+    "lines": 228,
+    "sha256": "f73a32c0147378757187ffbfd63dc5263dc5ff22a59bd502d7de100ff03f19f0"
+  },
+  {
+    "path": "tests/test_geometry_freeze.py",
+    "lines": 246,
+    "sha256": "1a53377253f13a06cb3efa8a3ae74edcd065bae8e66dbf86d12bbef36bcde1df"
+  },
+  {
+    "path": "tests/test_gpu_backend.py",
+    "lines": 275,
+    "sha256": "61a086cf38b30c5bac591f4e7ccbaa954597619d6e6bc2a67d2cab09fd548ae0"
+  },
+  {
+    "path": "tests/test_gpu_glyph_atlas.py",
+    "lines": 245,
+    "sha256": "6b07eda063bbe5bc8a86a1aca2fbea0cb318a76443f240c45bdae4ec32464e50"
+  },
+  {
+    "path": "tests/test_gpu_image_cache.py",
+    "lines": 313,
+    "sha256": "0c3d24d67bee68cbb6f661d8192de81239b63293d0123872841d1c55b4009229"
+  },
+  {
+    "path": "tests/test_gpu_rasterize.py",
+    "lines": 257,
+    "sha256": "26ef098d33b82f1bfe07862ca93ab687767e9feb3a52a9a17a59ebc6f043e755"
+  },
+  {
+    "path": "tests/test_gui_activation.py",
+    "lines": 161,
+    "sha256": "3901a30979bf6a38e3a70fedacaef25496e0403984d5530c2fab8fb42af949a8"
+  },
+  {
+    "path": "tests/test_gui_document_bridge.py",
+    "lines": 280,
+    "sha256": "35f81668bfdb2d8b34264bd2edc7e4ef40c1258115f8c7c69e098d7d3288812e"
+  },
+  {
+    "path": "tests/test_gui_scroll.py",
+    "lines": 204,
+    "sha256": "7869deb9b341d681e7b4e3b2b81dd9579be82190c4d46d2cd84f03f688245b08"
+  },
+  {
+    "path": "tests/test_helpers.py",
+    "lines": 341,
+    "sha256": "8502a37bf65bbcacd5da0286ad35b139f5dc53e7a2ce9c70634f82ca207975ea"
+  },
+  {
+    "path": "tests/test_history_entry.py",
+    "lines": 167,
+    "sha256": "fdfca2669bed774500de01537dacdcf7f1f23c41bc4c4e129316d7e3a0fd18de"
+  },
+  {
+    "path": "tests/test_inline_layout.py",
+    "lines": 219,
+    "sha256": "2602a406cae8c9322b4e4042a4db84643afa3afc08d6ab5b9948f08798bdd0ae"
+  },
+  {
+    "path": "tests/test_js.py",
+    "lines": 1971,
+    "sha256": "143d28477f824d07896304f88cd21192601dff6f6733467ae8538a5406c71e70"
+  },
+  {
+    "path": "tests/test_js_multi_decl.py",
+    "lines": 201,
+    "sha256": "7d99a3b78618f726c6572cfd09ffa5b979b14581839e89e40226e36b201b156b"
+  },
+  {
+    "path": "tests/test_keyboard_router.py",
+    "lines": 275,
+    "sha256": "71b0e26fa64f4b492f1fcf9b85b6955e4fde4d7832d1be04397c162d96f1547d"
+  },
+  {
+    "path": "tests/test_layout.py",
+    "lines": 972,
+    "sha256": "c6a876395609898864026042a068e997cc02d96755562875f2af57882f0223a1"
+  },
+  {
+    "path": "tests/test_layout_diff.py",
+    "lines": 216,
+    "sha256": "2bad17ddc1a2848fe1092b61b97bdd86e016761249b93176b792da6ed64f288e"
+  },
+  {
+    "path": "tests/test_layout_incremental.py",
+    "lines": 200,
+    "sha256": "15f31c76b5cc56498f2b53dccf4d926ed3ed88726d88b36b0008b0dc18b56644"
+  },
+  {
+    "path": "tests/test_load_phases.py",
+    "lines": 245,
+    "sha256": "3aedb278415558fce853706e602cb8a8daf22225a2be5a908145c68cdf071bef"
+  },
+  {
+    "path": "tests/test_mem.py",
+    "lines": 155,
+    "sha256": "e56a008d21bb32cf1c12c433ea5ef0a83675a6932c6fd20be01515b1db20c3c7"
+  },
+  {
+    "path": "tests/test_navigation.py",
+    "lines": 340,
+    "sha256": "bf5e9f5fc26f674adbb3712031c1b07b4096af486bda6814c94a5380d8329533"
+  },
+  {
+    "path": "tests/test_navigation_state.py",
+    "lines": 166,
+    "sha256": "9938e34c1c7b263abf648ae90eab6ec87b8767542959edbe3f338aeabe54ccd2"
+  },
+  {
+    "path": "tests/test_net.py",
+    "lines": 151,
+    "sha256": "cf020259bfe3d9881d61e8552f8e33489d430f1e3cdf7386e56254220f06467c"
+  },
+  {
+    "path": "tests/test_overlay_protocol.py",
+    "lines": 259,
+    "sha256": "0cbc62ce2a24ce18e8b3db729fa46473ab6c04ac195ba55bd0ff40594c08da0c"
+  },
+  {
+    "path": "tests/test_p06_glyph_atlas_ttf.py",
+    "lines": 204,
+    "sha256": "5e9d720681a67db42e44311834e54a42332e1be805d3be1f1d436841cd56eb7b"
+  },
+  {
+    "path": "tests/test_p0_js_budget.py",
+    "lines": 158,
+    "sha256": "604c82b065672cbd1192407ba07775a762aca9a015ff705d2429264e9e51896c"
+  },
+  {
+    "path": "tests/test_p0_policy.py",
+    "lines": 208,
+    "sha256": "d711ca5449d7f44d250743276ed82925aa12a233402a398c7250fdc87cbd8de7"
+  },
+  {
+    "path": "tests/test_p1_supports.py",
+    "lines": 145,
+    "sha256": "36f3d475def3a9c98e2dc52a35ab37ef2ddbb0821bff2c96c529d0f3e6360523"
+  },
+  {
+    "path": "tests/test_p2.py",
+    "lines": 331,
+    "sha256": "83eefbccf60b022a15bdfc2f19dfd9d78d13d50dcc1b61dd2b8cfcd52f2e5188"
+  },
+  {
+    "path": "tests/test_p3.py",
+    "lines": 194,
+    "sha256": "63de7095ab2ab04315925ffb4eea00e7102ff106faffaefc160cb81f8b0831b6"
+  },
+  {
+    "path": "tests/test_p34.py",
+    "lines": 570,
+    "sha256": "9f00c1cc20e293185a066cea958f153318780e9d58481fcbe4016e2568079ba7"
+  },
+  {
+    "path": "tests/test_p34_css_memo.py",
+    "lines": 68,
+    "sha256": "85a2255c613aed43755381d419468b2605eedc6bfc50780bc2f95ca8d417de4c"
+  },
+  {
+    "path": "tests/test_p34_r2.py",
+    "lines": 291,
+    "sha256": "8ac5a3784c678849a8728fa5a1f361739b3d02d0b718fcc640a47dca7976b7bc"
+  },
+  {
+    "path": "tests/test_p34_r3.py",
+    "lines": 295,
+    "sha256": "fa592fc79d708bc0557b386e7154a49c9b59975ac9f0ae0f04c54ac564e0f952"
+  },
+  {
+    "path": "tests/test_p34_r4.py",
+    "lines": 290,
+    "sha256": "3c740639ec793bff68033d3c749ac6ec4486db0d9e12fb9115aad434b0a3e4c6"
+  },
+  {
+    "path": "tests/test_p34_r5.py",
+    "lines": 221,
+    "sha256": "0fd527f7a3aaa44521a19d72b64fa4697902912fe4631af6371489c12329b8e8"
+  },
+  {
+    "path": "tests/test_p34_r6.py",
+    "lines": 345,
+    "sha256": "30e962866ed1ecc59bf45a5c4114f4ce6b50365c567f1989dcdf859aa672e9fe"
+  },
+  {
+    "path": "tests/test_p34_r7.py",
+    "lines": 222,
+    "sha256": "c6c73f4a847f8efe94feced05372e8151591b6c66fca6fec0067307152d9799e"
+  },
+  {
+    "path": "tests/test_p34_r8.py",
+    "lines": 205,
+    "sha256": "a7c11e03c6b22257b83642c96b22e330be2fd43720ff336698901fc8c3e304b8"
+  },
+  {
+    "path": "tests/test_p34_r9.py",
+    "lines": 163,
+    "sha256": "7dd8ff019a450b6d14a8c02f5b906f2442027b5c0ea55064d0f92e6ceb2dc102"
+  },
+  {
+    "path": "tests/test_paint.py",
+    "lines": 740,
+    "sha256": "484dde675ab9076dc77085183499494fc76c90299c96dea151a6c5f974d3d7a2"
+  },
+  {
+    "path": "tests/test_png_export.py",
+    "lines": 275,
+    "sha256": "6a45f0576ea368fccb7ff98795e81f004c147c535dca6f97bd191198b6fcac63"
+  },
+  {
+    "path": "tests/test_policy_regression.py",
+    "lines": 345,
+    "sha256": "befd640381127450e7b0f085a3b491a98eab3475fab683cd4a25c009c9e6201d"
+  },
+  {
+    "path": "tests/test_r1.py",
+    "lines": 301,
+    "sha256": "d2cd56b6308e8a5a52f2cd31c4bfd886520a45525650760d4d67e8c0f08a5c55"
+  },
+  {
+    "path": "tests/test_r2.py",
+    "lines": 343,
+    "sha256": "d5bded88543ab651e335f31c9e37bea6588bbcfcfd16fcbd2bcd710cf48f8867"
+  },
+  {
+    "path": "tests/test_r3.py",
+    "lines": 165,
+    "sha256": "35ac7424b70d4c3273a3a0b6132ae1a87d1e9fb2c6e7f03da452ac34bb6af29d"
+  },
+  {
+    "path": "tests/test_r4.py",
+    "lines": 612,
+    "sha256": "271ce50dae6abecfc9492cbb9d0949c29adce8759f85ee09eeea691f5d577e00"
+  },
+  {
+    "path": "tests/test_r4_perf.py",
+    "lines": 121,
+    "sha256": "f0e3d56cc32afe084784581ce08d3c17adfc9b247de57f2fa26225a5bb1c4607"
+  },
+  {
+    "path": "tests/test_r4_regression.py",
+    "lines": 403,
+    "sha256": "c0b67a73db458eea41dac0dd0df8a259f60a275f392ac7bace6fbd9c8f938538"
+  },
+  {
+    "path": "tests/test_r5.py",
+    "lines": 419,
+    "sha256": "666952385a80ce57ddddaddc9006975d16f308f77adcbf4c563ac01f58119efe"
+  },
+  {
+    "path": "tests/test_r7_a01_about_clear.py",
+    "lines": 149,
+    "sha256": "20416a05a088773ed08c5f204b4cdea6434b53d3b54b98ea43fda697cd874d11"
+  },
+  {
+    "path": "tests/test_r7_a01_document_session.py",
+    "lines": 117,
+    "sha256": "857e387221d7f4bc2f6d1d0d26dd8733170a4895b300672cfaadb548ce6e4bcd"
+  },
+  {
+    "path": "tests/test_r7_a01_history_stack.py",
+    "lines": 130,
+    "sha256": "b4d01ec1d385ec894b035595cef112eeb9440fd27483bb567170635babdb132c"
+  },
+  {
+    "path": "tests/test_r7_a02_frame_buffer.py",
+    "lines": 319,
+    "sha256": "6f79a978bcdd23ec8d249a215243f6820a937596a2c56be66af46f778f6dae38"
+  },
+  {
+    "path": "tests/test_r7_a02_frame_buffer_present.py",
+    "lines": 425,
+    "sha256": "942d2c2568e74cf9d328b607984723446cbff7f05d506bc9c59c058ee0f57868"
+  },
+  {
+    "path": "tests/test_r7_a02_ipc_trace.py",
+    "lines": 672,
+    "sha256": "7f10096447f7329eec5c71157b1c4587f2b957f05aafccd9cdfe772fbd71d04b"
+  },
+  {
+    "path": "tests/test_r7_a02_mode_claim.py",
+    "lines": 346,
+    "sha256": "ed03211f521a3370d612893ba77fdf9cdab99264f2d0af6f0331eaedf71eb37c"
+  },
+  {
+    "path": "tests/test_r7_a02_shared_frame.py",
+    "lines": 332,
+    "sha256": "e61ad10e72dd8df5cba9ff444ad86bb9840995fa60ff44f183d4ed4c9a55c7bd"
+  },
+  {
+    "path": "tests/test_r7_a02_slow_page_isolation.py",
+    "lines": 338,
+    "sha256": "154a27958feb6a54887510c6bd493cb40679d182e671b3aeeddbf522cd11e26c"
+  },
+  {
+    "path": "tests/test_r7_b05_gui_pending_nav.py",
+    "lines": 147,
+    "sha256": "57d7b1ff648052922a93c475dd3e4e0fe7f322d08baf3c43b753eb9e2856ad54"
+  },
+  {
+    "path": "tests/test_r7_c01_cascade.py",
+    "lines": 439,
+    "sha256": "ab2096b1f2fd60f14807344535e862659605f2e30a5bfbdcb05345613aad0ddd"
+  },
+  {
+    "path": "tests/test_r7_c02_layout.py",
+    "lines": 479,
+    "sha256": "1052af11f48fd18f8e778671401d3e903723531603222fd64851fa6a4341a98e"
+  },
+  {
+    "path": "tests/test_r7_c02_stacking_context.py",
+    "lines": 220,
+    "sha256": "a19894c717ae691f24e403ba0efed42e6e9e18c91b03657156719acb2553d6f1"
+  },
+  {
+    "path": "tests/test_r7_c02_stacking_wiring.py",
+    "lines": 309,
+    "sha256": "2a1f882fb181d2192c38e7920d17b3951f91e46605c7b8577ff6fb857c5a6fa8"
+  },
+  {
+    "path": "tests/test_r7_group_a_live_acceptance.py",
+    "lines": 275,
+    "sha256": "b7af43ae89c48761e4583eb90f719c1611d12b1ab341e674fa1c78e18008e5ed"
+  },
+  {
+    "path": "tests/test_r7_h01_html_parser.py",
+    "lines": 603,
+    "sha256": "3d6f4befbb324f480158d43e3acee9316f5d71f1b3259ca6af931b97dac1077f"
+  },
+  {
+    "path": "tests/test_r7_j01_value_semantics.py",
+    "lines": 385,
+    "sha256": "e993fc03133601eb118ab6b345903698bb5656a5f8471dcdfead5341da365cd6"
+  },
+  {
+    "path": "tests/test_r7_j02_document_lifecycle.py",
+    "lines": 129,
+    "sha256": "39514eac71956532941bcc5643f763e3b909387cf4c781b74f1b98b4e3c2ac56"
+  },
+  {
+    "path": "tests/test_r7_j02_event_loop.py",
+    "lines": 188,
+    "sha256": "f2033c955f4f9b6515538ada6bf9969081f3786f0349cc88bd830409bff923a8"
+  },
+  {
+    "path": "tests/test_r7_j02_module_classify.py",
+    "lines": 169,
+    "sha256": "4e4a293c207bc2bb29970217f24c15778d34f963ff1b587acf2c80987681edae"
+  },
+  {
+    "path": "tests/test_r7_j03_fetch_xhr_events.py",
+    "lines": 880,
+    "sha256": "17214b729a5ba4cf355c0f36a8100e202d6b9af8bbf98e12c5892cb0da276caf"
+  },
+  {
+    "path": "tests/test_r7_p02_display_list.py",
+    "lines": 134,
+    "sha256": "bf2a293f27d6077469043c4cfe90ac6523d5cd3a97cf941e25bd5846d1542cc4"
+  },
+  {
+    "path": "tests/test_r7_p02_gpu.py",
+    "lines": 105,
+    "sha256": "9e17e1f20c282c510ab34c4cafe4d008f594444aeed093d4becdb9001a82f263"
+  },
+  {
+    "path": "tests/test_r7_p02_gui_backend_boundary.py",
+    "lines": 297,
+    "sha256": "8a8c024c1bac91b1b82c621072e54e588fbb95ce17389abdfc23657a2b022a84"
+  },
+  {
+    "path": "tests/test_r7_p02_live_surface_probe.py",
+    "lines": 226,
+    "sha256": "67090b52917f7138081447e5110f927effc5d63286a94f379362b26cbbab4553"
+  },
+  {
+    "path": "tests/test_r7_p02_real_gpu_probe.py",
+    "lines": 292,
+    "sha256": "b9e90896981a8b9bc7f5dcdb2bb37648c4a58957aa69833dc424d9eebad3d89e"
+  },
+  {
+    "path": "tests/test_r7_p02_render_pass.py",
+    "lines": 260,
+    "sha256": "86b4486d43f5945a182bb928f0bc67397cc1807eaf602c1ceae53738d338f292"
+  },
+  {
+    "path": "tests/test_r7_q01_env_report.py",
+    "lines": 188,
+    "sha256": "6e973a5fa71b0255a5a78c8bc6bc1d25a78e0d1eada2065124ca57f8332d45e2"
+  },
+  {
+    "path": "tests/test_r7_q01_runner_contract.py",
+    "lines": 198,
+    "sha256": "762debbc3c36a70a813490d8f1ecccb4d6772b6cc08bcb5fb15200c06088d9fa"
+  },
+  {
+    "path": "tests/test_r7_q02_external.py",
+    "lines": 207,
+    "sha256": "70cc4e7f694e85574232c8ef9fa0d95836cf29613355a9f7b58badee28187e7e"
+  },
+  {
+    "path": "tests/test_r7_q03_release_gate.py",
+    "lines": 215,
+    "sha256": "4ef76047c8116bfaa87120909a2ef177216fcb7a82946e70e3f083fd9db78283"
+  },
+  {
+    "path": "tests/test_r7_s01_host_boundary.py",
+    "lines": 303,
+    "sha256": "f668bb752b461c3b253342e836935cb17eb613a4886a74980646a830e6785669"
+  },
+  {
+    "path": "tests/test_r7_s01_ipc_wiring.py",
+    "lines": 116,
+    "sha256": "da79bf800b87821c3bfc323b3820bdd142cfa997682e53e07efe6e7593b19bbb"
+  },
+  {
+    "path": "tests/test_r7_s01_script_ipc.py",
+    "lines": 237,
+    "sha256": "bcfbf0da61ffd794bfa19f5753839b9bae1a72f5ef38b3085ce2c4e11f7b7035"
+  },
+  {
+    "path": "tests/test_r7_s01_script_trust.py",
+    "lines": 328,
+    "sha256": "2118fe4fab84c2c50c117023d378f133c370f80d3828ec0540d16afc76784604"
+  },
+  {
+    "path": "tests/test_r7_s01_trust_wiring.py",
+    "lines": 281,
+    "sha256": "64912e150ca4f35aa6e8d4edd1b8f271e706f04f86c9a230bbe22a5415191681"
+  },
+  {
+    "path": "tests/test_r7_s02_policy_wiring.py",
+    "lines": 200,
+    "sha256": "7a5405a1e269e85863d30937a477f4178debb6184c7857abd439c3984ac431db"
+  },
+  {
+    "path": "tests/test_r7_s02_request_context.py",
+    "lines": 423,
+    "sha256": "e8d6edab3190c2fd5d5f4a175349d994752b44659c2ec4a70e74d12fab79eed4"
+  },
+  {
+    "path": "tests/test_r7_s02_s03_policy_cookies.py",
+    "lines": 1711,
+    "sha256": "ed6ba32492f18c1cbc651fedb7ddbe25a8e78d407269fcb89de92f4b5c508f57"
+  },
+  {
+    "path": "tests/test_r7_s03_cache_validity.py",
+    "lines": 339,
+    "sha256": "2752c5de21f07e999b56be82c6c95847653dcac5228a640e3d8404652b2368ee"
+  },
+  {
+    "path": "tests/test_r7_s03_cache_wiring.py",
+    "lines": 379,
+    "sha256": "3aa3a9782f15997c113229fb60b0612af5098028d60e3a072287f51d44296196"
+  },
+  {
+    "path": "tests/test_r7_s03_cookie_context.py",
+    "lines": 394,
+    "sha256": "91f60f731f118aac0da28b622a7972b8efe45b6e5e87ec69ddb109f13b8f396a"
+  },
+  {
+    "path": "tests/test_r7_s03_cookie_wiring.py",
+    "lines": 393,
+    "sha256": "da614ebfa776f2e424b589b4b43de0262b0ecd759b2929e297d2dbddec9ec8ff"
+  },
+  {
+    "path": "tests/test_r7_s03_storage_service.py",
+    "lines": 353,
+    "sha256": "b58934a9a279627335b2348e5b49f06759960315d31c0c40da154c942fcbec25"
+  },
+  {
+    "path": "tests/test_r7_s03_storage_wiring.py",
+    "lines": 295,
+    "sha256": "6993736ce3682ae74c0cbd80766baa985bbca7b944f8b7c552f6cf7ed7d10b11"
+  },
+  {
+    "path": "tests/test_r7_s04_bounded_reads.py",
+    "lines": 479,
+    "sha256": "326082721065551dd439c21c2e6850994ff835f42be7fa3a626731d98a5615c3"
+  },
+  {
+    "path": "tests/test_r7_s04_budget_wiring.py",
+    "lines": 229,
+    "sha256": "7b9a0d0a8b10445dc4725b4f4f95e42f44158d901f4010a9e7f5c0962f663c4f"
+  },
+  {
+    "path": "tests/test_r7_s04_page_limits.py",
+    "lines": 480,
+    "sha256": "8d4a157d3fa20d2f691643c6a4addde2e5231215c6a2de4bcf7fa88fb3819ac6"
+  },
+  {
+    "path": "tests/test_r7_s04_request_budget.py",
+    "lines": 159,
+    "sha256": "71b206312c7e811273266bb9c78ef417516a53fb230e6f019fd554961c487fb0"
+  },
+  {
+    "path": "tests/test_r7_s04_worker_timeout.py",
+    "lines": 162,
+    "sha256": "483259bfc2110da3a8d9fe61a741e338132e70f9dc9d47eb0c32dcda9c58578a"
+  },
+  {
+    "path": "tests/test_r7_s04_worker_timeout_wiring.py",
+    "lines": 102,
+    "sha256": "07299e77a7d7b1516f005d40a7b1ca77d0eb964bbbd99efd0c496c1b60ffee97"
+  },
+  {
+    "path": "tests/test_r7_t01_grapheme_whitespace.py",
+    "lines": 241,
+    "sha256": "5264e6af903e86e504436587ec3273a1c229596d82107dc940605a379bdf8903"
+  },
+  {
+    "path": "tests/test_r7_u01_node_id.py",
+    "lines": 175,
+    "sha256": "02cf2148756dbfd4e0ba87298eff454822223d3b2d44a0bcc13183ca6595f0f1"
+  },
+  {
+    "path": "tests/test_r7_u01_text_hit.py",
+    "lines": 291,
+    "sha256": "0ff81f4214821e6f698278d187babadb87bee8194bc107a3234cf719fed58327"
+  },
+  {
+    "path": "tests/test_r7_u01_window_close.py",
+    "lines": 377,
+    "sha256": "0f444e6ea1305263ceae60097d4ae1606367376bccc1dd3a916d9ea818ee4504"
+  },
+  {
+    "path": "tests/test_r7_u01_zoom_hit.py",
+    "lines": 279,
+    "sha256": "b795d15a6ae6ac90c746f906bc5fdfcd4113da8283d06bfaad64bd94815a4c45"
+  },
+  {
+    "path": "tests/test_r7_u02_ime_routing.py",
+    "lines": 266,
+    "sha256": "5b0f4a23513fa2c8207d5373d8a56a558a11d810a2d9342dd1eea4cc363a0a8d"
+  },
+  {
+    "path": "tests/test_r7_u02_live_editing_probe.py",
+    "lines": 266,
+    "sha256": "c7f1efe726b2b01465a727a63c2f8932ad33ff1d3ab1d97ee4abedef1a9f800e"
+  },
+  {
+    "path": "tests/test_r7_u02_native_overlay.py",
+    "lines": 375,
+    "sha256": "34e1ee2bf5f388adab5890e9a8205c8951d6441af6e6776c8690664eb11c35f9"
+  },
+  {
+    "path": "tests/test_r7_u03_shell_state.py",
+    "lines": 334,
+    "sha256": "ddc0418f659131298ade5bccdf3a724cbe784e5f52bd11689dd62a177f4b548d"
+  },
+  {
+    "path": "tests/test_r7_u03_ui_a11y_bridge.py",
+    "lines": 437,
+    "sha256": "92aeeef9714a1bef4f9d41df363ccd8962728c04bb327a02df33941d089a162e"
+  },
+  {
+    "path": "tests/test_rasterize_cpu.py",
+    "lines": 667,
+    "sha256": "c64a4a277ed1ee1060febbce450c44523d301bdf36bc7c45b0ad083519d9b6c7"
+  },
+  {
+    "path": "tests/test_request_config.py",
+    "lines": 193,
+    "sha256": "bb6101cf643ed241c4b2f0ccd17fa379d340b9e58b27a6e0030d910135df9031"
+  },
+  {
+    "path": "tests/test_script_error.py",
+    "lines": 217,
+    "sha256": "d5c0a383d31dc897bd67218dbd7e478727149eb466d98c7c68322e9c5196a142"
+  },
+  {
+    "path": "tests/test_session_recovery.py",
+    "lines": 315,
+    "sha256": "79c57c3ec3e27bf1d8d472f26da940bca923c619003ad865f97615b2aec97498"
+  },
+  {
+    "path": "tests/test_style_cache.py",
+    "lines": 236,
+    "sha256": "0bed74733f8a9e2ccefaf16ce18671de7c85229bc3ff103cef7c3645e559cb7b"
+  },
+  {
+    "path": "tests/test_style_cache_lru.py",
+    "lines": 282,
+    "sha256": "4c6a0e15439e72d778cf3b244136901d103df6a4b868994d4db7eb02b67d1671"
+  },
+  {
+    "path": "tests/test_t02_font_placement.py",
+    "lines": 267,
+    "sha256": "1af76fd23494e0f59207a762d4b3fa41a39ac37f350cfdc044fa2361338354af"
+  },
+  {
+    "path": "tests/test_tab_document_orchestrator.py",
+    "lines": 312,
+    "sha256": "9c1d2a22fd266025b931cb2eadc998ee06864b961e4711caf95d49a5126a2639"
+  },
+  {
+    "path": "tests/test_tab_identity.py",
+    "lines": 270,
+    "sha256": "b8c12f66533328297afe32d23a5ef91a106b933017d95b0a3d29dd5153e3bd2c"
+  },
+  {
+    "path": "tests/test_tab_lifecycle.py",
+    "lines": 247,
+    "sha256": "4ba1439f3316f7f24b2403cb1582d6c916c060669e1a3cfca68d0e6997a014ac"
+  },
+  {
+    "path": "tests/test_tab_session.py",
+    "lines": 298,
+    "sha256": "cdaef54571590aa22a4ac8ce67363d48a9b2f2733471c7dc065e20f3d2e620c7"
+  },
+  {
+    "path": "tests/test_tk_keyboard_binding.py",
+    "lines": 311,
+    "sha256": "c466ae236dfe0acbb1cc4f2f857b9b8a81c3a83abc0f14d8f57476fad463d19b"
+  },
+  {
+    "path": "tests/test_transport.py",
+    "lines": 173,
+    "sha256": "e7ef720e8460257feee8d2e84063adaf275ed4aacd06bf445d1b95e3a69a7113"
+  },
+  {
+    "path": "tests/test_viewport.py",
+    "lines": 138,
+    "sha256": "a4999ddce179f61da818c5b472db25a8da333853df6e61c7d7df1d93ef78ef8a"
+  },
+  {
+    "path": "tests/test_web_api.py",
+    "lines": 306,
+    "sha256": "ea08ee0e6fc1ee18872fa25aaf73084bef68a6b08de314649c1220d8cd9234d6"
+  },
+  {
+    "path": "tools/benchmarks/p34r3_perf.py",
+    "lines": 102,
+    "sha256": "aea0f214399964b33c914ba88f5e80e9f49b389acd3b8f831945d9fdd9bf2106"
+  },
+  {
+    "path": "tools/benchmarks/p34r4_perf.py",
+    "lines": 102,
+    "sha256": "ed9461e93919879bf1fa89afc7beefc8735ee0edc1a357dc5ef118cba7fc362e"
+  },
+  {
+    "path": "tools/benchmarks/p34r5_perf.py",
+    "lines": 102,
+    "sha256": "0a23b800c250f4a7924a5b33aad8d551097e2a5a0ae8064ebebf832395a15e53"
+  },
+  {
+    "path": "tools/benchmarks/p34r6_perf.py",
+    "lines": 102,
+    "sha256": "73fd476922ed15f45ca3349d4743977e06656af7dc78efc6922c0c589e2916a0"
+  },
+  {
+    "path": "tools/benchmarks/run_r7_j01_probes.py",
+    "lines": 61,
+    "sha256": "b226ed7d65aae9684becb3e359e2ac5cf912625676d556d388d5737280817eb5"
+  },
+  {
+    "path": "tools/online_regression.py",
+    "lines": 124,
+    "sha256": "ce2bb76e9e7bbb79f73061a1ed6d0a1b82313274db07e6eaa3aa908688ca07e8"
+  },
+  {
+    "path": "tools/prof_r4.py",
+    "lines": 266,
+    "sha256": "4ebb9416f657158a343f40047b47bafa52a5c47486679a8c7c1151b6d2dfc1a7"
+  },
+  {
+    "path": "tools/semantic_probe_check.py",
+    "lines": 73,
+    "sha256": "d9cf78ce6a67b95e9de7f8a1c9f33a010564f88fc1556a57a148bfb13e97c758"
+  }
+]

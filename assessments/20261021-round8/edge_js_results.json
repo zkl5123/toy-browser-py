@@ -1,0 +1,333 @@
+{
+  "js_basic_arith": {
+    "status": "OK",
+    "logs": [
+      "14 2.5 1 -3"
+    ]
+  },
+  "js_precedence": {
+    "status": "OK",
+    "logs": [
+      "10 20 8 40"
+    ]
+  },
+  "js_ternary": {
+    "status": "OK",
+    "logs": [
+      "yes",
+      "20"
+    ]
+  },
+  "js_typeof": {
+    "status": "OK",
+    "logs": [
+      "number string object undefined object object"
+    ]
+  },
+  "js_string_concat": {
+    "status": "OK",
+    "logs": [
+      "x:1true 11 ab2"
+    ]
+  },
+  "js_str_escapes": {
+    "status": "OK",
+    "logs": [
+      "a\nb",
+      "say \"hi\"",
+      "tab\tend"
+    ]
+  },
+  "js_arrays": {
+    "status": "OK",
+    "logs": [
+      "5 3 5 undefined",
+      "2 false [2, 3]",
+      "[2, 4, 6, 8, 10] 1-2-3-4-5"
+    ]
+  },
+  "js_arrow_funcs": {
+    "status": "OK",
+    "logs": [
+      "3 1,4,9 2,3"
+    ]
+  },
+  "js_object_methods": {
+    "status": "ERROR: SyntaxError: Expected property name or '}' in JSON at position 9 (line 1 column 10)",
+    "logs": [
+      "a,b,c 1,2,3",
+      "{\"x\":1,\"arr\":[1,2]}"
+    ]
+  },
+  "js_classes": {
+    "status": "OK",
+    "logs": [
+      "Rex barks",
+      "Cow makes a sound"
+    ]
+  },
+  "js_templates": {
+    "status": "OK",
+    "logs": [
+      "x is 10 and true",
+      "total=3"
+    ]
+  },
+  "js_optional_nullish": {
+    "status": "OK",
+    "logs": [
+      "1 undefined dflt 0 "
+    ]
+  },
+  "js_try_catch": {
+    "status": "OK",
+    "logs": [
+      "Infinity",
+      "done"
+    ]
+  },
+  "js_errors": {
+    "status": "OK",
+    "logs": [
+      "false Infinity NaN A 65"
+    ]
+  },
+  "js_numbers": {
+    "status": "OK",
+    "logs": [
+      "true false 42 3.14 3 2 9"
+    ]
+  },
+  "js_promise": {
+    "status": "OK",
+    "logs": [
+      "prom: 42"
+    ]
+  },
+  "js_destructuring": {
+    "status": "OK",
+    "logs": [
+      "30 -10",
+      "1 2 3"
+    ]
+  },
+  "js_spread": {
+    "status": "OK",
+    "logs": [
+      "1 2",
+      "1,2,3,4,5"
+    ]
+  },
+  "js_for_loops": {
+    "status": "OK",
+    "logs": [
+      "01234",
+      "10"
+    ]
+  },
+  "js_dom_bind": {
+    "status": "OK",
+    "logs": [
+      "DIV clicked!\nB"
+    ]
+  },
+  "js_event_click": {
+    "status": "OK",
+    "logs": [
+      "clicks: 1",
+      "clicks: 2",
+      "final: 2"
+    ]
+  },
+  "js_set_timeout": {
+    "status": "OK",
+    "logs": [
+      "before: sync"
+    ]
+  },
+  "js_while_break": {
+    "status": "OK",
+    "logs": [
+      "break at 14",
+      "n = 14"
+    ]
+  },
+  "js_generators": {
+    "status": "OK",
+    "logs": [
+      "1 2 false"
+    ]
+  },
+  "js_regexp": {
+    "status": "OK",
+    "logs": [
+      "abc b 0",
+      "-1-2-3",
+      "aBc a+b+c"
+    ]
+  },
+  "js_date": {
+    "status": "OK",
+    "logs": [
+      "2024 1 15 10"
+    ]
+  },
+  "js_infinity_nan": {
+    "status": "OK",
+    "logs": [
+      "true Infinity NaN false true"
+    ]
+  },
+  "js_functions_args": {
+    "status": "OK",
+    "logs": [
+      "1,, 1,2,3",
+      "0/3"
+    ]
+  },
+  "js_string_methods": {
+    "status": "OK",
+    "logs": [
+      "hi abcabcabc ....hello 5 a|b|c"
+    ]
+  },
+  "probe_const_write": {
+    "status": "OK",
+    "logs": [
+      "caught"
+    ]
+  },
+  "probe_tdz": {
+    "status": "OK",
+    "logs": [
+      "caught"
+    ]
+  },
+  "probe_reference_error": {
+    "status": "OK",
+    "logs": [
+      "caught"
+    ]
+  },
+  "probe_array_json": {
+    "status": "OK",
+    "logs": [
+      "[2,4,6]"
+    ]
+  },
+  "probe_object_identity": {
+    "status": "OK",
+    "logs": [
+      "true false"
+    ]
+  },
+  "probe_remove_dom": {
+    "status": "OK",
+    "logs": [
+      "true"
+    ]
+  },
+  "probe_unsupported_css": {
+    "status": "OK",
+    "logs": [
+      "object function"
+    ]
+  },
+  "probe_string_timer": {
+    "status": "OK",
+    "logs": [
+      "sync",
+      "timer"
+    ]
+  },
+  "functional_queue_microtask": {
+    "status": "OK",
+    "logs": [
+      "sync",
+      "end",
+      "micro"
+    ]
+  },
+  "functional_mutation_observer": {
+    "status": "OK",
+    "logs": [
+      "mutated",
+      "checkpoint"
+    ]
+  },
+  "functional_resize_observer": {
+    "status": "OK",
+    "logs": [
+      "resized"
+    ]
+  },
+  "functional_response_methods": {
+    "status": "OK",
+    "logs": []
+  },
+  "probe_microtasks": {
+    "status": "OK",
+    "logs": [
+      "start",
+      "end",
+      "promise"
+    ]
+  },
+  "probe_timer_order": {
+    "status": "OK",
+    "logs": [
+      "sync",
+      "early",
+      "late"
+    ]
+  },
+  "probe_event_bubble": {
+    "status": "OK",
+    "logs": [
+      "button",
+      "body"
+    ]
+  },
+  "probe_dom_live": {
+    "status": "OK",
+    "logs": [
+      "new"
+    ]
+  },
+  "probe_json_numbers": {
+    "status": "OK",
+    "logs": [
+      "[null,null,null,0]"
+    ]
+  },
+  "probe_equality": {
+    "status": "OK",
+    "logs": [
+      "[true,true,true,true,false]"
+    ]
+  },
+  "probe_api_types": {
+    "status": "OK",
+    "logs": [
+      "function function function function function"
+    ]
+  },
+  "probe_fetch_contract": {
+    "status": "OK",
+    "logs": [
+      "function"
+    ]
+  },
+  "probe_async": {
+    "status": "OK",
+    "logs": [
+      "42"
+    ]
+  },
+  "probe_dom_create": {
+    "status": "OK",
+    "logs": [
+      "hello"
+    ]
+  }
+}

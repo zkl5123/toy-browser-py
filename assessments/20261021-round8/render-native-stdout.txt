@@ -1,0 +1,436 @@
+{
+  "scope": "本地只读逻辑与最小 CPU 帧；无网络、GUI、真实 GPU 驱动测试",
+  "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+  "checks": 32,
+  "passed": 29,
+  "failed": 3,
+  "results": [
+    {
+      "name": "html_quoted_gt",
+      "observed": "a>b",
+      "expected": "a>b",
+      "passes": true,
+      "evidence": "tokenize.py:235"
+    },
+    {
+      "name": "html_duplicate_attr_first_wins",
+      "observed": "first",
+      "expected": "first",
+      "passes": true,
+      "evidence": "tokenize.py:283"
+    },
+    {
+      "name": "html_rcdata_entity",
+      "observed": "&",
+      "expected": "&",
+      "passes": true,
+      "evidence": "tokenize.py:285-299"
+    },
+    {
+      "name": "html_whitespace_text_preserved",
+      "observed": "a b",
+      "expected": "a b",
+      "passes": true,
+      "evidence": "tokenize.py:232;build.py:129"
+    },
+    {
+      "name": "html_implied_document_element",
+      "observed": [
+        "p"
+      ],
+      "expected": [
+        "html"
+      ],
+      "passes": false,
+      "evidence": "build.py:121-181"
+    },
+    {
+      "name": "html_table_implied_tbody",
+      "observed": [
+        "tbody"
+      ],
+      "expected": [
+        "tbody"
+      ],
+      "passes": true,
+      "evidence": "build.py:168-178"
+    },
+    {
+      "name": "selector_compound_specificity",
+      "observed": [
+        0,
+        1,
+        1,
+        1
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        1
+      ],
+      "passes": true,
+      "evidence": "css.py:638-657"
+    },
+    {
+      "name": "selector_unknown_pseudo_rejected",
+      "observed": false,
+      "expected": false,
+      "passes": true,
+      "evidence": "css.py:608-621"
+    },
+    {
+      "name": "selector_not_semantics",
+      "observed": false,
+      "expected": false,
+      "passes": true,
+      "evidence": "css.py:608-621"
+    },
+    {
+      "name": "selector_attribute",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "css.py:463-473"
+    },
+    {
+      "name": "selector_mixed_combinators",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "css.py:595-602;400-409"
+    },
+    {
+      "name": "cascade_id_beats_two_classes",
+      "observed": "Color(255,0,0,255)",
+      "expected": "Color(255,0,0,255)",
+      "passes": true,
+      "evidence": "css.py:2242-2251"
+    },
+    {
+      "name": "cascade_structural_cache",
+      "observed": {
+        "x": "Color(255,0,0,255)",
+        "y": "None"
+      },
+      "expected": {
+        "x": "Color(255,0,0,255)",
+        "y": "None"
+      },
+      "passes": true,
+      "evidence": "css.py:2184-2186;2333-2346"
+    },
+    {
+      "name": "cascade_compound_id_cache",
+      "observed": {
+        "x": "Color(255,0,0,255)",
+        "y": "None"
+      },
+      "expected": {
+        "x": "Color(255,0,0,255)",
+        "y": "None"
+      },
+      "passes": true,
+      "evidence": "css.py:2174-2176;2333-2346"
+    },
+    {
+      "name": "p05_distinct_content_resident",
+      "observed": 2,
+      "expected": 2,
+      "passes": true,
+      "evidence": "gpu.py:909-912"
+    },
+    {
+      "name": "p05_cache_observation",
+      "stats": {
+        "hits": 0,
+        "misses": 2,
+        "uploads": 2,
+        "resident": 2,
+        "evicted": 0,
+        "capacity": 32
+      },
+      "entries": {
+        "src:1x1:858296d03300bed1c95f3730d44804a0": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "src:1x1:2735a1d5369ecc622a64dc004314795b": [
+          0,
+          0,
+          255,
+          255
+        ]
+      }
+    },
+    {
+      "name": "cpu_red_blue_frame_independent_of_p05",
+      "observed": [
+        255,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "expected": [
+        255,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "passes": true,
+      "evidence": "gpu.py:794-829;paint_engine.py:841-842"
+    },
+    {
+      "name": "p06_atlas_has_coverage",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "gpu.py:477-494"
+    },
+    {
+      "name": "p06_atlas_upload",
+      "size": [
+        384,
+        256
+      ],
+      "bytes": 393216,
+      "nonzero_alpha": 44,
+      "uv": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0625,
+          0.09375
+        ]
+      ]
+    },
+    {
+      "name": "p06_family_affects_glyph",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "gpu.py:504"
+    },
+    {
+      "name": "p06_unicode_not_ascii_alias",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "gpu.py:504"
+    },
+    {
+      "name": "p06_fractional_size_distinct",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "gpu.py:505-506"
+    },
+    {
+      "name": "gpu_present_needs_surface",
+      "observed": true,
+      "expected": false,
+      "passes": false,
+      "evidence": "gpu.py:942-946"
+    },
+    {
+      "name": "gpu_verify_helper_rgb_conversion",
+      "observed": "AttributeError: 'NoneType' object has no attribute 'create_texture'",
+      "expected": "no_error",
+      "passes": false,
+      "evidence": "gpu.py:149-152"
+    },
+    {
+      "name": "grid_row_gap_once",
+      "observed": 30.0,
+      "expected": 30.0,
+      "passes": true,
+      "evidence": "layout.py:3505-3517"
+    },
+    {
+      "name": "grid_geometry",
+      "boxes": {
+        "g": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 50.0
+        },
+        "a": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 20.0
+        },
+        "b": {
+          "x": 0.0,
+          "y": 30.0,
+          "w": 100.0,
+          "h": 20.0
+        }
+      }
+    },
+    {
+      "name": "control_void_siblings",
+      "observed": [
+        "img",
+        "p"
+      ],
+      "expected": [
+        "img",
+        "p"
+      ],
+      "passes": true,
+      "evidence": "build.py:179"
+    },
+    {
+      "name": "control_script_rawtext",
+      "observed": "a<b && c>d",
+      "expected": "a<b && c>d",
+      "passes": true,
+      "evidence": "tokenize.py:285-302"
+    },
+    {
+      "name": "control_author_important_over_inline",
+      "observed": "Color(255,0,0,255)",
+      "expected": "Color(255,0,0,255)",
+      "passes": true,
+      "evidence": "css.py:2401-2408"
+    },
+    {
+      "name": "inline_mixed_run_font_preserved",
+      "observed": [
+        12,
+        24
+      ],
+      "expected": [
+        12,
+        24
+      ],
+      "passes": true,
+      "evidence": "inline_layout.py:309-313"
+    },
+    {
+      "name": "inline_run_style_preserved",
+      "observed": [
+        {
+          "color": "red"
+        },
+        {
+          "color": "blue"
+        }
+      ],
+      "expected": [
+        {
+          "color": "red"
+        },
+        {
+          "color": "blue"
+        }
+      ],
+      "passes": true,
+      "evidence": "inline_layout.py:313"
+    },
+    {
+      "name": "display_command_carries_family",
+      "observed": true,
+      "expected": true,
+      "passes": true,
+      "evidence": "paint_engine.py:17-91;828-840"
+    },
+    {
+      "name": "grid_explicit_column",
+      "observed": 50.0,
+      "expected": 50.0,
+      "passes": true,
+      "evidence": "layout.py:3456-3458;3510-3512"
+    },
+    {
+      "name": "flex_growth_resolved_per_line",
+      "observed": [
+        50.0,
+        50.0,
+        100.0
+      ],
+      "expected": [
+        50.0,
+        50.0,
+        100.0
+      ],
+      "passes": true,
+      "evidence": "layout.py:2850-2903"
+    },
+    {
+      "name": "flex_geometry",
+      "boxes": {
+        "f": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 40.0
+        },
+        "a": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 50.0,
+          "h": 20.0
+        },
+        "b": {
+          "x": 50.0,
+          "y": 0.0,
+          "w": 50.0,
+          "h": 20.0
+        },
+        "c": {
+          "x": 0.0,
+          "y": 20.0,
+          "w": 100.0,
+          "h": 20.0
+        }
+      }
+    },
+    {
+      "name": "table_colspan_width",
+      "observed": 100.0,
+      "expected": 100.0,
+      "passes": true,
+      "evidence": "layout.py:3571-3575;3707-3714"
+    },
+    {
+      "name": "table_geometry",
+      "boxes": {
+        "t": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 40.0
+        },
+        "span": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 100.0,
+          "h": 20.0
+        },
+        "a": {
+          "x": 0.0,
+          "y": 20.0,
+          "w": 50.0,
+          "h": 20.0
+        },
+        "b": {
+          "x": 50.0,
+          "y": 20.0,
+          "w": 50.0,
+          "h": 20.0
+        }
+      }
+    }
+  ]
+}

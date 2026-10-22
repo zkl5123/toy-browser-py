@@ -1,0 +1,2217 @@
+{
+  "mode": "only(test_browser,test_p34_r4)",
+  "environment": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "executable": "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "tkinter": true,
+    "wgpu": true
+  },
+  "counts": {
+    "PASS": 366,
+    "FAIL": 0,
+    "ERROR": 0,
+    "SKIP": 0,
+    "TIMEOUT": 0
+  },
+  "total": 366,
+  "duration_s": 88.166,
+  "tests": [
+    {
+      "id": "test_browser::test_text_align_stored",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 561.597
+    },
+    {
+      "id": "test_browser::test_line_height_affects_text_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.994
+    },
+    {
+      "id": "test_browser::test_inline_elements_horizontal",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.001
+    },
+    {
+      "id": "test_browser::test_iframe_placeholder",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.823
+    },
+    {
+      "id": "test_browser::test_text_measure_consistency",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_render_display_none",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 210.853
+    },
+    {
+      "id": "test_browser::test_iframe_src_sandbox",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.554
+    },
+    {
+      "id": "test_browser::test_img_placeholder",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.432
+    },
+    {
+      "id": "test_browser::test_img_explicit_size",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.8
+    },
+    {
+      "id": "test_browser::test_img_paints",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 61.04
+    },
+    {
+      "id": "test_browser::test_button_border",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.901
+    },
+    {
+      "id": "test_browser::test_input_placeholder",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.997
+    },
+    {
+      "id": "test_browser::test_changed_region",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 59.88
+    },
+    {
+      "id": "test_browser::test_request_animation_frame",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.988
+    },
+    {
+      "id": "test_browser::test_host_logs",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.899
+    },
+    {
+      "id": "test_browser::test_ua_h3_default",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.664
+    },
+    {
+      "id": "test_browser::test_ua_table_border",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 7.426
+    },
+    {
+      "id": "test_browser::test_a11y_tree_roles",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_a11y_img_alt_fallback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.085
+    },
+    {
+      "id": "test_browser::test_a11y_skip_script_style",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_collect_links",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_collect_links_remote",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_write_links_and_a11y",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 13.825
+    },
+    {
+      "id": "test_browser::test_parse_keyframes",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.513
+    },
+    {
+      "id": "test_browser::test_apply_animation_frame_interpolation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.243
+    },
+    {
+      "id": "test_browser::test_focus_pseudo_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.706
+    },
+    {
+      "id": "test_browser::test_text_transform_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.595
+    },
+    {
+      "id": "test_browser::test_text_transform_render_uppercase",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.779
+    },
+    {
+      "id": "test_browser::test_letter_spacing_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.024
+    },
+    {
+      "id": "test_browser::test_word_spacing_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.637
+    },
+    {
+      "id": "test_browser::test_linear_gradient_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_linear_gradient_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.076
+    },
+    {
+      "id": "test_browser::test_text_shadow_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.989
+    },
+    {
+      "id": "test_browser::test_text_shadow_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.069
+    },
+    {
+      "id": "test_browser::test_element_at_basic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 9.995
+    },
+    {
+      "id": "test_browser::test_element_at_miss",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 8.259
+    },
+    {
+      "id": "test_browser::test_event_target_runs_handler",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 10.076
+    },
+    {
+      "id": "test_browser::test_click_and_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 26.228
+    },
+    {
+      "id": "test_browser::test_element_at_uses_supports",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 11.387
+    },
+    {
+      "id": "test_browser::test_animation_handle_frame_overrides",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_animation_handle_update",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_pre_render_callback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 18.985
+    },
+    {
+      "id": "test_browser::test_font_cell_widths",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_font_family_from_css",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_font_measure_family",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_ttf_load_header",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 139.289
+    },
+    {
+      "id": "test_browser::test_ttf_cmap_lookup",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 141.91
+    },
+    {
+      "id": "test_browser::test_ttf_advance_width",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 142.928
+    },
+    {
+      "id": "test_browser::test_ttf_advance_proportional",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 138.698
+    },
+    {
+      "id": "test_browser::test_ttf_line_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 139.113
+    },
+    {
+      "id": "test_browser::test_ttf_corrupt_file",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 451.857
+    },
+    {
+      "id": "test_browser::test_ttf_missing_glyph_fallback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 141.149
+    },
+    {
+      "id": "test_browser::test_ttf_dual_weight",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 292.931
+    },
+    {
+      "id": "test_browser::test_ttf_family_loading",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 148.845
+    },
+    {
+      "id": "test_browser::test_ttf_glyph_outline_a",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 141.045
+    },
+    {
+      "id": "test_browser::test_ttf_glyph_outline_a_lower",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 140.384
+    },
+    {
+      "id": "test_browser::test_ttf_glyph_outline_dot",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 138.494
+    },
+    {
+      "id": "test_browser::test_ttf_glyph_space",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 140.076
+    },
+    {
+      "id": "test_browser::test_ttf_has_glyph",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 139.612
+    },
+    {
+      "id": "test_browser::test_text_ttf_advance",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_text_ttf_line_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 372.775
+    },
+    {
+      "id": "test_browser::test_render_with_ttf_metrics",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 110.829
+    },
+    {
+      "id": "test_browser::test_render_without_ttf_fallback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 85.954
+    },
+    {
+      "id": "test_browser::test_ttf_outline_boundary",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 141.028
+    },
+    {
+      "id": "test_browser::test_ttf_composite_glyph",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 139.653
+    },
+    {
+      "id": "test_browser::test_ttf_font_face_in_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.12
+    },
+    {
+      "id": "test_browser::test_ttf_weight_class_switch",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 279.673
+    },
+    {
+      "id": "test_browser::test_ttf_glyf_outline_points",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 140.506
+    },
+    {
+      "id": "test_browser::test_ttf_cmap_cjk_absent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 139.44
+    },
+    {
+      "id": "test_browser::test_ttf_empty_font_metrics",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p18_half_leading_baseline",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.002
+    },
+    {
+      "id": "test_browser::test_p18_font_ascent_descent_fields",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 57.459
+    },
+    {
+      "id": "test_browser::test_p18_text_transform_uppercase",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.451
+    },
+    {
+      "id": "test_browser::test_p18_text_transform_lowercase",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.107
+    },
+    {
+      "id": "test_browser::test_p18_inline_link_cross_line",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 60.061
+    },
+    {
+      "id": "test_browser::test_p18_vertical_align_top",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.326
+    },
+    {
+      "id": "test_browser::test_p18_vertical_align_middle",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.284
+    },
+    {
+      "id": "test_browser::test_p18_inline_img_raises_line_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.845
+    },
+    {
+      "id": "test_browser::test_p18_text_align_center_line_box",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p18_render_half_leading",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 199.862
+    },
+    {
+      "id": "test_browser::test_p18_render_inline_styles_preserved",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 192.996
+    },
+    {
+      "id": "test_browser::test_p18_mixed_inline_block",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.297
+    },
+    {
+      "id": "test_browser::test_p18_baseline_alignment_math",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.406
+    },
+    {
+      "id": "test_browser::test_p18_line_height_half_leading_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 130.612
+    },
+    {
+      "id": "test_browser::test_p18_text_align_right",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 43.86
+    },
+    {
+      "id": "test_browser::test_p18_mixed_line_wrap_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 365.067
+    },
+    {
+      "id": "test_browser::test_p18_vertical_align_stored",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.172
+    },
+    {
+      "id": "test_browser::test_p18_half_leading_large_line_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.024
+    },
+    {
+      "id": "test_browser::test_p18_inline_run_height",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.002
+    },
+    {
+      "id": "test_browser::test_p19_english_word_wrap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 58.05
+    },
+    {
+      "id": "test_browser::test_p19_cjk_char_by_char",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_kinsoku_no_line_start",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.988
+    },
+    {
+      "id": "test_browser::test_p19_kinsoku_latin_brackets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_soft_hyphen",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_shy_html_entity",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.999
+    },
+    {
+      "id": "test_browser::test_p19_word_break_all",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_overflow_wrap_break_word",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.64
+    },
+    {
+      "id": "test_browser::test_p19_long_word_overflow",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_mixed_cjk_latin",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_render_cjk_wrap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 486.615
+    },
+    {
+      "id": "test_browser::test_p19_render_shy",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 68.835
+    },
+    {
+      "id": "test_browser::test_p19_render_word_break",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 92.817
+    },
+    {
+      "id": "test_browser::test_p19_overflow_wrap_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.134
+    },
+    {
+      "id": "test_browser::test_p19_word_break_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.066
+    },
+    {
+      "id": "test_browser::test_p19_break_class",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_kinsoku_sets",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_wrap_empty",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p19_wrap_narrow_cjk",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_gui_page_load_file",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1947.3
+    },
+    {
+      "id": "test_browser::test_gui_about_blank",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 8.708
+    },
+    {
+      "id": "test_browser::test_gui_http_stub",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5055.894
+    },
+    {
+      "id": "test_browser::test_gui_inline_html",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 41.663
+    },
+    {
+      "id": "test_browser::test_gui_back_forward",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2495.98
+    },
+    {
+      "id": "test_browser::test_gui_bitmap_ppm",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_gui_tkinter_available",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_quadratic_flatten",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_offcurve_midpoint_rule",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_fill_polygon_aa",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 265.099
+    },
+    {
+      "id": "test_browser::test_p20_fill_polygon_speed",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 355.118
+    },
+    {
+      "id": "test_browser::test_p20_synthetic_bold_increases_ink",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 84.854
+    },
+    {
+      "id": "test_browser::test_p20_dilate_poly",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_outline_bbox_validation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_letter_spacing_widens",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 62.03
+    },
+    {
+      "id": "test_browser::test_p20_text_rendering_stored",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.082
+    },
+    {
+      "id": "test_browser::test_p20_font_weight_stored",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 9.696
+    },
+    {
+      "id": "test_browser::test_p20_metrics_for_weight",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 63.134
+    },
+    {
+      "id": "test_browser::test_p20_font_fallback_chain",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 21.257
+    },
+    {
+      "id": "test_browser::test_p20_match_weight",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_draw_text_curves_letter_spacing",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 188.794
+    },
+    {
+      "id": "test_browser::test_p20_glyf_instruction_count_layout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_point_flags_bits",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_curve_glyph_fallback",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 84.871
+    },
+    {
+      "id": "test_browser::test_p20_paint_command_fields",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p20_layout_box_fields",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.016
+    },
+    {
+      "id": "test_browser::test_p20_synthetic_bold_flag_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 10.01
+    },
+    {
+      "id": "test_browser::test_p20_render_full_pipeline_weight",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.003
+    },
+    {
+      "id": "test_browser::test_p20_glyf_offcurve_yreversed",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_parse_url_absolute",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_parse_url_https_default_port",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_relative_url_resolution",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_url_to_string_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_normalize_url",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_origin_property",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_http_get_200",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 533.323
+    },
+    {
+      "id": "test_browser::test_p21_http_get_404",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 521.487
+    },
+    {
+      "id": "test_browser::test_p21_http_redirect_surfaced",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 18.181
+    },
+    {
+      "id": "test_browser::test_p21_content_type_dispatch",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 32.416
+    },
+    {
+      "id": "test_browser::test_p21_fetch_error_on_4xx",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 519.011
+    },
+    {
+      "id": "test_browser::test_p21_unsupported_scheme",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_error_page_html",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_error_page_renders",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 223.937
+    },
+    {
+      "id": "test_browser::test_p21_connection_error_retries",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1012.422
+    },
+    {
+      "id": "test_browser::test_p21_http_query_in_path",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 504.952
+    },
+    {
+      "id": "test_browser::test_p21_url_is_network_flag",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p21_fetch_html_accepts_str_url",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 22.508
+    },
+    {
+      "id": "test_browser::test_p21_cli_network_error_exit_code",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6102.679
+    },
+    {
+      "id": "test_browser::test_p22_redirect_followed",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 509.575
+    },
+    {
+      "id": "test_browser::test_p22_redirect_loop_detected",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 539.283
+    },
+    {
+      "id": "test_browser::test_p22_redirect_exceeds_cap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 557.741
+    },
+    {
+      "id": "test_browser::test_p22_redirect_within_cap_succeeds",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 572.238
+    },
+    {
+      "id": "test_browser::test_p22_redirect_no_follow_returns_302",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 20.875
+    },
+    {
+      "id": "test_browser::test_p22_gzip_decoded",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 515.419
+    },
+    {
+      "id": "test_browser::test_p22_gzip_no_header_passthrough",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 24.099
+    },
+    {
+      "id": "test_browser::test_p22_chunked_decode_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_chunked_with_extensions",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_chunked_max_size_cap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_subresource_collection",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_base_tag_overrides_doc_base",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_base_tag_absent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_subresource_failure_does_not_block",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 527.338
+    },
+    {
+      "id": "test_browser::test_p22_render_document_from_url",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 542.672
+    },
+    {
+      "id": "test_browser::test_p22_render_from_url_gzip_doc",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 520.688
+    },
+    {
+      "id": "test_browser::test_p22_render_from_url_network_error",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4064.27
+    },
+    {
+      "id": "test_browser::test_p22_subresource_data_uri_skipped",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p22_fetch_resource_returns_none_on_404",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 532.812
+    },
+    {
+      "id": "test_browser::test_p22_redirect_relative_location",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 517.468
+    },
+    {
+      "id": "test_browser::test_p23_cache_hit_skips_wire",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 543.822
+    },
+    {
+      "id": "test_browser::test_p23_cache_no_store_not_cached",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 525.204
+    },
+    {
+      "id": "test_browser::test_p23_cache_max_age_expiry",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 521.464
+    },
+    {
+      "id": "test_browser::test_p23_cache_etag_304_reuse",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 581.221
+    },
+    {
+      "id": "test_browser::test_p23_cache_heuristic_ttl",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 527.676
+    },
+    {
+      "id": "test_browser::test_p23_cache_store_clear",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 507.41
+    },
+    {
+      "id": "test_browser::test_p23_cache_parse_directives",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p23_progress_events_emitted",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 526.712
+    },
+    {
+      "id": "test_browser::test_p23_progress_subresource_phase",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 542.793
+    },
+    {
+      "id": "test_browser::test_p23_progress_on_event_subscription",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p23_post_form_encoded",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 515.306
+    },
+    {
+      "id": "test_browser::test_p23_post_verbatim_str",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 12.047
+    },
+    {
+      "id": "test_browser::test_p23_insecure_flag_accepted",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p23_https_tls_handshake",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1077.332
+    },
+    {
+      "id": "test_browser::test_p23_cache_etag_absent_refetches",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 515.525
+    },
+    {
+      "id": "test_browser::test_p23_cache_disabled_store",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.997
+    },
+    {
+      "id": "test_browser::test_p24_entities_named",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_entities_numeric_dec",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_entities_numeric_hex",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_entities_zero_and_surrogate",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_entities_unknown_name_literal",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_rawtext_script_literal",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_rawtext_style_literal",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_void_input_no_stack",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_void_self_closing_br",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_implicit_p_sibling",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_block_closes_p",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_adoption_b_i",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_stray_close_ignored",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.131
+    },
+    {
+      "id": "test_browser::test_p24_comment_doctype_dropped",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_case_insensitive_tag",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_foster_tr_in_div",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.62
+    },
+    {
+      "id": "test_browser::test_p24_unclosed_lt_text",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_utf16_bom",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.136
+    },
+    {
+      "id": "test_browser::test_p24_utf8_bom",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_dom_shim_reexport",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_dom_parse_bytes",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p24_full_pipeline_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 99.854
+    },
+    {
+      "id": "test_browser::test_p25_specificity_4tuple",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_specificity_id_beats_class",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_specificity_class_beats_type",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_important_beats_normal",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.958
+    },
+    {
+      "id": "test_browser::test_p25_important_author_wins_over_normal_inline",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_inherit_keyword",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.1
+    },
+    {
+      "id": "test_browser::test_p25_initial_keyword",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.921
+    },
+    {
+      "id": "test_browser::test_p25_unset_keyword",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_shorthand_margin_expands",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.019
+    },
+    {
+      "id": "test_browser::test_p25_shorthand_padding_expands",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_em_computed_chain",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.958
+    },
+    {
+      "id": "test_browser::test_p25_inherit_font_size",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p25_source_cascade_author_over_ua",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.11
+    },
+    {
+      "id": "test_browser::test_p25_full_pipeline_important",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 26.0
+    },
+    {
+      "id": "test_browser::test_p26_margin_collapse_siblings",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.994
+    },
+    {
+      "id": "test_browser::test_p26_margin_collapse_parent_child",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.176
+    },
+    {
+      "id": "test_browser::test_p26_margin_collapse_empty_block",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.62
+    },
+    {
+      "id": "test_browser::test_p26_bfc_cleares_floats",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.79
+    },
+    {
+      "id": "test_browser::test_p26_pct_height_chain",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.326
+    },
+    {
+      "id": "test_browser::test_p26_height_auto_grows",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.493
+    },
+    {
+      "id": "test_browser::test_p26_min_height_clamps",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.534
+    },
+    {
+      "id": "test_browser::test_p26_max_height_clamps",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.497
+    },
+    {
+      "id": "test_browser::test_p26_min_width_clamps",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.318
+    },
+    {
+      "id": "test_browser::test_p26_max_width_clamps",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.642
+    },
+    {
+      "id": "test_browser::test_p26_width_auto_fills",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.482
+    },
+    {
+      "id": "test_browser::test_p26_width_auto_with_margins",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.681
+    },
+    {
+      "id": "test_browser::test_p26_float_inside_bfc_no_overlap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.412
+    },
+    {
+      "id": "test_browser::test_p26_full_pipeline_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 15.991
+    },
+    {
+      "id": "test_browser::test_p27_flex_shrink_proportional",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.164
+    },
+    {
+      "id": "test_browser::test_p27_flex_shrink_weighted",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.73
+    },
+    {
+      "id": "test_browser::test_p27_flex_basis_explicit",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.439
+    },
+    {
+      "id": "test_browser::test_p27_flex_wrap_two_lines",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.03
+    },
+    {
+      "id": "test_browser::test_p27_flex_wrap_single_line_fits",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.877
+    },
+    {
+      "id": "test_browser::test_p27_align_items_start",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.754
+    },
+    {
+      "id": "test_browser::test_p27_align_items_end",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.194
+    },
+    {
+      "id": "test_browser::test_p27_align_self_overrides",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.609
+    },
+    {
+      "id": "test_browser::test_p27_justify_content_space_evenly",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.814
+    },
+    {
+      "id": "test_browser::test_p27_justify_content_space_around",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.917
+    },
+    {
+      "id": "test_browser::test_p27_flex_direction_column_reverse",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.602
+    },
+    {
+      "id": "test_browser::test_p27_flex_order_reorders",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.055
+    },
+    {
+      "id": "test_browser::test_p27_min_width_auto_floor",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.019
+    },
+    {
+      "id": "test_browser::test_p27_flex_basis_zero",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.925
+    },
+    {
+      "id": "test_browser::test_p27_flex_shrink_zero_keeps_size",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.379
+    },
+    {
+      "id": "test_browser::test_p27_align_content_center_multi_line",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.754
+    },
+    {
+      "id": "test_browser::test_p27_flex_row_reverse",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.369
+    },
+    {
+      "id": "test_browser::test_p27_flex_grow_shrink_basis_shorthand",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.792
+    },
+    {
+      "id": "test_browser::test_p27_wrap_reverse_direction",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 5.893
+    },
+    {
+      "id": "test_browser::test_p27_flex_full_pipeline_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 17.913
+    },
+    {
+      "id": "test_browser::test_p28_input_checkbox_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 16.574
+    },
+    {
+      "id": "test_browser::test_p28_input_radio_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.905
+    },
+    {
+      "id": "test_browser::test_p28_select_option_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 57.729
+    },
+    {
+      "id": "test_browser::test_p28_file_input_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.235
+    },
+    {
+      "id": "test_browser::test_p28_textarea_default_size",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.586
+    },
+    {
+      "id": "test_browser::test_p28_form_get_query_string",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_form_post_body",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_form_select_multiple",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.102
+    },
+    {
+      "id": "test_browser::test_p28_form_radio_group",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.349
+    },
+    {
+      "id": "test_browser::test_p28_form_action_url_resolution",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_required_validation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_required_checkbox",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_submit_blocked_by_validation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.217
+    },
+    {
+      "id": "test_browser::test_p28_tab_order_natural",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_tab_order_explicit",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.979
+    },
+    {
+      "id": "test_browser::test_p28_focus_marks_box",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.998
+    },
+    {
+      "id": "test_browser::test_p28_checkbox_toggle_render_diff",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.542
+    },
+    {
+      "id": "test_browser::test_p28_full_pipeline_form_render",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 45.624
+    },
+    {
+      "id": "test_browser::test_p28_js_element_value_prop",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.64
+    },
+    {
+      "id": "test_browser::test_p28_form_hidden_field",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p28_required_select",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p29_regexp_literal_test",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.343
+    },
+    {
+      "id": "test_browser::test_p29_regexp_literal_flags",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.832
+    },
+    {
+      "id": "test_browser::test_p29_regexp_exec_groups",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.592
+    },
+    {
+      "id": "test_browser::test_p29_string_match_regexp",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 8.439
+    },
+    {
+      "id": "test_browser::test_p29_string_replace_regexp",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.774
+    },
+    {
+      "id": "test_browser::test_p29_new_regexp_ctor",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.121
+    },
+    {
+      "id": "test_browser::test_p29_for_of_array",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.983
+    },
+    {
+      "id": "test_browser::test_p29_for_of_string_chars",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.536
+    },
+    {
+      "id": "test_browser::test_p29_for_of_generator",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.752
+    },
+    {
+      "id": "test_browser::test_p29_generator_next_done",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.654
+    },
+    {
+      "id": "test_browser::test_p29_generator_expression_form",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.352
+    },
+    {
+      "id": "test_browser::test_p29_generator_yield_in_loop",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.817
+    },
+    {
+      "id": "test_browser::test_p29_for_of_map_iterable",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.006
+    },
+    {
+      "id": "test_browser::test_p29_symbol_iterator_protocol",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.802
+    },
+    {
+      "id": "test_browser::test_p29_math_trig_log",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.45
+    },
+    {
+      "id": "test_browser::test_p29_math_constants",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.746
+    },
+    {
+      "id": "test_browser::test_p29_json_stringify_nested",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.354
+    },
+    {
+      "id": "test_browser::test_p29_json_parse_stringify_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.436
+    },
+    {
+      "id": "test_browser::test_p29_array_tail_methods",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.652
+    },
+    {
+      "id": "test_browser::test_p29_string_tail_methods",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.886
+    },
+    {
+      "id": "test_browser::test_p30_qsel_simple_selectors",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.999
+    },
+    {
+      "id": "test_browser::test_p30_qsel_descendant_child",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.462
+    },
+    {
+      "id": "test_browser::test_p30_qsel_comma_list",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.999
+    },
+    {
+      "id": "test_browser::test_p30_qsel_child_pseudos",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.809
+    },
+    {
+      "id": "test_browser::test_p30_qsel_hover_no_state",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.003
+    },
+    {
+      "id": "test_browser::test_p30_qsel_js_query_selector",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.525
+    },
+    {
+      "id": "test_browser::test_p30_qsel_scoped_include_self",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.519
+    },
+    {
+      "id": "test_browser::test_p30_append_child_mutation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.5
+    },
+    {
+      "id": "test_browser::test_p30_remove_child_mutation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.445
+    },
+    {
+      "id": "test_browser::test_p30_insert_before_mutation",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.644
+    },
+    {
+      "id": "test_browser::test_p30_mutation_renders",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1886.577
+    },
+    {
+      "id": "test_browser::test_p30_create_element_detached",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.096
+    },
+    {
+      "id": "test_browser::test_p30_classlist_add_toggle",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.665
+    },
+    {
+      "id": "test_browser::test_p30_dataset_camelcase",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.659
+    },
+    {
+      "id": "test_browser::test_p30_set_get_attribute",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.496
+    },
+    {
+      "id": "test_browser::test_p30_custom_event_two_listeners",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.807
+    },
+    {
+      "id": "test_browser::test_p30_custom_event_isolated",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 4.78
+    },
+    {
+      "id": "test_browser::test_p30_custom_event_mutation_visible",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.628
+    },
+    {
+      "id": "test_browser::test_p30_full_pipeline_regression",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 26.824
+    },
+    {
+      "id": "test_browser::test_p30_qsel_js_mutation_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.523
+    },
+    {
+      "id": "test_browser::test_p32_history_add_recent",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3.841
+    },
+    {
+      "id": "test_browser::test_p32_history_consecutive_collapse",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_history_cap",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_history_about_skipped",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_history_persist_roundtrip",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 13.063
+    },
+    {
+      "id": "test_browser::test_p32_history_corrupt_graceful",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 18.316
+    },
+    {
+      "id": "test_browser::test_p32_bookmarks_add_remove",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_bookmarks_update_title",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_bookmarks_persist",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 12.228
+    },
+    {
+      "id": "test_browser::test_p32_bookmarks_page_html",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_parse_basic",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_max_age_zero",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_header_match",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_subdomain",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.999
+    },
+    {
+      "id": "test_browser::test_p32_cookie_path_filter",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_malformed_dropped",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_cookie_jar_ingest_count",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_dns",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_timeout",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_connect",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_bad_url",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_redirect",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_categorize_http_status",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_error_page_copy_distinct",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_http_error_page_shows_status",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_error_page_generic_passthrough",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_devtools_dom_tree",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.635
+    },
+    {
+      "id": "test_browser::test_p32_devtools_computed_style",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_devtools_computed_style_missing",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_devtools_selector_hits",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 2.004
+    },
+    {
+      "id": "test_browser::test_p32_devtools_report_includes_all",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 8.786
+    },
+    {
+      "id": "test_browser::test_p32_view_source_local_file",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 43.942
+    },
+    {
+      "id": "test_browser::test_p32_view_source_network_not_retained",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_browser::test_p32_main_devtools_flag",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 3411.1
+    },
+    {
+      "id": "test_p34_r4::t1_cache_agrees_with_advance",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_p34_r4::t2_measure_edge_cases",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_p34_r4::t3_clear_advances_cache",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_p34_r4::t4_layout_clear_caches_clears_text",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_p34_r4::t5_half_lead_cache",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 8.241
+    },
+    {
+      "id": "test_p34_r4::t6_scroll_container_tagging",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 7.026
+    },
+    {
+      "id": "test_p34_r4::t7_non_scroll_emits_commands",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 6.861
+    },
+    {
+      "id": "test_p34_r4::t8_measure_perf",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 7.915
+    },
+    {
+      "id": "test_p34_r4::t9_pipeline_perf",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 39396.876
+    }
+  ]
+}

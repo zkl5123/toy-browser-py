@@ -1,0 +1,12 @@
+{
+  "at": "2026-10-21T20:43:30.032415+08:00",
+  "head": "551da747862b6d35384e8c97e6f6a4e86b389a57",
+  "python": "3.13.14 (main, Jun 11 2026, 04:04:46) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "executable": "C:\\Users\\zklzk\\.workbuddy\\binaries\\python\\versions\\3.13.12\\python.exe",
+  "optional_modules": {
+    "tkinter": false,
+    "wgpu": false,
+    "PIL": false
+  }
+}

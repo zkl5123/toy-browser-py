@@ -1,0 +1,67 @@
+{
+  "semantic_probe.py": {
+    "source": "assessments/20261018-round7/semantic_probe.py",
+    "sha256": "902ec3afb0704310fb75b1dedfc6f558b72c950a563fd292f893ea47ea0bf211",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "render_probe.py": {
+    "source": "assessments/20261018-round7/render_probe.py",
+    "sha256": "a3a2539f92c7bad2ef0961ddd45f91e6fe50e89dfbabb1ddfae94ba2341d4a51",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "security_probe.py": {
+    "source": "assessments/20261018-round7/security_probe.py",
+    "sha256": "cb7342fad983f78d1a572c4acfd7d39ab52f2fb57b69d86d3f57b4dd43870a31",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "render_screenshots.py": {
+    "source": "assessments/20261018-round7/render_screenshots.py",
+    "sha256": "ec4683a844a6d827832f132bf82be348cefdd6563379f4dfb282e5abb9b87672",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "render_cases.json": {
+    "source": "assessments/20261018-round7/render_cases.json",
+    "sha256": "918e11d56b54610adefded6c3c9f216f43ca0b0e3eb35258af7a7ff9a2c66e9e",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "js_cases.json": {
+    "source": "assessments/20261018-round7/js_cases.json",
+    "sha256": "15d087cedc2d602e0e0f5c9972ccafd3e1d73c7838b184ce17db23ce71039d65",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "layout_cases.json": {
+    "source": "assessments/20261018-round7/layout_cases.json",
+    "sha256": "8c1fd5db886c2a7d8a30f88b44280b039797214351a139a51d276d544f76fd16",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "edge_js_results.json": {
+    "source": "assessments/20261018-round7/edge_js_results.json",
+    "sha256": "023f107a41d3317d3e1a7893a7251ba7875fd0c1a898ec1864b55d93980813c9",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "edge_layout_results.json": {
+    "source": "assessments/20261018-round7/edge_layout_results.json",
+    "sha256": "e89ea0abe3e6bec9f7ad36d49b86b53caa980da0cbc66bd59e329d14a250e656",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "toy_js_runner.py": {
+    "source": "assessments/20261018-round7/toy_js_runner.py",
+    "sha256": "98aa5ec4f0766f861b49fb956d5a7070cdf571c3ab0efc30b174fdbee61e638a",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "toy_layout_runner.py": {
+    "source": "assessments/20261018-round7/toy_layout_runner.py",
+    "sha256": "cc1cba6c52af516bd186b499156298a6c3b140d9e467b8c90f8a76434fea1947",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "compare_results.py": {
+    "source": "assessments/20261018-round7/compare_results.py",
+    "sha256": "7d6406af5dfca87d810d1c9c0cbed693e26243769360d0d3751c7c2442bd37c8",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  },
+  "pipeline_profile.py": {
+    "source": "assessments/20261018-round7/pipeline_profile.py",
+    "sha256": "efff5f35eb495eebf196740c6d5a5daae00f3f0ad9ababddcd1ab9138d995add",
+    "note": "Historical probe/fixture copied; embedded evidence line numbers refer to old round, not current code. Edge results are frozen, not a fresh browser run."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "C:/Users/zklzk/AppData/Local/Python/pythoncore-3.11-64/python.exe",
+    "D:\\Desktop\\1\\toy-browser-py\\test.py",
+    "--full",
+    "--report",
+    "--json",
+    "D:\\Desktop\\1\\toy-browser-py\\assessments\\20261021-round8\\native-full.json",
+    "--junit",
+    "D:\\Desktop\\1\\toy-browser-py\\assessments\\20261021-round8\\native-full.xml"
+  ],
+  "returncode": 1,
+  "wall_seconds": 924.957
+}

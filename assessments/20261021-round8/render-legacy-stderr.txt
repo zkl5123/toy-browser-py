@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "D:\Desktop\1\toy-browser-py\assessments\20261021-round8\render_probe.py", line 85, in <module>
+    check('gpu_present_needs_surface', backend.present(object(), None), False, 'gpu.py:942-946')
+                                       ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "D:\Desktop\1\toy-browser-py\toy_browser\rendering\gpu.py", line 1265, in present
+    decision = self._gate.decide(self.is_real_gpu, surface)
+               ^^^^^^^^^^
+AttributeError: 'GPUBackend' object has no attribute '_gate'

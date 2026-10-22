@@ -192,6 +192,32 @@ def test_failure_carries_full_traceback_in_json():
                 pass
 
 
+@_reg
+def test_timeout_path_holds_explicit_popen_and_never_uses_expired_proc():
+    """R8-Q01 — 超时执行必须显式持有 Popen，不得访问 TimeoutExpired.proc。
+
+    round8 要求把子进程超时生命周期从 ``subprocess.run(..., timeout=...)``
+    的 ``TimeoutExpired.proc`` 依赖，改为父进程始终持有自己的
+    ``subprocess.Popen`` 句柄；超时后终止进程树、回收 stdout/stderr，
+    再把输出写入诊断文件。``TimeoutExpired.proc`` 是历史脆弱点，
+    一旦解释器实现或调用路径变化，会把进程句柄暴露到异常对象里，
+    让 runner 误以为“异常知道进程”而不是调用方知道进程。
+    """
+    src = Path("tests", "run.py").read_text(encoding="utf-8")
+    assert "proc = subprocess.Popen(" in src, \
+        "超时路径必须显式持有 Popen 句柄（R8-Q01）"
+    assert "proc.communicate(timeout=_TCL_TIMEOUT_S)" in src, \
+        "父进程必须用 Popen.communicate(timeout=...) 等待子进程"
+    assert "_kill_process_tree(proc)" in src, \
+        "超时后必须用父进程持有的 Popen 终止整个进程树"
+    assert "proc.wait(timeout=5)" in src, \
+        "超时后必须回收 Popen，避免僵尸进程"
+    assert "e.proc" not in src, \
+        "禁止访问 TimeoutExpired.proc（round8 R8-Q01 生命周期契约）"
+    assert "except subprocess.TimeoutExpired as e:" not in src, \
+        "超时路径不应再依赖 TimeoutExpired 异常对象携带 proc"
+
+
 if __name__ == "__main__":
     for name, fn in TESTS:
         fn()

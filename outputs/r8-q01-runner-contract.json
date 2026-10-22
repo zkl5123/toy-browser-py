@@ -1,0 +1,99 @@
+{
+  "mode": "only(test_dom,test_r7_q01_runner_contract)",
+  "environment": {
+    "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "executable": "C:\\Users\\zklzk\\AppData\\Local\\Python\\pythoncore-3.11-64\\python.exe",
+    "tkinter": true,
+    "wgpu": true
+  },
+  "counts": {
+    "PASS": 13,
+    "FAIL": 0,
+    "ERROR": 0,
+    "SKIP": 0,
+    "TIMEOUT": 0
+  },
+  "total": 13,
+  "duration_s": 3.104,
+  "tests": [
+    {
+      "id": "test_dom::test_dom_parse",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_dom::test_dom_implicit_close",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_dom::test_hit_test",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 524.498
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_results_tuple_is_four_element",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1.016
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_status_enums_are_complete",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_module_import_failure_is_error_not_phantom_pass",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_skip_is_counted_not_passed",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.998
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_tcl_isolated_subprocess_status_maps_to_full_state_names",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_tcl_isolated_subprocess_kill_handles_grandchild",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_unknown_only_module_exits_2",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 274.899
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_json_report_has_required_fields",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 1402.553
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_failure_carries_full_traceback_in_json",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 900.5
+    },
+    {
+      "id": "test_r7_q01_runner_contract::test_timeout_path_holds_explicit_popen_and_never_uses_expired_proc",
+      "status": "PASS",
+      "detail": "",
+      "duration_ms": 0.0
+    }
+  ]
+}

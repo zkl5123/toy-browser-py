@@ -150,10 +150,18 @@ def t5_half_lead_cache() -> None:
             find(c, name)
     find(tree, None)
     assert p1 is not None and p2 is not None
-    # Both must have the same baseline offset (same font/size/line-height)
+    # Both must have the same baseline offset (same font/size/line-height).
+    # R8-Q01 — use a justified float tolerance: the two text boxes are the
+    # same (family, font_px, line_h) key, but their offset is a difference
+    # of accumulated block-layout values, so they can differ by 1 ulp
+    # (e.g. 15.146875 vs 15.146875000000001).  Tolerance ~1e-9 px keeps the
+    # semantic invariant (identical half-leading) without false-positive on
+    # floating-point rounding.
+    off1 = p1.baseline_y - p1.rect.y
+    off2 = p2.baseline_y - p2.rect.y
     check("half-leading consistent across boxes",
-          p1.baseline_y - p1.rect.y == p2.baseline_y - p2.rect.y,
-          f"p1_offset={p1.baseline_y - p1.rect.y} p2_offset={p2.baseline_y - p2.rect.y}")
+          abs(off1 - off2) <= 1e-9,
+          f"p1_offset={off1} p2_offset={off2}")
     # Both must have a positive ascent
     check("ascent_px > 0", p1.font_ascent_px > 0.0,
           f"got {p1.font_ascent_px}")

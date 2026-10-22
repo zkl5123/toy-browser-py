@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="toy-browser-py-only(test_dom,test_r7_q01_runner_contract)" tests="13" failures="0" errors="0" skipped="0" time="3.104">
+  <properties>
+    <property name="python" value="3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]"/>
+    <property name="platform" value="Windows-10-10.0.26300-SP0"/>
+    <property name="wgpu" value="true"/>
+  </properties>
+  <testcase name="test_dom_parse" classname="test_dom" time="0.000"/>
+  <testcase name="test_dom_implicit_close" classname="test_dom" time="0.000"/>
+  <testcase name="test_hit_test" classname="test_dom" time="0.524"/>
+  <testcase name="test_results_tuple_is_four_element" classname="test_r7_q01_runner_contract" time="0.001"/>
+  <testcase name="test_status_enums_are_complete" classname="test_r7_q01_runner_contract" time="0.000"/>
+  <testcase name="test_module_import_failure_is_error_not_phantom_pass" classname="test_r7_q01_runner_contract" time="0.000"/>
+  <testcase name="test_skip_is_counted_not_passed" classname="test_r7_q01_runner_contract" time="0.001"/>
+  <testcase name="test_tcl_isolated_subprocess_status_maps_to_full_state_names" classname="test_r7_q01_runner_contract" time="0.000"/>
+  <testcase name="test_tcl_isolated_subprocess_kill_handles_grandchild" classname="test_r7_q01_runner_contract" time="0.000"/>
+  <testcase name="test_unknown_only_module_exits_2" classname="test_r7_q01_runner_contract" time="0.275"/>
+  <testcase name="test_json_report_has_required_fields" classname="test_r7_q01_runner_contract" time="1.403"/>
+  <testcase name="test_failure_carries_full_traceback_in_json" classname="test_r7_q01_runner_contract" time="0.901"/>
+  <testcase name="test_timeout_path_holds_explicit_popen_and_never_uses_expired_proc" classname="test_r7_q01_runner_contract" time="0.000"/>
+</testsuite>

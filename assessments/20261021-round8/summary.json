@@ -1,0 +1,31 @@
+{
+  "baseline": "551da747862b6d35384e8c97e6f6a4e86b389a57",
+  "full_regression": {
+    "passed": 2871,
+    "failed": 3,
+    "total": 2874,
+    "exit_code": 1
+  },
+  "node_semantics": {
+    "matched": 24,
+    "total": 24
+  },
+  "historical_layout": {
+    "within_1px": 48,
+    "total": 48
+  },
+  "raw_render_checks": {
+    "matched": 29,
+    "total": 32,
+    "caveat": "Two nonmatches have obsolete GPU probe preconditions; one is document-entry contract mismatch."
+  },
+  "documents": 6,
+  "implementation_items": 18,
+  "not_verified": [
+    "full WPT/Test262",
+    "fresh multi-engine browser references",
+    "screenshot visual review",
+    "real IME/UIA",
+    "GPU surface/device-lost"
+  ]
+}

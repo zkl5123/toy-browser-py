@@ -1,0 +1,56 @@
+[
+  {
+    "id": "fetch_denied",
+    "logs": [
+      "opaque:200",
+      ""
+    ],
+    "requests": [
+      {
+        "method": "GET",
+        "path": "/simple",
+        "origin": null
+      }
+    ]
+  },
+  {
+    "id": "preflight_actual_missing_acao",
+    "logs": [
+      "cors:200",
+      "SYNTHETIC_R8"
+    ],
+    "requests": [
+      {
+        "method": "OPTIONS",
+        "path": "/custom",
+        "origin": "http://localhost:61301"
+      },
+      {
+        "method": "PUT",
+        "path": "/custom",
+        "origin": null
+      }
+    ]
+  },
+  {
+    "id": "xhr_real_transport",
+    "status": 200,
+    "text": "SYNTHETIC_R8",
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/xhr",
+        "origin": null
+      }
+    ],
+    "scope": "Python XHR WebAPI with real loopback transport"
+  },
+  {
+    "id": "cap_GET",
+    "exception": "ResponseTooLarge"
+  },
+  {
+    "id": "cap_POST",
+    "exception": "ResponseTooLarge"
+  }
+]

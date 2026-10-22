@@ -1,0 +1,33 @@
+         685340 function calls (677298 primitive calls) in 1.249 seconds
+
+   Ordered by: cumulative time
+   List reduced from 220 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    1.287    1.287 pipeline_profile.py:6(run)
+        1    0.000    0.000    0.502    0.502 browser.py:1764(write_png_bytes)
+        1    0.003    0.003    0.494    0.494 browser.py:1732(_png_raw_rows)
+      600    0.491    0.001    0.491    0.001 browser.py:1691(_png_pack_row)
+        1    0.000    0.000    0.311    0.311 layout.py:2081(layout)
+   2002/1    0.100    0.000    0.245    0.245 layout.py:795(build_box)
+        1    0.000    0.000    0.179    0.179 css.py:2496(apply)
+        1    0.000    0.000    0.178    0.178 dom.py:30(parse)
+        1    0.001    0.001    0.178    0.178 build.py:939(parse)
+        1    0.000    0.000    0.173    0.173 css.py:2624(<listcomp>)
+   2003/1    0.069    0.000    0.173    0.173 css.py:2766(_apply_subtree)
+        1    0.000    0.000    0.145    0.145 build.py:905(build)
+        1    0.003    0.003    0.145    0.145 build.py:579(run)
+     1000    0.002    0.000    0.126    0.000 build.py:609(_text)
+     1000    0.001    0.000    0.122    0.000 build.py:153(_add_text)
+     1000    0.001    0.000    0.121    0.000 node.py:62(text_node)
+     2004    0.120    0.000    0.120    0.000 node.py:34(__init__)
+     1056    0.018    0.000    0.076    0.000 css.py:104(parse_declaration_pairs)
+        1    0.000    0.000    0.057    0.057 paint_engine.py:155(emit_commands)
+   2002/1    0.027    0.000    0.055    0.055 layout.py:2284(layout_block)
+   2002/1    0.039    0.000    0.054    0.054 paint_engine.py:200(_emit)
+        1    0.000    0.000    0.054    0.054 paint_engine.py:954(rasterize)
+        1    0.001    0.001    0.054    0.054 paint_engine.py:880(_rasterize_into)
+       56    0.002    0.000    0.050    0.001 text.py:886(draw_text)
+      260    0.040    0.000    0.040    0.000 rasterize.py:536(blit_glyph_mask)
+
+

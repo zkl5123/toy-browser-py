@@ -1,0 +1,419 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="toy-browser-py-only(test_browser,test_p34_r4)" tests="366" failures="3" errors="0" skipped="0" time="85.723">
+  <properties>
+    <property name="python" value="3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]"/>
+    <property name="platform" value="Windows-10-10.0.26300-SP0"/>
+    <property name="wgpu" value="true"/>
+  </properties>
+  <testcase name="test_text_align_stored" classname="test_browser" time="0.563"/>
+  <testcase name="test_line_height_affects_text_height" classname="test_browser" time="0.002"/>
+  <testcase name="test_inline_elements_horizontal" classname="test_browser" time="0.005"/>
+  <testcase name="test_iframe_placeholder" classname="test_browser" time="0.001"/>
+  <testcase name="test_text_measure_consistency" classname="test_browser" time="0.000"/>
+  <testcase name="test_render_display_none" classname="test_browser" time="0.206"/>
+  <testcase name="test_iframe_src_sandbox" classname="test_browser" time="0.002"/>
+  <testcase name="test_img_placeholder" classname="test_browser" time="0.004"/>
+  <testcase name="test_img_explicit_size" classname="test_browser" time="0.003"/>
+  <testcase name="test_img_paints" classname="test_browser" time="0.060"/>
+  <testcase name="test_button_border" classname="test_browser" time="0.005"/>
+  <testcase name="test_input_placeholder" classname="test_browser" time="0.002"/>
+  <testcase name="test_changed_region" classname="test_browser" time="0.061"/>
+  <testcase name="test_request_animation_frame" classname="test_browser" time="0.002"/>
+  <testcase name="test_host_logs" classname="test_browser" time="0.000"/>
+  <testcase name="test_ua_h3_default" classname="test_browser" time="0.006"/>
+  <testcase name="test_ua_table_border" classname="test_browser" time="0.008"/>
+  <testcase name="test_a11y_tree_roles" classname="test_browser" time="0.001"/>
+  <testcase name="test_a11y_img_alt_fallback" classname="test_browser" time="0.000"/>
+  <testcase name="test_a11y_skip_script_style" classname="test_browser" time="0.000"/>
+  <testcase name="test_collect_links" classname="test_browser" time="0.001"/>
+  <testcase name="test_collect_links_remote" classname="test_browser" time="0.000"/>
+  <testcase name="test_write_links_and_a11y" classname="test_browser" time="0.013"/>
+  <testcase name="test_parse_keyframes" classname="test_browser" time="0.002"/>
+  <testcase name="test_apply_animation_frame_interpolation" classname="test_browser" time="0.014"/>
+  <testcase name="test_focus_pseudo_layout" classname="test_browser" time="0.003"/>
+  <testcase name="test_text_transform_layout" classname="test_browser" time="0.001"/>
+  <testcase name="test_text_transform_render_uppercase" classname="test_browser" time="0.006"/>
+  <testcase name="test_letter_spacing_layout" classname="test_browser" time="0.002"/>
+  <testcase name="test_word_spacing_layout" classname="test_browser" time="0.002"/>
+  <testcase name="test_linear_gradient_layout" classname="test_browser" time="0.001"/>
+  <testcase name="test_linear_gradient_render" classname="test_browser" time="0.004"/>
+  <testcase name="test_text_shadow_layout" classname="test_browser" time="0.003"/>
+  <testcase name="test_text_shadow_render" classname="test_browser" time="0.004"/>
+  <testcase name="test_element_at_basic" classname="test_browser" time="0.008"/>
+  <testcase name="test_element_at_miss" classname="test_browser" time="0.012"/>
+  <testcase name="test_event_target_runs_handler" classname="test_browser" time="0.011"/>
+  <testcase name="test_click_and_render" classname="test_browser" time="0.026"/>
+  <testcase name="test_element_at_uses_supports" classname="test_browser" time="0.011"/>
+  <testcase name="test_animation_handle_frame_overrides" classname="test_browser" time="0.000"/>
+  <testcase name="test_animation_handle_update" classname="test_browser" time="0.000"/>
+  <testcase name="test_pre_render_callback" classname="test_browser" time="0.020"/>
+  <testcase name="test_font_cell_widths" classname="test_browser" time="0.000"/>
+  <testcase name="test_font_family_from_css" classname="test_browser" time="0.000"/>
+  <testcase name="test_font_measure_family" classname="test_browser" time="0.000"/>
+  <testcase name="test_ttf_load_header" classname="test_browser" time="0.140"/>
+  <testcase name="test_ttf_cmap_lookup" classname="test_browser" time="0.141"/>
+  <testcase name="test_ttf_advance_width" classname="test_browser" time="0.139"/>
+  <testcase name="test_ttf_advance_proportional" classname="test_browser" time="0.140"/>
+  <testcase name="test_ttf_line_height" classname="test_browser" time="0.137"/>
+  <testcase name="test_ttf_corrupt_file" classname="test_browser" time="0.467"/>
+  <testcase name="test_ttf_missing_glyph_fallback" classname="test_browser" time="0.139"/>
+  <testcase name="test_ttf_dual_weight" classname="test_browser" time="0.303"/>
+  <testcase name="test_ttf_family_loading" classname="test_browser" time="0.151"/>
+  <testcase name="test_ttf_glyph_outline_a" classname="test_browser" time="0.140"/>
+  <testcase name="test_ttf_glyph_outline_a_lower" classname="test_browser" time="0.143"/>
+  <testcase name="test_ttf_glyph_outline_dot" classname="test_browser" time="0.139"/>
+  <testcase name="test_ttf_glyph_space" classname="test_browser" time="0.141"/>
+  <testcase name="test_ttf_has_glyph" classname="test_browser" time="0.136"/>
+  <testcase name="test_text_ttf_advance" classname="test_browser" time="0.001"/>
+  <testcase name="test_text_ttf_line_height" classname="test_browser" time="0.384"/>
+  <testcase name="test_render_with_ttf_metrics" classname="test_browser" time="0.110"/>
+  <testcase name="test_render_without_ttf_fallback" classname="test_browser" time="0.088"/>
+  <testcase name="test_ttf_outline_boundary" classname="test_browser" time="0.142"/>
+  <testcase name="test_ttf_composite_glyph" classname="test_browser" time="0.143"/>
+  <testcase name="test_ttf_font_face_in_layout" classname="test_browser" time="0.003"/>
+  <testcase name="test_ttf_weight_class_switch" classname="test_browser" time="0.290"/>
+  <testcase name="test_ttf_glyf_outline_points" classname="test_browser" time="0.144"/>
+  <testcase name="test_ttf_cmap_cjk_absent" classname="test_browser" time="0.144"/>
+  <testcase name="test_ttf_empty_font_metrics" classname="test_browser" time="0.000"/>
+  <testcase name="test_p18_half_leading_baseline" classname="test_browser" time="0.002"/>
+  <testcase name="test_p18_font_ascent_descent_fields" classname="test_browser" time="0.060"/>
+  <testcase name="test_p18_text_transform_uppercase" classname="test_browser" time="0.001"/>
+  <testcase name="test_p18_text_transform_lowercase" classname="test_browser" time="0.002"/>
+  <testcase name="test_p18_inline_link_cross_line" classname="test_browser" time="0.061"/>
+  <testcase name="test_p18_vertical_align_top" classname="test_browser" time="0.003"/>
+  <testcase name="test_p18_vertical_align_middle" classname="test_browser" time="0.003"/>
+  <testcase name="test_p18_inline_img_raises_line_height" classname="test_browser" time="0.003"/>
+  <testcase name="test_p18_text_align_center_line_box" classname="test_browser" time="0.003"/>
+  <testcase name="test_p18_render_half_leading" classname="test_browser" time="0.205"/>
+  <testcase name="test_p18_render_inline_styles_preserved" classname="test_browser" time="0.200"/>
+  <testcase name="test_p18_mixed_inline_block" classname="test_browser" time="0.006"/>
+  <testcase name="test_p18_baseline_alignment_math" classname="test_browser" time="0.002"/>
+  <testcase name="test_p18_line_height_half_leading_render" classname="test_browser" time="0.136"/>
+  <testcase name="test_p18_text_align_right" classname="test_browser" time="0.046"/>
+  <testcase name="test_p18_mixed_line_wrap_render" classname="test_browser" time="0.388"/>
+  <testcase name="test_p18_vertical_align_stored" classname="test_browser" time="0.007"/>
+  <testcase name="test_p18_half_leading_large_line_height" classname="test_browser" time="0.002"/>
+  <testcase name="test_p18_inline_run_height" classname="test_browser" time="0.003"/>
+  <testcase name="test_p19_english_word_wrap" classname="test_browser" time="0.059"/>
+  <testcase name="test_p19_cjk_char_by_char" classname="test_browser" time="0.009"/>
+  <testcase name="test_p19_kinsoku_no_line_start" classname="test_browser" time="0.001"/>
+  <testcase name="test_p19_kinsoku_latin_brackets" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_soft_hyphen" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_shy_html_entity" classname="test_browser" time="0.001"/>
+  <testcase name="test_p19_word_break_all" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_overflow_wrap_break_word" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_long_word_overflow" classname="test_browser" time="0.001"/>
+  <testcase name="test_p19_mixed_cjk_latin" classname="test_browser" time="0.001"/>
+  <testcase name="test_p19_render_cjk_wrap" classname="test_browser" time="0.487"/>
+  <testcase name="test_p19_render_shy" classname="test_browser" time="0.068"/>
+  <testcase name="test_p19_render_word_break" classname="test_browser" time="0.097"/>
+  <testcase name="test_p19_overflow_wrap_layout" classname="test_browser" time="0.002"/>
+  <testcase name="test_p19_word_break_layout" classname="test_browser" time="0.002"/>
+  <testcase name="test_p19_break_class" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_kinsoku_sets" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_wrap_empty" classname="test_browser" time="0.000"/>
+  <testcase name="test_p19_wrap_narrow_cjk" classname="test_browser" time="0.000"/>
+  <testcase name="test_gui_page_load_file" classname="test_browser" time="1.975"/>
+  <testcase name="test_gui_about_blank" classname="test_browser" time="0.008"/>
+  <testcase name="test_gui_http_stub" classname="test_browser" time="5.107"/>
+  <testcase name="test_gui_inline_html" classname="test_browser" time="0.043"/>
+  <testcase name="test_gui_back_forward" classname="test_browser" time="1.321"><failure message="AssertionError()
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_browser.py&quot;, line 1961, in test_gui_back_forward
+    assert p.url == &quot;demo.html&quot;
+           ^^^^^^^^^^^^^" type="FAIL">AssertionError()
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_browser.py&quot;, line 1961, in test_gui_back_forward
+    assert p.url == &quot;demo.html&quot;
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError
+</failure></testcase>
+  <testcase name="test_gui_bitmap_ppm" classname="test_browser" time="0.000"/>
+  <testcase name="test_gui_tkinter_available" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_quadratic_flatten" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_offcurve_midpoint_rule" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_fill_polygon_aa" classname="test_browser" time="0.273"/>
+  <testcase name="test_p20_fill_polygon_speed" classname="test_browser" time="0.371"/>
+  <testcase name="test_p20_synthetic_bold_increases_ink" classname="test_browser" time="0.097"/>
+  <testcase name="test_p20_dilate_poly" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_outline_bbox_validation" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_letter_spacing_widens" classname="test_browser" time="0.066"/>
+  <testcase name="test_p20_text_rendering_stored" classname="test_browser" time="0.007"/>
+  <testcase name="test_p20_font_weight_stored" classname="test_browser" time="0.008"/>
+  <testcase name="test_p20_metrics_for_weight" classname="test_browser" time="0.057"/>
+  <testcase name="test_p20_font_fallback_chain" classname="test_browser" time="0.022"/>
+  <testcase name="test_p20_match_weight" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_draw_text_curves_letter_spacing" classname="test_browser" time="0.192"/>
+  <testcase name="test_p20_glyf_instruction_count_layout" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_point_flags_bits" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_curve_glyph_fallback" classname="test_browser" time="0.087"/>
+  <testcase name="test_p20_paint_command_fields" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_layout_box_fields" classname="test_browser" time="0.000"/>
+  <testcase name="test_p20_synthetic_bold_flag_roundtrip" classname="test_browser" time="0.012"/>
+  <testcase name="test_p20_render_full_pipeline_weight" classname="test_browser" time="0.004"/>
+  <testcase name="test_p20_glyf_offcurve_yreversed" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_parse_url_absolute" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_parse_url_https_default_port" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_relative_url_resolution" classname="test_browser" time="0.001"/>
+  <testcase name="test_p21_url_to_string_roundtrip" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_normalize_url" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_origin_property" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_http_get_200" classname="test_browser" time="0.524"/>
+  <testcase name="test_p21_http_get_404" classname="test_browser" time="0.527"/>
+  <testcase name="test_p21_http_redirect_surfaced" classname="test_browser" time="0.003"/>
+  <testcase name="test_p21_content_type_dispatch" classname="test_browser" time="0.505"/>
+  <testcase name="test_p21_fetch_error_on_4xx" classname="test_browser" time="0.515"/>
+  <testcase name="test_p21_unsupported_scheme" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_error_page_html" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_error_page_renders" classname="test_browser" time="0.222"/>
+  <testcase name="test_p21_connection_error_retries" classname="test_browser" time="1.018"/>
+  <testcase name="test_p21_http_query_in_path" classname="test_browser" time="0.017"/>
+  <testcase name="test_p21_url_is_network_flag" classname="test_browser" time="0.000"/>
+  <testcase name="test_p21_fetch_html_accepts_str_url" classname="test_browser" time="0.003"/>
+  <testcase name="test_p21_cli_network_error_exit_code" classname="test_browser" time="6.121"/>
+  <testcase name="test_p22_redirect_followed" classname="test_browser" time="0.044"/>
+  <testcase name="test_p22_redirect_loop_detected" classname="test_browser" time="0.545"/>
+  <testcase name="test_p22_redirect_exceeds_cap" classname="test_browser" time="0.085"/>
+  <testcase name="test_p22_redirect_within_cap_succeeds" classname="test_browser" time="0.036"/>
+  <testcase name="test_p22_redirect_no_follow_returns_302" classname="test_browser" time="0.533"/>
+  <testcase name="test_p22_gzip_decoded" classname="test_browser" time="0.509"/>
+  <testcase name="test_p22_gzip_no_header_passthrough" classname="test_browser" time="0.512"/>
+  <testcase name="test_p22_chunked_decode_roundtrip" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_chunked_with_extensions" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_chunked_max_size_cap" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_subresource_collection" classname="test_browser" time="0.001"/>
+  <testcase name="test_p22_base_tag_overrides_doc_base" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_base_tag_absent" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_subresource_failure_does_not_block" classname="test_browser" time="0.023"/>
+  <testcase name="test_p22_render_document_from_url" classname="test_browser" time="0.546"/>
+  <testcase name="test_p22_render_from_url_gzip_doc" classname="test_browser" time="0.524"/>
+  <testcase name="test_p22_render_from_url_network_error" classname="test_browser" time="4.054"/>
+  <testcase name="test_p22_subresource_data_uri_skipped" classname="test_browser" time="0.000"/>
+  <testcase name="test_p22_fetch_resource_returns_none_on_404" classname="test_browser" time="0.004"/>
+  <testcase name="test_p22_redirect_relative_location" classname="test_browser" time="0.506"/>
+  <testcase name="test_p23_cache_hit_skips_wire" classname="test_browser" time="0.527"/>
+  <testcase name="test_p23_cache_no_store_not_cached" classname="test_browser" time="0.509"/>
+  <testcase name="test_p23_cache_max_age_expiry" classname="test_browser" time="0.534"/>
+  <testcase name="test_p23_cache_etag_304_reuse" classname="test_browser" time="0.556"/>
+  <testcase name="test_p23_cache_heuristic_ttl" classname="test_browser" time="0.532"/>
+  <testcase name="test_p23_cache_store_clear" classname="test_browser" time="0.514"/>
+  <testcase name="test_p23_cache_parse_directives" classname="test_browser" time="0.000"/>
+  <testcase name="test_p23_progress_events_emitted" classname="test_browser" time="0.016"/>
+  <testcase name="test_p23_progress_subresource_phase" classname="test_browser" time="0.023"/>
+  <testcase name="test_p23_progress_on_event_subscription" classname="test_browser" time="0.000"/>
+  <testcase name="test_p23_post_form_encoded" classname="test_browser" time="0.523"/>
+  <testcase name="test_p23_post_verbatim_str" classname="test_browser" time="0.510"/>
+  <testcase name="test_p23_insecure_flag_accepted" classname="test_browser" time="0.000"/>
+  <testcase name="test_p23_https_tls_handshake" classname="test_browser" time="1.424"/>
+  <testcase name="test_p23_cache_etag_absent_refetches" classname="test_browser" time="0.531"/>
+  <testcase name="test_p23_cache_disabled_store" classname="test_browser" time="0.003"/>
+  <testcase name="test_p24_entities_named" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_entities_numeric_dec" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_entities_numeric_hex" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_entities_zero_and_surrogate" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_entities_unknown_name_literal" classname="test_browser" time="0.002"/>
+  <testcase name="test_p24_rawtext_script_literal" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_rawtext_style_literal" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_void_input_no_stack" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_void_self_closing_br" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_implicit_p_sibling" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_block_closes_p" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_adoption_b_i" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_stray_close_ignored" classname="test_browser" time="0.002"/>
+  <testcase name="test_p24_comment_doctype_dropped" classname="test_browser" time="0.002"><failure message="AssertionError(['document', 'html', 'head', 'body', 'p'])
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_browser.py&quot;, line 3735, in test_p24_comment_doctype_dropped
+    " type="FAIL">AssertionError(['document', 'html', 'head', 'body', 'p'])
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_browser.py&quot;, line 3735, in test_p24_comment_doctype_dropped
+    assert all(t in (&quot;document&quot;, &quot;html&quot;, &quot;body&quot;, &quot;p&quot;) for t in tags), tags
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ['document', 'html', 'head', 'body', 'p']
+</failure></testcase>
+  <testcase name="test_p24_case_insensitive_tag" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_foster_tr_in_div" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_unclosed_lt_text" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_utf16_bom" classname="test_browser" time="0.004"/>
+  <testcase name="test_p24_utf8_bom" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_dom_shim_reexport" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_dom_parse_bytes" classname="test_browser" time="0.000"/>
+  <testcase name="test_p24_full_pipeline_render" classname="test_browser" time="0.095"/>
+  <testcase name="test_p25_specificity_4tuple" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_specificity_id_beats_class" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_specificity_class_beats_type" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_important_beats_normal" classname="test_browser" time="0.001"/>
+  <testcase name="test_p25_important_author_wins_over_normal_inline" classname="test_browser" time="0.001"/>
+  <testcase name="test_p25_inherit_keyword" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_initial_keyword" classname="test_browser" time="0.001"/>
+  <testcase name="test_p25_unset_keyword" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_shorthand_margin_expands" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_shorthand_padding_expands" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_em_computed_chain" classname="test_browser" time="0.002"/>
+  <testcase name="test_p25_inherit_font_size" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_source_cascade_author_over_ua" classname="test_browser" time="0.000"/>
+  <testcase name="test_p25_full_pipeline_important" classname="test_browser" time="0.026"/>
+  <testcase name="test_p26_margin_collapse_siblings" classname="test_browser" time="0.004"/>
+  <testcase name="test_p26_margin_collapse_parent_child" classname="test_browser" time="0.003"/>
+  <testcase name="test_p26_margin_collapse_empty_block" classname="test_browser" time="0.003"/>
+  <testcase name="test_p26_bfc_cleares_floats" classname="test_browser" time="0.003"/>
+  <testcase name="test_p26_pct_height_chain" classname="test_browser" time="0.001"/>
+  <testcase name="test_p26_height_auto_grows" classname="test_browser" time="0.005"/>
+  <testcase name="test_p26_min_height_clamps" classname="test_browser" time="0.001"/>
+  <testcase name="test_p26_max_height_clamps" classname="test_browser" time="0.005"/>
+  <testcase name="test_p26_min_width_clamps" classname="test_browser" time="0.004"/>
+  <testcase name="test_p26_max_width_clamps" classname="test_browser" time="0.002"/>
+  <testcase name="test_p26_width_auto_fills" classname="test_browser" time="0.002"/>
+  <testcase name="test_p26_width_auto_with_margins" classname="test_browser" time="0.004"/>
+  <testcase name="test_p26_float_inside_bfc_no_overlap" classname="test_browser" time="0.002"/>
+  <testcase name="test_p26_full_pipeline_render" classname="test_browser" time="0.017"/>
+  <testcase name="test_p27_flex_shrink_proportional" classname="test_browser" time="0.007"/>
+  <testcase name="test_p27_flex_shrink_weighted" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_flex_basis_explicit" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_flex_wrap_two_lines" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_flex_wrap_single_line_fits" classname="test_browser" time="0.006"/>
+  <testcase name="test_p27_align_items_start" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_align_items_end" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_align_self_overrides" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_justify_content_space_evenly" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_justify_content_space_around" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_flex_direction_column_reverse" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_flex_order_reorders" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_min_width_auto_floor" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_flex_basis_zero" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_flex_shrink_zero_keeps_size" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_align_content_center_multi_line" classname="test_browser" time="0.004"/>
+  <testcase name="test_p27_flex_row_reverse" classname="test_browser" time="0.006"/>
+  <testcase name="test_p27_flex_grow_shrink_basis_shorthand" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_wrap_reverse_direction" classname="test_browser" time="0.005"/>
+  <testcase name="test_p27_flex_full_pipeline_render" classname="test_browser" time="0.017"/>
+  <testcase name="test_p28_input_checkbox_render" classname="test_browser" time="0.016"/>
+  <testcase name="test_p28_input_radio_render" classname="test_browser" time="0.004"/>
+  <testcase name="test_p28_select_option_render" classname="test_browser" time="0.057"/>
+  <testcase name="test_p28_file_input_render" classname="test_browser" time="0.004"/>
+  <testcase name="test_p28_textarea_default_size" classname="test_browser" time="0.002"/>
+  <testcase name="test_p28_form_get_query_string" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_form_post_body" classname="test_browser" time="0.002"/>
+  <testcase name="test_p28_form_select_multiple" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_form_radio_group" classname="test_browser" time="0.001"/>
+  <testcase name="test_p28_form_action_url_resolution" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_required_validation" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_required_checkbox" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_submit_blocked_by_validation" classname="test_browser" time="0.001"/>
+  <testcase name="test_p28_tab_order_natural" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_tab_order_explicit" classname="test_browser" time="0.001"/>
+  <testcase name="test_p28_focus_marks_box" classname="test_browser" time="0.001"/>
+  <testcase name="test_p28_checkbox_toggle_render_diff" classname="test_browser" time="0.002"/>
+  <testcase name="test_p28_full_pipeline_form_render" classname="test_browser" time="0.040"/>
+  <testcase name="test_p28_js_element_value_prop" classname="test_browser" time="0.004"/>
+  <testcase name="test_p28_form_hidden_field" classname="test_browser" time="0.000"/>
+  <testcase name="test_p28_required_select" classname="test_browser" time="0.000"/>
+  <testcase name="test_p29_regexp_literal_test" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_regexp_literal_flags" classname="test_browser" time="0.004"/>
+  <testcase name="test_p29_regexp_exec_groups" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_string_match_regexp" classname="test_browser" time="0.003"/>
+  <testcase name="test_p29_string_replace_regexp" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_new_regexp_ctor" classname="test_browser" time="0.001"/>
+  <testcase name="test_p29_for_of_array" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_for_of_string_chars" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_for_of_generator" classname="test_browser" time="0.004"/>
+  <testcase name="test_p29_generator_next_done" classname="test_browser" time="0.003"/>
+  <testcase name="test_p29_generator_expression_form" classname="test_browser" time="0.001"/>
+  <testcase name="test_p29_generator_yield_in_loop" classname="test_browser" time="0.012"/>
+  <testcase name="test_p29_for_of_map_iterable" classname="test_browser" time="0.004"/>
+  <testcase name="test_p29_symbol_iterator_protocol" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_math_trig_log" classname="test_browser" time="0.003"/>
+  <testcase name="test_p29_math_constants" classname="test_browser" time="0.002"/>
+  <testcase name="test_p29_json_stringify_nested" classname="test_browser" time="0.001"/>
+  <testcase name="test_p29_json_parse_stringify_roundtrip" classname="test_browser" time="0.004"/>
+  <testcase name="test_p29_array_tail_methods" classname="test_browser" time="0.005"/>
+  <testcase name="test_p29_string_tail_methods" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_qsel_simple_selectors" classname="test_browser" time="0.003"/>
+  <testcase name="test_p30_qsel_descendant_child" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_qsel_comma_list" classname="test_browser" time="0.001"/>
+  <testcase name="test_p30_qsel_child_pseudos" classname="test_browser" time="0.001"/>
+  <testcase name="test_p30_qsel_hover_no_state" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_qsel_js_query_selector" classname="test_browser" time="0.004"/>
+  <testcase name="test_p30_qsel_scoped_include_self" classname="test_browser" time="0.000"/>
+  <testcase name="test_p30_append_child_mutation" classname="test_browser" time="0.004"/>
+  <testcase name="test_p30_remove_child_mutation" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_insert_before_mutation" classname="test_browser" time="0.005"/>
+  <testcase name="test_p30_mutation_renders" classname="test_browser" time="1.844"/>
+  <testcase name="test_p30_create_element_detached" classname="test_browser" time="0.004"/>
+  <testcase name="test_p30_classlist_add_toggle" classname="test_browser" time="0.004"/>
+  <testcase name="test_p30_dataset_camelcase" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_set_get_attribute" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_custom_event_two_listeners" classname="test_browser" time="0.005"/>
+  <testcase name="test_p30_custom_event_isolated" classname="test_browser" time="0.002"/>
+  <testcase name="test_p30_custom_event_mutation_visible" classname="test_browser" time="0.005"/>
+  <testcase name="test_p30_full_pipeline_regression" classname="test_browser" time="0.025"/>
+  <testcase name="test_p30_qsel_js_mutation_roundtrip" classname="test_browser" time="0.005"/>
+  <testcase name="test_p32_history_add_recent" classname="test_browser" time="0.004"/>
+  <testcase name="test_p32_history_consecutive_collapse" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_history_cap" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_history_about_skipped" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_history_persist_roundtrip" classname="test_browser" time="0.013"/>
+  <testcase name="test_p32_history_corrupt_graceful" classname="test_browser" time="0.018"/>
+  <testcase name="test_p32_bookmarks_add_remove" classname="test_browser" time="0.001"/>
+  <testcase name="test_p32_bookmarks_update_title" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_bookmarks_persist" classname="test_browser" time="0.012"/>
+  <testcase name="test_p32_bookmarks_page_html" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_parse_basic" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_max_age_zero" classname="test_browser" time="0.001"/>
+  <testcase name="test_p32_cookie_header_match" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_subdomain" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_path_filter" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_malformed_dropped" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_cookie_jar_ingest_count" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_dns" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_timeout" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_connect" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_bad_url" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_redirect" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_categorize_http_status" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_error_page_copy_distinct" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_http_error_page_shows_status" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_error_page_generic_passthrough" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_devtools_dom_tree" classname="test_browser" time="0.001"/>
+  <testcase name="test_p32_devtools_computed_style" classname="test_browser" time="0.001"/>
+  <testcase name="test_p32_devtools_computed_style_missing" classname="test_browser" time="0.001"/>
+  <testcase name="test_p32_devtools_selector_hits" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_devtools_report_includes_all" classname="test_browser" time="0.010"/>
+  <testcase name="test_p32_view_source_local_file" classname="test_browser" time="0.042"/>
+  <testcase name="test_p32_view_source_network_not_retained" classname="test_browser" time="0.000"/>
+  <testcase name="test_p32_main_devtools_flag" classname="test_browser" time="3.282"/>
+  <testcase name="t1_cache_agrees_with_advance" classname="test_p34_r4" time="0.000"/>
+  <testcase name="t2_measure_edge_cases" classname="test_p34_r4" time="0.001"/>
+  <testcase name="t3_clear_advances_cache" classname="test_p34_r4" time="0.000"/>
+  <testcase name="t4_layout_clear_caches_clears_text" classname="test_p34_r4" time="0.000"/>
+  <testcase name="t5_half_lead_cache" classname="test_p34_r4" time="0.008"><failure message="AssertionError('internal check failure(s): half-leading consistent across boxes')
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_p34_r4.py&quot;, line 57, in wrapper
+    rais" type="FAIL">AssertionError('internal check failure(s): half-leading consistent across boxes')
+--- traceback ---
+Traceback (most recent call last):
+  File &quot;d:\Desktop\1\toy-browser-py\tests\run.py&quot;, line 418, in main
+    fn()
+  File &quot;D:\Desktop\1\toy-browser-py\tests\test_p34_r4.py&quot;, line 57, in wrapper
+    raise AssertionError(
+AssertionError: internal check failure(s): half-leading consistent across boxes
+</failure></testcase>
+  <testcase name="t6_scroll_container_tagging" classname="test_p34_r4" time="0.009"/>
+  <testcase name="t7_non_scroll_emits_commands" classname="test_p34_r4" time="0.006"/>
+  <testcase name="t8_measure_perf" classname="test_p34_r4" time="0.009"/>
+  <testcase name="t9_pipeline_perf" classname="test_p34_r4" time="39.813"/>
+</testsuite>

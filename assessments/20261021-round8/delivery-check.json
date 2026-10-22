@@ -1,0 +1,47 @@
+{
+  "documents": 6,
+  "missing": [],
+  "broken_links": [],
+  "python_syntax_errors": [],
+  "source_changes": [],
+  "implementation_items": 18,
+  "screenshots": [
+    {
+      "file": "toy_shot_render_basic.png",
+      "valid_signature": true,
+      "dimensions": [
+        800,
+        600
+      ],
+      "bytes": 21720
+    },
+    {
+      "file": "toy_shot_render_cjk.png",
+      "valid_signature": true,
+      "dimensions": [
+        800,
+        600
+      ],
+      "bytes": 20522
+    },
+    {
+      "file": "toy_shot_render_emoji_symbols.png",
+      "valid_signature": true,
+      "dimensions": [
+        800,
+        600
+      ],
+      "bytes": 7415
+    },
+    {
+      "file": "toy_shot_render_forms.png",
+      "valid_signature": true,
+      "dimensions": [
+        800,
+        600
+      ],
+      "bytes": 7639
+    }
+  ],
+  "scope": "Delivery integrity only; not a browser conformance certificate. Test failures retained."
+}

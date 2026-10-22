@@ -245,53 +245,86 @@ def _run_tcl_isolated(mod_names: list[str]) -> dict:
     timed_out = False
     import platform
     use_pgroup = platform.system() != "Windows"
+
+    # R8-Q01 — hold an explicit Popen so the timeout path can terminate the
+    # process tree and recover stdout/stderr without accessing
+    # TimeoutExpired.proc (which may be None on some Python builds after
+    # the timeout).  The parent retains ownership of `proc` throughout the
+    # lifecycle; communicate() streams output to in-memory buffers so a
+    # timed-out child still yields its partial output.
+    proc: subprocess.Popen | None = None
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [py, "-c", boot],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
-            timeout=_TCL_TIMEOUT_S,
             # R7-Q01：让子进程自成进程组（POSIX）/ 带新进程组标志
             # （Windows），超时后能整组 kill（含挂起的 Tk 孙进程）。
             start_new_session=use_pgroup,
             **( {"creationflags": 0x00000200} if not use_pgroup else {}),
         )
-    except subprocess.TimeoutExpired as e:
-        # R7-Q01：子进程超时 → 整组 kill（父 + 孙，清掉挂起的 Tk），
-        # 否则孙进程残留会让下次全量继续卡 _TCL_TIMEOUT_S 秒。
         try:
-            e.proc.kill()
-        except Exception:
-            pass
-        _kill_process_tree(e.proc)
-        try:
-            e.proc.wait(timeout=5)
-        except Exception:
-            pass
-        timed_out = True
-        out = (e.stdout or "") if isinstance(e.stdout, str) else ""
-        err = (e.stderr or "") if isinstance(e.stderr, str) else ""
-        with open(stderr_path, "w", encoding="utf-8") as fh:
-            fh.write("TCL-ISOLATED SUBPROCESS TIMEOUT "
-                     f"({_TCL_TIMEOUT_S}s)\n--- stdout ---\n{out}\n"
-                     f"--- stderr ---\n{err}\n")
-        return {
-            "statuses": [(f"tcl_isolated::{m}", _TIMEOUT,
-                          f"subprocess exceeded {_TCL_TIMEOUT_S}s wall budget")
-                         for m in mod_names],
-            "stderr_path": stderr_path,
-            "timed_out": True,
-        }
+            out, err = proc.communicate(timeout=_TCL_TIMEOUT_S)
+            retcode = proc.returncode
+        except subprocess.TimeoutExpired:
+            # R8-Q01 — child timed out: kill the whole process tree (parent
+            # + any hanging Tk grandchildren), then wait for it so the
+            # pipes are drained and the handle is reaped.  No access to
+            # TimeoutExpired.proc.
+            _kill_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            # Recover whatever the child had already produced on stdout /
+            # stderr before it was killed.
+            out, err = proc.communicate()
+            retcode = proc.returncode
+            timed_out = True
+            out = out or ""
+            err = err or ""
+            with open(stderr_path, "w", encoding="utf-8") as fh:
+                fh.write("TCL-ISOLATED SUBPROCESS TIMEOUT "
+                         f"({_TCL_TIMEOUT_S}s)\n--- stdout ---\n{out}\n"
+                         f"--- stderr ---\n{err}\n")
+            return {
+                "statuses": [(f"tcl_isolated::{m}", _TIMEOUT,
+                              f"subprocess exceeded {_TCL_TIMEOUT_S}s "
+                              "wall budget")
+                             for m in mod_names],
+                "stderr_path": stderr_path,
+                "timed_out": True,
+            }
+        # Success path: communicate() has already drained stdout/stderr, so
+        # close the parent-side pipe handles without closing Popen itself
+        # (subprocess.Popen has no close() method).
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+        run = subprocess.CompletedProcess(
+            [py, "-c", boot], retcode, stdout=out, stderr=err)
+    except BaseException:
+        # Clean up the process handle on any unexpected error so it does
+        # not leak.  The outer finally re-raises.
+        if proc is not None and proc.poll() is None:
+            _kill_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        raise
 
     # Preserve the child's stderr for diagnostics (never swallow it).
     with open(stderr_path, "w", encoding="utf-8") as fh:
-        fh.write(proc.stderr or "")
-    stderr_path = stderr_path if (proc.stderr or "").strip() else None
+        fh.write(run.stderr or "")
+    stderr_path = stderr_path if (run.stderr or "").strip() else None
 
     statuses: list[tuple[str, str, str]] = []
     summary = None
-    for line in proc.stdout.splitlines():
+    for line in (run.stdout or "").splitlines():
         line = line.strip()
         if not line or not line.startswith("{"):
             continue
